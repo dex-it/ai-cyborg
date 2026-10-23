@@ -432,6 +432,19 @@ describe('MrsService.listMrs', () => {
     assert.ok(!gqlVar(gqlCalls(calls)[2], 'query')!.includes('approvalsRequired'));
   });
 
+  it('хост без полей правил: ошибка валидации с кодом выхода не 0 и телом в stdout тоже запоминает хост', async () => {
+    for (const rejected of [{ code: 1, stdout: undefinedField, stderr: '', missing: false }, { code: 1, stdout: undefinedField, stderr: 'HTTP 400', missing: false }] as CliResult[]) {
+      const { svc, calls } = setup({
+        remotes: glRemotes,
+        respond: glab((c) => (gqlVar(c, 'query')!.includes('approvalsRequired') ? rejected : ok(page([node(1, 'SUCCESS', 2), node(2, 'SUCCESS', 0), node(3, 'SUCCESS', 1)])))),
+      });
+      const first = await full(svc, 'p1', 'all', []);
+      assert.deepEqual(first.mrs.map((m) => m.approvals), ['апрувов: 2', 'апрувов: 0', 'апрувов: 1']);
+      await full(svc, 'p1', 'all', []);
+      assert.equal(gqlCalls(calls).length, 3);
+    }
+  });
+
   it('GraphQL только читает: query - одна из двух постоянных строк без mutation, курсор из ответа - значение переменной -f, а не текст запроса', async () => {
     const { svc, calls } = setup({
       remotes: glRemotes,
@@ -606,6 +619,40 @@ describe('MrsService.listMrs', () => {
     const [da, db] = await Promise.all([svc.details(a.detailsId!), svc.details(b.detailsId!)]);
     assert.equal(gqlCalls(calls).length, 1);
     assert.deepEqual([da!.details.length, db!.details.length], [2, 2]);
+  });
+
+  it('«Обновить» во время graphql прежней выборки запускает свой запрос и видит свежий MR', async () => {
+    let release!: (r: CliResult) => void;
+    const held = new Promise<CliResult>((r) => (release = r));
+    let listCalls = 0;
+    let gql = 0;
+    const { svc, calls } = setup({
+      remotes: glRemotes,
+      respond: (c) => {
+        if (c.args[3] === 'graphql') return ++gql === 1 ? (held as unknown as CliResult) : ok(page([node(1, 'SUCCESS', 0), node(2, 'SUCCESS', 0), node(3, 'FAILED', 1)]));
+        return c.args.at(-1)!.includes('merge_requests?') ? glList(++listCalls === 1 ? 2 : 3) : undefined;
+      },
+    });
+    const a = await svc.listMrs('p1', 'all', []);
+    const b = await full(svc, 'p1', 'all', [], true);
+    assert.equal(gqlCalls(calls).length, 2);
+    assert.deepEqual(b.mrs.map((m) => m.pipeline), ['успешен', 'успешен', 'упал']);
+    release(ok(page([node(1, 'SUCCESS', 0)])));
+    assert.equal((await svc.details(a.detailsId!))!.details.length, 2);
+  });
+
+  it('«Обновить» во время деталей GitHub: ещё не стартовавшие задачи прежней выборки не выполняются перед новой', async () => {
+    const prs = Array.from({ length: 20 }, (_, i) => ghRaw(i + 1));
+    const { svc, calls, load } = setup({ remotes, slow: true, respond: ghResponder(prs) });
+    const a = await svc.listMrs('p1', 'all', []);
+    const b = await svc.listMrs('p1', 'all', [], true);
+    const d = await svc.details(b.detailsId!);
+    assert.equal(d!.details.length, 20);
+    // Прежняя успела лишь то, что стартовало до постановки задач новой; её хвост ждёт за новой (40 - значит хвост шёл впереди).
+    const asked = calls.filter((c) => url(c).includes('/reviews')).length;
+    assert.ok(asked < 40, `запросов ревью ${asked}: хвост прежней выборки не должен идти перед новой`);
+    assert.equal((await svc.details(a.detailsId!))!.details.length, 20);
+    assert.ok(load.peak <= MR_CONCURRENCY + 1, `пик ${load.peak}`);
   });
 
   it('детали - ровно у 200 самых свежих, у остальных «—»; MR с сессией получает детали и вне двухсотки', async () => {

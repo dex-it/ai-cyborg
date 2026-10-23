@@ -165,4 +165,34 @@ describe('refreshMrs: двухфазная выборка MR', () => {
     await refreshMrs(rejected.api, g2, g2.begin(false)!, args, rejected.sink);
     assert.ok(rejected.events[1].includes('пайплайн: — · апрувов: —'));
   });
+
+  it('отказ listMrs: список с текстом исключения, mrDetails не вызывается', async () => {
+    const gate = new RefreshGate();
+    const events: string[] = [];
+    let detailsCalls = 0;
+    const api: MrRefreshApi = {
+      listMrs: async () => {
+        throw new Error('сбой канала');
+      },
+      mrDetails: async () => {
+        detailsCalls++;
+        return null;
+      },
+    };
+    const sink = { listed: (r: MrListResult) => events.push(`listed:${r.error}:${r.mrs.length}`), detailed: () => events.push('detailed') };
+    await refreshMrs(api, gate, gate.begin(false)!, args, sink);
+    assert.deepEqual(events, ['listed:сбой канала:0']);
+    assert.equal(detailsCalls, 0);
+  });
+
+  it('detailsId: null - только список, второго вызова нет', async () => {
+    const gate = new RefreshGate();
+    const events: string[] = [];
+    let detailsCalls = 0;
+    const api: MrRefreshApi = { listMrs: async () => ({ ...list, detailsId: null, awaiting: [] }) as MrListResult, mrDetails: async () => (detailsCalls++, null) };
+    const sink = { listed: () => events.push('listed'), detailed: () => events.push('detailed') };
+    await refreshMrs(api, gate, gate.begin(false)!, args, sink);
+    assert.deepEqual(events, ['listed']);
+    assert.equal(detailsCalls, 0);
+  });
 });

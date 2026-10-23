@@ -245,19 +245,24 @@ export function githubApprovals(reviews: { login?: unknown; state?: unknown }[])
   return [...last.values()].filter((state) => state === 'APPROVED').length;
 }
 
-/** Общий предел одновременных задач: все выборки сервиса делят его, а не каждая заводит свой пул. */
-export function createLimiter(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
+/**
+ * Общий предел одновременных задач: все выборки сервиса делят его, а не каждая заводит свой пул.
+ * Освободившийся слот отдаётся первой ожидающей задаче, не помеченной устаревшей (stale), иначе первой по порядку:
+ * задачи отброшенной выборки не стоят перед задачами новой, но дорабатывают.
+ */
+export function createLimiter(limit: number): <T>(task: () => Promise<T>, stale?: () => boolean) => Promise<T> {
   let running = 0;
-  const waiting: (() => void)[] = [];
-  return async <T>(task: () => Promise<T>): Promise<T> => {
-    if (running >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+  const waiting: { go: () => void; stale: () => boolean }[] = [];
+  return async <T>(task: () => Promise<T>, stale: () => boolean = () => false): Promise<T> => {
+    if (running >= limit) await new Promise<void>((go) => waiting.push({ go, stale }));
     else running++;
     try {
       return await task();
     } finally {
       // Слот переходит ожидающему без освобождения: running не падает ниже занятого.
-      const next = waiting.shift();
-      if (next) next();
+      const i = waiting.findIndex((w) => !w.stale());
+      const [next] = waiting.splice(i >= 0 ? i : 0, 1);
+      if (next) next.go();
       else running--;
     }
   };

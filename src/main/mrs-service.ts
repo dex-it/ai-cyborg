@@ -74,6 +74,8 @@ export class MrsService {
   private readonly pool = createLimiter(MR_CONCURRENCY);
   /** GraphQL источника в полёте: перекрывающиеся выборки ждут один процесс, а не запускают свои. */
   private readonly glInflight = new Map<string, Promise<Map<number, Detail>>>();
+  /** Область последней выборки: новая помечает прежнюю устаревшей, и её задачи в очереди пула уступают место задачам новой. */
+  private scope = { stale: false };
   private seq = 0;
 
   constructor(
@@ -90,6 +92,9 @@ export class MrsService {
 
   /** Список сразу после REST-запросов; детали досчитываются в фоне и забираются через details(detailsId). */
   async listMrs(projectId: string, filter: MrFilter, tracked: MrRef[], recheck = false): Promise<MrListResult> {
+    const scope = { stale: false };
+    this.scope.stale = true;
+    this.scope = scope;
     const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.trackers.resolveSources(projectId, recheck);
     const result: MrListResult = { mrs: [], sources: [...preErrors], tracked: [], enabled, detailsId: null, awaiting: [] };
     if (!project) return { ...result, error: 'Проект не найден' };
@@ -103,7 +108,7 @@ export class MrsService {
 
     // GraphQL GitLab стартует вместе со списком: он от списка не зависит.
     const glDetails = new Map<string, Promise<Map<number, Detail>>>();
-    for (const source of sources.values()) if (source.kind === 'gitlab') glDetails.set(sourceKey(source), this.sharedGitlabDetails(source));
+    for (const source of sources.values()) if (source.kind === 'gitlab') glDetails.set(sourceKey(source), this.sharedGitlabDetails(source, recheck));
 
     const fetched = await Promise.all(
       [...sources.values()].map(async (source) => {
@@ -164,10 +169,11 @@ export class MrsService {
 
     // Пул общий для деталей GitHub и MR с сессией вне списка: процессов CLI не больше MR_CONCURRENCY плюс GraphQL источников.
     type Done = { detail: MrDetail } | { mr: Mr | null };
+    const queued = (task: () => Promise<Done>) => this.pool<Done>(task, () => scope.stale);
     const pooled = Promise.all([
-      ...githubItems.map((x) => this.pool<Done>(async () => ({ detail: { key: x.item.mr.key, ...(await this.fill(x.source, x.item)) } }))),
+      ...githubItems.map((x) => queued(async () => ({ detail: { key: x.item.mr.key, ...(await this.fill(x.source, x.item)) } }))),
       ...[...wanted.values()].map(({ source, ref }) =>
-        this.pool<Done>(async () => {
+        queued(async () => {
           try {
             return { mr: await this.fetchOne(source, ref.number) };
           } catch {
@@ -236,13 +242,15 @@ export class MrsService {
     return { pipeline, approvals: reviews ? approvalsText(githubApprovals(reviews as { login?: unknown; state?: unknown }[])) : null };
   }
 
-  private sharedGitlabDetails(source: Source): Promise<Map<number, Detail>> {
+  /** «Обновить» (fresh) не берёт запрос, начатый до неё: в нём нет MR, появившихся после его старта. */
+  private sharedGitlabDetails(source: Source, fresh: boolean): Promise<Map<number, Detail>> {
     const key = sourceKey(source);
-    let p = this.glInflight.get(key);
-    if (!p) {
-      p = this.gitlabDetails(source).finally(() => this.glInflight.delete(key));
-      this.glInflight.set(key, p);
-    }
+    const inflight = this.glInflight.get(key);
+    if (inflight && !fresh) return inflight;
+    const p: Promise<Map<number, Detail>> = this.gitlabDetails(source).finally(() => {
+      if (this.glInflight.get(key) === p) this.glInflight.delete(key);
+    });
+    this.glInflight.set(key, p);
     return p;
   }
 
