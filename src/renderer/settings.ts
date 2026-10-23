@@ -30,7 +30,9 @@ export function initSettings(onSaved: () => void): { open(): void } {
     openToken++;
     if (dialog.returnValue !== 'save') return;
     const next: TrackerSettings = { github: boxes.github.checked, gitlab: boxes.gitlab.checked };
-    void api.saveTrackerSettings(next).then(onSaved);
+    void api.saveTrackerSettings(next).then(onSaved, (error: Error) => {
+      alert(`Не удалось сохранить настройки трекеров: ${error.message}`);
+    });
   });
 
   return {

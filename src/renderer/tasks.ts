@@ -1,6 +1,7 @@
 import type { Project } from '../main/projects';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { byId, el } from './dom';
+import { RefreshGate } from './task-flow';
 import { emptyView, SORT_OPTIONS, sortTasks, sourceLabel, statusText, type SortKey } from './task-model';
 
 /** Сессия, начатая из задачи: панелю нужно знать только, жива ли она. */
@@ -39,8 +40,7 @@ export class TasksPanel {
   private readonly reload = el('button', '', 'Обновить') as HTMLButtonElement;
   private readonly actions: TaskAction[];
   private opened = false;
-  private loading = false;
-  private token = 0;
+  private readonly gate = new RefreshGate();
   private result: TasksResult | null = null;
   private sortKey: SortKey = 'updated';
 
@@ -103,16 +103,15 @@ export class TasksPanel {
   }
 
   async refresh(force = false): Promise<void> {
-    if (this.loading && !force) return;
-    const token = ++this.token;
+    const token = this.gate.begin(force);
+    if (token === null) return;
     const project = this.host.project();
     this.result = null;
     if (!project || this.host.projectHint()) {
-      this.loading = false;
+      this.gate.cancel();
       this.render();
       return;
     }
-    this.loading = true;
     this.render();
     let result: TasksResult;
     try {
@@ -120,22 +119,21 @@ export class TasksPanel {
     } catch (error) {
       result = { tasks: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message };
     }
-    if (token !== this.token) return;
-    this.loading = false;
+    if (!this.gate.finish(token)) return;
     this.result = result;
     this.host.applyStatuses(result);
     this.render();
   }
 
   private render(): void {
-    for (const control of [this.assigned, this.sort, this.reload]) control.disabled = this.loading;
+    for (const control of [this.assigned, this.sort, this.reload]) control.disabled = this.gate.loading;
     const hint = this.host.projectHint();
     if (hint || !this.host.project()) {
       this.body.replaceChildren(...(hint ?? ['Проекта нет.']).map((text) => el('p', 'tasks-note', text)));
       return;
     }
     const result = this.result;
-    if (this.loading || !result) {
+    if (this.gate.loading || !result) {
       this.body.replaceChildren(el('p', 'tasks-note', 'Загрузка…'));
       return;
     }

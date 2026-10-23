@@ -341,6 +341,12 @@ function toTask(source: Source, raw: unknown): Task | null {
 
 const enc = encodeURIComponent;
 
+function hostDownReason(host: string, auth: AuthState): string {
+  if (auth.state === 'logged-out') return `вход в ${host} не выполнен: glab auth login --hostname ${host}`;
+  if (auth.state === 'error') return `проверка входа в ${host} не удалась: ${auth.message}`;
+  return `вход в ${host} не подтверждён`;
+}
+
 export class TrackersService {
   constructor(private readonly deps: TrackerDeps) {}
 
@@ -374,22 +380,33 @@ export class TrackersService {
     if (!enabled.github && !enabled.gitlab) return result;
 
     const gitlabUsers = new Map<string, string>();
+    // Хосты glab, на которых вход не подтверждён: remote такого хоста - источник с причиной, а не отсутствие remote.
+    const gitlabDown = new Map<string, string>();
     if (enabled.gitlab) {
       const status = await this.gitlabAuth();
       if ('hosts' in status) {
-        for (const { host, auth } of status.hosts) if (auth.state === 'logged-in') gitlabUsers.set(host, auth.user);
+        for (const { host, auth } of status.hosts) {
+          if (auth.state === 'logged-in') gitlabUsers.set(host, auth.user);
+          else gitlabDown.set(host, hostDownReason(host, auth));
+        }
       } else {
         result.sources.push({ kind: 'gitlab', host: '', path: '', error: status.state === 'missing' ? 'glab не установлен' : 'вход glab не выполнен' });
       }
     }
 
     const sources = new Map<string, Source>();
+    const blocked = new Map<string, SourceResult>();
+    const knownHosts = new Set([...gitlabUsers.keys(), ...gitlabDown.keys()]);
     const remotes = await Promise.all(project.repos.map(async (repo) => ({ repo, urls: await this.deps.remotes(repo) })));
     for (const { repo, urls } of remotes) {
       for (const url of urls) {
-        const found = classifyRemote(url, new Set(gitlabUsers.keys()));
+        const found = classifyRemote(url, knownHosts);
         if (!found || !enabled[found.kind]) continue;
         const key = sourceKey(found);
+        if (found.kind === 'gitlab' && !gitlabUsers.has(found.host)) {
+          blocked.set(key, { kind: found.kind, host: found.host, path: found.path, error: gitlabDown.get(found.host) });
+          continue;
+        }
         const source = sources.get(key) ?? { ...found, repos: [] };
         if (!source.repos.includes(repo)) source.repos.push(repo);
         sources.set(key, source);
@@ -437,6 +454,8 @@ export class TrackersService {
       }
       result.sources.push(info);
     }
+
+    result.sources.push(...blocked.values());
 
     const have = new Set(result.tasks.map((t) => t.key));
     const wanted = new Map<string, TaskRef>();

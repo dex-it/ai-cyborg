@@ -58,4 +58,10 @@ describe('gitRemotes', () => {
     assert.deepEqual((await gitRemotes(dir)).sort(), ['git@github.com:o/r.git', 'https://github.com/u/r']);
     assert.deepEqual(await gitRemotes(path.join(dir, 'missing')), []);
   });
+  it('remote частичного клона: суффикс [blob:none] после (fetch) не прячет remote', async () => {
+    execFileSync('git', ['init', '-q', dir]);
+    execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:o/r.git']);
+    execFileSync('git', ['-C', dir, 'config', 'remote.origin.partialclonefilter', 'blob:none']);
+    assert.deepEqual(await gitRemotes(dir), ['git@github.com:o/r.git']);
+  });
 });

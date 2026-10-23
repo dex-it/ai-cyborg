@@ -49,13 +49,13 @@ export async function gitStatus(root: string): Promise<Record<string, string>> {
   return status;
 }
 
-/** URL всех fetch-remote репозитория; не git или нет remote - пусто. Только читающая команда. */
+/** URL всех fetch-remote репозитория (у частичного клона после `(fetch)` стоит `[blob:none]`); не git или нет remote - пусто. Только читающая команда. */
 export async function gitRemotes(root: string): Promise<string[]> {
   try {
     const out = await git(root, ['remote', '-v']);
     return out
       .split('\n')
-      .map((line) => /^\S+\s+(\S+)\s+\(fetch\)$/.exec(line.trim())?.[1])
+      .map((line) => /^\S+\s+(\S+)\s+\(fetch\)(?:\s+\[[^\]]*\])?$/.exec(line.trim())?.[1])
       .filter((url): url is string => !!url);
   } catch {
     return [];

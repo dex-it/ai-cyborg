@@ -16,6 +16,7 @@ import {
   type TaskRef,
   type TrackerSettings,
 } from '../src/main/trackers';
+import { emptyView } from '../src/renderer/task-model';
 import { claudeArgs } from '../src/main/claude-args';
 
 const ok = (stdout: string, stderr = ''): CliResult => ({ code: 0, stdout, stderr, missing: false });
@@ -219,14 +220,38 @@ describe('TrackersService.list', () => {
     assert.deepEqual(main.repos.sort(), [repoA, repoB]);
   });
 
-  it('пропускает чужие хосты, незалогиненный GitLab, алиасы ssh и репозитории без remote', async () => {
+  it('пропускает чужие хосты, алиасы ssh и репозитории без remote', async () => {
     const { svc, calls } = service({
-      remotes: { [repoA]: ['git@bitbucket.org:o/r.git', 'git@gitlab.com:g/p.git', 'git@gh-work:o/r.git'], [repoB]: [] },
+      remotes: { [repoA]: ['git@bitbucket.org:o/r.git', 'git@gh-work:o/r.git'], [repoB]: [] },
       respond: () => ok(''),
     });
     const r = await svc.list('p1', false, []);
     assert.equal(listCalls(calls).length, 0);
     assert.deepEqual(r.sources.filter((s) => s.path), []);
+  });
+
+  it('хост glab без подтверждённого входа даёт отказ источника с причиной, а не «нет remote»', async () => {
+    const { svc, calls } = service({ remotes: { [repoA]: ['git@gitlab.com:g/p.git'] }, respond: () => ok('') });
+    const r = await svc.list('p1', false, []);
+    assert.equal(listCalls(calls).length, 0);
+    const src = r.sources.filter((s) => s.path);
+    assert.equal(src.length, 1);
+    assert.deepEqual([src[0].host, src[0].path], ['gitlab.com', 'g/p']);
+    assert.match(src[0].error ?? '', /glab auth login --hostname gitlab\.com/);
+  });
+
+  it('хост glab, проверка которого сорвалась (api call failed), называет сбой проверки', async () => {
+    const down = `git.corp\n  x git.corp: api call failed: dial tcp: i/o timeout\n`;
+    const svc2 = new TrackersService({
+      run: async (cmd) => (cmd === 'glab' ? ok('', down) : ok('me\n')),
+      remotes: async () => ['git@git.corp:g/p.git'],
+      projects: () => ({ projects: [project], lastProjectId: null }),
+      settings: () => ({ github: true, gitlab: true }),
+    });
+    const r = await svc2.list('p1', false, []);
+    const src = r.sources.filter((s) => s.path);
+    assert.match(src[0].error ?? '', /проверка входа в git\.corp не удалась: .*api call failed/);
+    assert.equal(emptyView(r), null);
   });
 
   it('GitLab: самохостный, все страницы, workflow-метки, состояние opened -> open', async () => {

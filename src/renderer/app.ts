@@ -4,7 +4,8 @@ import type { Project, ProjectsState } from '../main/projects';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
 import { initSettings } from './settings';
-import { sessionLabel, taskTooltip } from './task-model';
+import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
+import { findTask, sessionLabel, taskTooltip } from './task-model';
 import { TasksPanel } from './tasks';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { TreeView, type TreeRoot } from './tree';
@@ -53,8 +54,8 @@ const newSessionButton = byId<HTMLButtonElement>('new-session');
 const sessionsEl = byId('sessions');
 const empty = byId('empty');
 const repoMenu = byId('repo-menu');
-const taskSessions = new Map<string, Session>();
-const startingTasks = new Set<string>();
+const taskSessions = new TaskSessionRegistry<Session>();
+const startGuard = new StartGuard();
 
 let state: ProjectsState = { projects: [], lastProjectId: null };
 let project: Project | null = null;
@@ -327,13 +328,12 @@ async function newSession(repo: string, task?: Task): Promise<void> {
   if (!owner) return;
   // Ключ держится до появления сессии в taskSessions: двойной клик «Начать» не создаст вторую.
   if (task) {
-    if (startingTasks.has(task.key)) return;
-    startingTasks.add(task.key);
+    if (!startGuard.begin(owner.id, task.key)) return;
   }
   try {
     await createSessionView(owner, repo, task);
   } finally {
-    if (task) startingTasks.delete(task.key);
+    if (task) startGuard.end(owner.id, task.key);
   }
 }
 
@@ -394,7 +394,7 @@ async function createSessionView(owner: Project, repo: string, task?: Task): Pro
   stripTab.addEventListener('click', () => activateSession(session));
   claudeTab.addEventListener('click', () => showInner(session, null));
   sessions.push(session);
-  if (task) taskSessions.set(task.key, session);
+  taskSessions.add(session);
   updateSessionLabels(session);
   for (const chunk of pendingData.get(id) ?? []) term.write(chunk);
   pendingData.delete(id);
@@ -411,7 +411,7 @@ function closeSession(s: Session, force: boolean): void {
   s.container.remove();
   sessions.splice(sessions.indexOf(s), 1);
   if (lastSessionOf.get(s.project.id) === s) lastSessionOf.delete(s.project.id);
-  if (s.task && taskSessions.get(s.task.key) === s) taskSessions.delete(s.task.key);
+  taskSessions.remove(s);
   if (active === s) {
     const next = sessions.find((x) => x.project === project);
     if (next) activateSession(next, panel.isOpen);
@@ -540,20 +540,18 @@ function requestSession(): void {
 // ---------- задачи трекеров ----------
 
 function startTask(task: Task, anchor: HTMLElement): void {
-  const existing = taskSessions.get(task.key);
-  if (existing && existing.project === project) {
-    activateSession(existing);
-    return;
-  }
-  const repos = project ? task.repos.filter((r) => project!.repos.includes(r)) : [];
-  if (repos.length === 1) void newSession(repos[0], task);
-  else if (repos.length > 1) showRepoMenu(repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, task));
+  if (!project) return;
+  const existing = taskSessions.get(project.id, task.key);
+  const decision = decideStart(!!existing, task.repos, project.repos);
+  if (decision.action === 'switch' && existing) activateSession(existing);
+  else if (decision.action === 'create') void newSession(decision.repo, task);
+  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, task));
 }
 
 function applyStatuses(result: TasksResult): void {
   for (const s of sessions) {
     if (!s.task) continue;
-    const fresh = result.tasks.find((t) => t.key === s.task!.key) ?? result.tracked.find((t) => t.key === s.task!.key);
+    const fresh = findTask(result, s.task.key);
     if (!fresh) continue;
     s.task = { ...fresh, repos: s.task.repos };
     updateSessionLabels(s);
@@ -569,7 +567,7 @@ function trackedRefs(): TaskRef[] {
 }
 
 const settings = initSettings(() => {
-  if (panel.isOpen) void panel.refresh();
+  if (panel.isOpen) void panel.refresh(true);
 });
 byId('settings-open').addEventListener('click', () => settings.open());
 
@@ -578,7 +576,7 @@ const panel = new TasksPanel({
   projectHint,
   trackedRefs,
   applyStatuses,
-  sessionOf: (key) => taskSessions.get(key),
+  sessionOf: (key) => (project ? taskSessions.get(project.id, key) : undefined),
   startTask,
   openSettings: () => settings.open(),
   onClosed: () =>
