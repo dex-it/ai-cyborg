@@ -72,9 +72,13 @@ describe('authLines', () => {
   it('не вошедший - с подсказкой команды входа', () => {
     assert.match(authLines('github', true, status({}))[0], /gh auth login/);
     assert.match(authLines('gitlab', true, status({}))[0], /glab auth login$/);
-    const hosts = authLines('gitlab', true, status({ gitlab: { state: 'hosts', hosts: [{ host: 'git.corp', auth: { state: 'logged-out' } }, { host: 'h2', auth: { state: 'logged-in', user: 'u' } }] } }));
-    assert.match(hosts[0], /git\.corp.*glab auth login --hostname git\.corp/);
-    assert.match(hosts[1], /h2.*вход выполнен: u/);
+  });
+  it('хост glab без входа скрыт, пока есть хост с входом', () => {
+    const hosts = authLines('gitlab', true, status({ gitlab: { state: 'hosts', hosts: [{ host: 'gitlab.com', auth: { state: 'logged-out' } }, { host: 'h2', auth: { state: 'logged-in', user: 'u' } }] } }));
+    assert.deepEqual(hosts, ['h2: включён · вход выполнен: u']);
+    const none = authLines('gitlab', true, status({ gitlab: { state: 'hosts', hosts: [{ host: 'gitlab.com', auth: { state: 'logged-out' } }] } }));
+    assert.equal(none.length, 1);
+    assert.match(none[0], /glab auth login$/);
   });
   it('нет CLI и сбой проверки - отдельные состояния без подсказки входа', () => {
     const missing = authLines('github', true, status({ github: { state: 'missing' } }))[0];

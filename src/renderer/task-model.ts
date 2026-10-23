@@ -74,6 +74,11 @@ export function authLines(kind: TrackerKind, enabled: boolean, status: TrackersS
   const mode = enabled ? 'включён' : 'выключен';
   if (kind === 'github') return [`${mode} · ${authText('gh', status.github)}`];
   const gitlab = status.gitlab;
-  if (gitlab.state === 'hosts') return gitlab.hosts.map((h) => `${h.host}: ${mode} · ${authText('glab', h.auth, h.host)}`);
+  if (gitlab.state === 'hosts') {
+    // glab перечисляет и хосты, куда пользователь не входил (gitlab.com по умолчанию) - в настройках они шум.
+    const hosts = gitlab.hosts.filter((h) => h.auth.state !== 'logged-out');
+    if (hosts.length) return hosts.map((h) => `${h.host}: ${mode} · ${authText('glab', h.auth, h.host)}`);
+    return [`${mode} · ${authText('glab', { state: 'logged-out' })}`];
+  }
   return [`${mode} · ${authText('glab', gitlab)}`];
 }
