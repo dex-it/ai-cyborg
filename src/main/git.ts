@@ -25,8 +25,8 @@ const REPO_SCOPES = new Set(['local', 'worktree']);
 // Глубже git status спустился бы без перекрытия, поэтому превышение предела - ошибка, а не обрезка.
 const MAX_DEPTH = 8;
 
-const isDir = (p: string) => fs.promises.stat(p).then((s) => s.isDirectory(), () => false);
-const exists = (p: string) => fs.promises.stat(p).then(() => true, () => false);
+const isDir = (p: fs.PathLike) => fs.promises.stat(p).then((s) => s.isDirectory(), () => false);
+const exists = (p: fs.PathLike) => fs.promises.stat(p).then(() => true, () => false);
 
 // `git status` гоняет clean-фильтр по файлам с изменившимися stat-данными, а драйвер фильтра задаётся ключами конфига
 // репозитория; отключить фильтры одним ключом нельзя, поэтому ключи репозитория и вложенных (их status запускает дочерним
@@ -53,14 +53,24 @@ async function repoFilterKeys(dir: string, depth = 0): Promise<Set<string>> {
     if (!Buffer.from(bytes.toString('utf8'), 'utf8').equals(bytes)) throw new Error('ключ фильтра не в UTF-8, перекрыть нельзя');
     keys.add(bytes.toString('utf8'));
   }
-  const index = (await git(dir, ['ls-files', '--stage', '-z'])).split('\0');
-  const subs = index.filter((e) => e.startsWith('160000 ')).map((e) => path.resolve(dir, e.slice(e.indexOf('\t') + 1)));
+  // Путь gitlink может быть не UTF-8: строкой он не представим, поэтому читается байтами и в fs идёт как Buffer.
+  const index = (await gitRaw(dir, ['ls-files', '--stage', '-z'])).toString('latin1').split('\0');
   const populated: string[] = [];
-  for (const sub of subs) {
-    const rel = path.relative(dir, sub);
+  for (const entry of index) {
+    if (!entry.startsWith('160000 ')) continue;
+    const bytes = Buffer.from(entry.slice(entry.indexOf('\t') + 1), 'latin1');
+    const text = bytes.toString('utf8');
+    const utf8 = Buffer.from(text, 'utf8').equals(bytes);
+    if (utf8) {
+      // git не отдаёт компонент `..` и абсолютный путь, но имя `..x` законно: отсекается только выход из dir.
+      const rel = path.relative(dir, path.resolve(dir, text));
+      if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) continue;
+    }
+    const sub = Buffer.concat([Buffer.from(dir), Buffer.from(path.sep), bytes]);
     // Незаполненный подмодуль git status не открывает, а `git -C` из него нашёл бы родителя и зациклил рекурсию.
-    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) continue;
-    if ((await isDir(sub)) && (await exists(path.join(sub, '.git')))) populated.push(sub);
+    if (!(await isDir(sub)) || !(await exists(Buffer.concat([sub, Buffer.from(path.sep + '.git')])))) continue;
+    if (!utf8) throw new Error('путь вложенного репозитория не в UTF-8, перекрыть его фильтры нельзя');
+    populated.push(path.join(dir, text));
   }
   if (populated.length > 0 && depth >= MAX_DEPTH) throw new Error('вложенность репозиториев глубже предела');
   for (const nested of await Promise.all(populated.map((sub) => repoFilterKeys(sub, depth + 1)))) {

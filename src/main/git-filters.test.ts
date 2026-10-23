@@ -200,3 +200,78 @@ test('gitStatus при вложенности глубже предела воз
 
   assert.deepEqual(await gitStatus(path.join(base, 'repo')), {});
 });
+
+// Gitlink заводится через index-info: путь с байтом 0xff в аргумент командной строки строкой не передать.
+function addGitlink(repo: string, inner: string, relPath: Buffer): void {
+  const sha = execFileSync('git', ['-C', inner, 'rev-parse', 'HEAD']).toString().trim();
+  execFileSync('git', ['-C', repo, 'update-index', '--add', '-z', '--index-info'], {
+    input: Buffer.concat([Buffer.from(`160000 ${sha}\t`), relPath, Buffer.from('\0')]),
+  });
+}
+
+function repoWithPopulatedSub(base: string, relPath: Buffer, script: string): string {
+  const inner = path.join(base, 'inner');
+  makeRepo(inner);
+  sh(inner, 'config', 'filter.x.clean', script);
+  touchOld(path.join(inner, 'f.txt'));
+  const repo = path.join(base, 'repo');
+  fs.mkdirSync(repo);
+  sh(repo, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  addGitlink(repo, inner, relPath);
+  fs.renameSync(Buffer.from(inner), Buffer.concat([Buffer.from(repo + '/'), relPath]));
+  return repo;
+}
+
+test('gitStatus перекрывает фильтр заполненного подмодуля с именем на две точки', async (t) => {
+  const { base, marker, script } = setup(t);
+  const repo = repoWithPopulatedSub(base, Buffer.from('..x'), script);
+
+  await gitStatus(repo);
+
+  assert.equal(fs.existsSync(marker), false, 'драйвер фильтра подмодуля ..x выполнен');
+});
+
+test('gitStatus с подмодулем по пути не в UTF-8 не запускает его фильтр', async (t) => {
+  const { base, marker, script } = setup(t);
+  const repo = repoWithPopulatedSub(base, Buffer.from([0x70, 0xff, 0x71]), script);
+
+  const status = await gitStatus(repo);
+
+  assert.equal(fs.existsSync(marker), false, 'драйвер фильтра подмодуля выполнен');
+  assert.deepEqual(status, {});
+});
+
+test('gitStatus не перекрывает фильтр из глобального конфига', async (t) => {
+  const { base, marker, script } = setup(t);
+  const global = path.join(base, 'gitconfig');
+  fs.writeFileSync(global, `[filter "x"]\n\tclean = ${script}\n`);
+  const prev = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = global;
+  t.after(() => {
+    if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = prev;
+  });
+  const repo = path.join(base, 'repo');
+  makeRepo(repo);
+  // makeRepo сам гоняет глобальный фильтр через git add.
+  fs.rmSync(marker, { force: true });
+  touchOld(path.join(repo, 'f.txt'));
+
+  await gitStatus(repo);
+
+  assert.equal(fs.existsSync(marker), true, 'доверенный глобальный фильтр перекрыт');
+});
+
+test('gitStatus перекрывает фильтр из worktree-конфига', async (t) => {
+  const { base, marker, script } = setup(t);
+  const repo = path.join(base, 'repo');
+  makeRepo(repo);
+  sh(repo, 'config', 'extensions.worktreeConfig', 'true');
+  sh(repo, 'config', '--worktree', 'filter.x.clean', script);
+  touchOld(path.join(repo, 'f.txt'));
+
+  await gitStatus(repo);
+
+  assert.equal(fs.existsSync(marker), false, 'драйвер фильтра из worktree-конфига выполнен');
+});
