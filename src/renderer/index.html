@@ -14,6 +14,7 @@
           <select id="project-select" title="Проект"></select>
           <button id="project-edit" class="icon-button" title="Свойства проекта">✎</button>
           <button id="project-new" class="icon-button" title="Новый проект">+</button>
+          <button id="settings-open" class="icon-button" title="Настройки">⚙</button>
         </div>
         <header id="tree-header">
           <div id="tree-title"></div>
@@ -25,10 +26,12 @@
       <main id="workspace">
         <nav id="session-strip">
           <div id="session-list"></div>
+          <button id="tasks-toggle" title="Задачи из трекеров">Задачи</button>
           <button id="new-session" title="Новая сессия Claude Code (Ctrl+Shift+N)">+ CC</button>
         </nav>
         <div id="sessions">
           <div id="empty"></div>
+          <div id="tasks-panel" hidden></div>
         </div>
       </main>
     </div>
@@ -53,6 +56,31 @@
         </div>
         <footer>
           <button type="button" id="project-delete" class="danger">Удалить проект</button>
+          <span class="spacer"></span>
+          <button value="cancel" formnovalidate>Отмена</button>
+          <button value="save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog">
+      <form method="dialog">
+        <h2>Настройки</h2>
+        <div class="field">
+          <span>Источники задач</span>
+          <div class="source">
+            <label><input type="checkbox" id="settings-github" /> GitHub</label>
+            <div id="settings-github-status" class="source-status"></div>
+          </div>
+          <div class="source">
+            <label><input type="checkbox" id="settings-gitlab" /> GitLab</label>
+            <div id="settings-gitlab-status" class="source-status"></div>
+          </div>
+          <div class="source">
+            <label class="disabled"><input type="checkbox" disabled /> Jira <span class="hint">пока не поддерживается</span></label>
+          </div>
+        </div>
+        <footer>
           <span class="spacer"></span>
           <button value="cancel" formnovalidate>Отмена</button>
           <button value="save" class="primary">Сохранить</button>

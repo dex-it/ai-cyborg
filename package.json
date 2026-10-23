@@ -7,9 +7,9 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "npm run build && electron .",
-    "test": "node --test 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
-    "postinstall": "electron-rebuild -f -w node-pty"
+    "postinstall": "electron-rebuild -f -w node-pty",
+    "test": "node --test 'src/**/*.test.ts' && node scripts/test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
