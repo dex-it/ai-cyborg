@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DirEntry } from './files';
+import type { MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsState } from './projects';
 import type { TaskRef, TasksResult, TrackerSettings, TrackersStatus } from './trackers';
 
@@ -7,13 +8,15 @@ const api = {
   pickDir: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir', defaultPath),
   loadProjects: (): Promise<ProjectsState> => ipcRenderer.invoke('projects:load'),
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),
-  createSession: (cwd: string, addDirs: string[], task?: TaskRef): Promise<number> =>
-    ipcRenderer.invoke('session:create', cwd, addDirs, task),
+  createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
+    ipcRenderer.invoke('session:create', cwd, addDirs, start),
   loadTrackerSettings: (): Promise<TrackerSettings> => ipcRenderer.invoke('trackers:load'),
   saveTrackerSettings: (settings: TrackerSettings): Promise<void> => ipcRenderer.invoke('trackers:save', settings),
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),
   listTasks: (projectId: string, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> =>
     ipcRenderer.invoke('tasks:list', projectId, assignedToMe, tracked),
+  listMrs: (projectId: string, filter: MrFilter, tracked: MrRef[]): Promise<MrListResult> =>
+    ipcRenderer.invoke('mrs:list', projectId, filter, tracked),
   input: (id: number, data: string): void => ipcRenderer.send('session:input', id, data),
   resize: (id: number, cols: number, rows: number): void => ipcRenderer.send('session:resize', id, cols, rows),
   kill: (id: number): void => ipcRenderer.send('session:kill', id),

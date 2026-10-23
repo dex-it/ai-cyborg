@@ -2,16 +2,16 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
 import { listDir, readTextFile } from './files';
 import { gitBranch, gitRemotes, gitRoot, gitStatus } from './git';
+import { MrsService } from './mrs-service';
+import { validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore, type ProjectsState } from './projects';
 import { SessionManager } from './sessions';
 import {
   createCliRunner,
   sessionDirsAllowed,
-  taskPrompt,
   TrackerSettingsStore,
   TrackersService,
   validateListArgs,
-  validateRef,
   validateSettings,
 } from './trackers';
 
@@ -22,12 +22,15 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
 const projects = new ProjectStore(path.join(app.getPath('userData'), 'projects.json'));
 
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
+const runCli = createCliRunner(app.getPath('userData'));
 const trackers = new TrackersService({
-  run: createCliRunner(app.getPath('userData')),
+  run: runCli,
   remotes: gitRemotes,
   projects: () => projects.load(),
   settings: () => trackerSettings.load(),
 });
+
+const mrs = new MrsService(trackers, runCli);
 
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff');
 
@@ -56,12 +59,12 @@ ipcMain.handle('dialog:pickDir', async (_event, defaultPath?: string) => {
 });
 ipcMain.handle('projects:load', () => projects.load());
 ipcMain.handle('projects:save', (_event, state: ProjectsState) => projects.save(state));
-ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], ref?: unknown) => {
-  if (ref === undefined) return sessions.create(cwd, addDirs);
-  const taskRef = validateRef(ref);
-  if (!taskRef) throw new Error('Некорректная задача');
+ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?: unknown) => {
+  if (start === undefined) return sessions.create(cwd, addDirs);
+  const prompt = validateSessionStart(start);
+  if (!prompt) throw new Error('Некорректный старт сессии');
   if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
-  return sessions.create(cwd, addDirs, taskPrompt(taskRef));
+  return sessions.create(cwd, addDirs, prompt);
 });
 ipcMain.handle('trackers:load', () => trackerSettings.load());
 ipcMain.handle('trackers:save', (_event, settings: unknown) => {
@@ -74,6 +77,11 @@ ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown,
   const args = validateListArgs(projectId, assignedToMe, tracked);
   if (!args) throw new Error('Некорректные аргументы tasks:list');
   return trackers.list(args.projectId, args.assignedToMe, args.tracked);
+});
+ipcMain.handle('mrs:list', (_event, projectId: unknown, filter: unknown, tracked: unknown) => {
+  const args = validateMrListArgs(projectId, filter, tracked);
+  if (!args) throw new Error('Некорректные аргументы mrs:list');
+  return mrs.listMrs(args.projectId, args.filter, args.tracked);
 });
 ipcMain.on('session:input', (_event, id: number, data: string) => sessions.write(id, data));
 ipcMain.on('session:resize', (_event, id: number, cols: number, rows: number) => sessions.resize(id, cols, rows));

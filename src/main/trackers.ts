@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { writeJsonAtomic } from './jsonfile';
-import type { ProjectsState } from './projects';
+import type { Project, ProjectsState } from './projects';
 
 export type TrackerKind = 'github' | 'gitlab';
 
@@ -132,7 +132,7 @@ export function classifyRemote(url: string, gitlabHosts: ReadonlySet<string>): {
 
 export const taskKey = (ref: TaskRef): string => `${ref.kind}:${ref.host}/${ref.path.toLowerCase()}#${ref.number}`;
 
-const sourceKey = (ref: Pick<TaskRef, 'kind' | 'host' | 'path'>): string => `${ref.kind}:${ref.host}/${ref.path.toLowerCase()}`;
+export const sourceKey = (ref: Pick<TaskRef, 'kind' | 'host' | 'path'>): string => `${ref.kind}:${ref.host}/${ref.path.toLowerCase()}`;
 
 export const taskUrl = (ref: TaskRef): string =>
   ref.kind === 'github' ? `https://github.com/${ref.path}/issues/${ref.number}` : `https://${ref.host}/${ref.path}/-/issues/${ref.number}`;
@@ -283,18 +283,19 @@ export function createCliRunner(cwd: string): CliRunner {
 
 // ---------- сервис ----------
 
-interface Source {
+export interface Source {
   kind: TrackerKind;
   host: string;
   path: string;
   repos: string[];
 }
 
-type Fetched = { values: unknown[] } | { error?: string; note?: string };
+export type Fetched = { values: unknown[] } | { error?: string; note?: string };
 
 const cliName = (kind: TrackerKind): 'gh' | 'glab' => (kind === 'github' ? 'gh' : 'glab');
 
-function interpret(kind: TrackerKind, res: CliResult): Fetched {
+/** goneNote: пометка для HTTP 410; null - 410 такой же отказ, как прочие. */
+export function interpret(kind: TrackerKind, res: CliResult, goneNote: string | null = 'задачи в репозитории отключены'): Fetched {
   const cli = cliName(kind);
   if (res.missing) return { error: `${cli} не установлен` };
   if (res.failure === 'timeout') return { error: 'трекер не ответил за 120 с' };
@@ -303,7 +304,7 @@ function interpret(kind: TrackerKind, res: CliResult): Fetched {
   // glab api выходит с кодом 0 и при HTTP-ошибке: отказ виден по stderr.
   const http = /HTTP (\d{3})/.exec(res.stderr);
   const httpStatus = http ? Number(http[1]) : 0;
-  if (httpStatus === 410) return { note: 'задачи в репозитории отключены' };
+  if (httpStatus === 410 && goneNote !== null) return { note: goneNote };
   if (res.code !== 0 || httpStatus >= 400) return { error: firstLine(res.stderr) || `${cli} завершился с кодом ${res.code}` };
   let parsed: unknown[];
   try {
@@ -339,12 +340,24 @@ function toTask(source: Source, raw: unknown): Task | null {
   };
 }
 
-const enc = encodeURIComponent;
+export const enc = encodeURIComponent;
 
 function hostDownReason(host: string, auth: AuthState): string {
   if (auth.state === 'logged-out') return `вход в ${host} не выполнен: glab auth login --hostname ${host}`;
   if (auth.state === 'error') return `проверка входа в ${host} не удалась: ${auth.message}`;
   return `вход в ${host} не подтверждён`;
+}
+
+export interface ResolvedSources {
+  project: Project | undefined;
+  enabled: TrackerSettings;
+  sources: Map<string, Source>;
+  blocked: Map<string, SourceResult>;
+  /** Отказы, не привязанные к репозиторию (glab не установлен или не залогинен). */
+  preErrors: SourceResult[];
+  gitlabUsers: Map<string, string>;
+  /** Логин gh; считается один раз на выборку. */
+  loginOf: () => Promise<string | { error: string }>;
 }
 
 export class TrackersService {
@@ -372,14 +385,22 @@ export class TrackersService {
     return hosts.length ? { hosts } : { state: 'logged-out' };
   }
 
-  async list(projectId: string, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> {
+  /** Источники проекта: remote его репозиториев, признанные трекерами; общий разбор для задач и MR. */
+  async resolveSources(projectId: string): Promise<ResolvedSources> {
     const enabled = this.deps.settings();
-    const result: TasksResult = { tasks: [], sources: [], tracked: [], enabled };
     const project = this.deps.projects().projects.find((p) => p.id === projectId);
-    if (!project) return { ...result, error: 'Проект не найден' };
-    if (!enabled.github && !enabled.gitlab) return result;
+    const resolved: ResolvedSources = {
+      project,
+      enabled,
+      sources: new Map(),
+      blocked: new Map(),
+      preErrors: [],
+      gitlabUsers: new Map(),
+      loginOf: () => Promise.resolve({ error: 'gh не залогинен' }),
+    };
+    if (!project || (!enabled.github && !enabled.gitlab)) return resolved;
 
-    const gitlabUsers = new Map<string, string>();
+    const { gitlabUsers, sources, blocked } = resolved;
     // Хосты glab, на которых вход не подтверждён: remote такого хоста - источник с причиной, а не отсутствие remote.
     const gitlabDown = new Map<string, string>();
     if (enabled.gitlab) {
@@ -390,12 +411,10 @@ export class TrackersService {
           else gitlabDown.set(host, hostDownReason(host, auth));
         }
       } else {
-        result.sources.push({ kind: 'gitlab', host: '', path: '', error: status.state === 'missing' ? 'glab не установлен' : 'вход glab не выполнен' });
+        resolved.preErrors.push({ kind: 'gitlab', host: '', path: '', error: status.state === 'missing' ? 'glab не установлен' : 'вход glab не выполнен' });
       }
     }
 
-    const sources = new Map<string, Source>();
-    const blocked = new Map<string, SourceResult>();
     const knownHosts = new Set([...gitlabUsers.keys(), ...gitlabDown.keys()]);
     const remotes = await Promise.all(project.repos.map(async (repo) => ({ repo, urls: await this.deps.remotes(repo) })));
     for (const { repo, urls } of remotes) {
@@ -414,10 +433,18 @@ export class TrackersService {
     }
 
     let githubLogin: Promise<string | { error: string }> | undefined;
-    const loginOf = (): Promise<string | { error: string }> =>
+    resolved.loginOf = () =>
       (githubLogin ??= this.githubAuth().then((a) =>
         a.state === 'logged-in' ? a.user : { error: a.state === 'logged-out' ? 'gh не залогинен' : a.state === 'missing' ? 'gh не установлен' : a.state === 'error' ? a.message : '' },
       ));
+    return resolved;
+  }
+
+  async list(projectId: string, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> {
+    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.resolveSources(projectId);
+    const result: TasksResult = { tasks: [], sources: [...preErrors], tracked: [], enabled };
+    if (!project) return { ...result, error: 'Проект не найден' };
+    if (!enabled.github && !enabled.gitlab) return result;
 
     const fetched = await Promise.all(
       [...sources.values()].map(async (source) => {

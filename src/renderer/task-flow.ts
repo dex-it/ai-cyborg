@@ -3,11 +3,14 @@
 interface TaskSessionLike {
   project: { id: string };
   task?: { key: string };
+  mr?: { key: string };
 }
+
+const sessionKey = (s: TaskSessionLike): string | undefined => s.task?.key ?? s.mr?.key;
 
 const compound = (projectId: string, taskKey: string): string => `${projectId}\u0000${taskKey}`;
 
-/** Сессии, начатые из задач, в разрезе проекта: общий remote у двух проектов не смешивает их сессии. */
+/** Сессии, начатые из задач и MR, в разрезе проекта: общий remote у двух проектов не смешивает их сессии. */
 export class TaskSessionRegistry<S extends TaskSessionLike> {
   private readonly map = new Map<string, S>();
 
@@ -16,13 +19,15 @@ export class TaskSessionRegistry<S extends TaskSessionLike> {
   }
 
   add(session: S): void {
-    if (session.task) this.map.set(compound(session.project.id, session.task.key), session);
+    const key = sessionKey(session);
+    if (key) this.map.set(compound(session.project.id, key), session);
   }
 
   /** Удаляет запись, только если она указывает на эту сессию. */
   remove(session: S): void {
-    if (!session.task) return;
-    const key = compound(session.project.id, session.task.key);
+    const sk = sessionKey(session);
+    if (!sk) return;
+    const key = compound(session.project.id, sk);
     if (this.map.get(key) === session) this.map.delete(key);
   }
 }

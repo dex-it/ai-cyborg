@@ -1,6 +1,7 @@
 import type { Project } from '../main/projects';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
-import { byId, el } from './dom';
+import { el } from './dom';
+import type { PanelView } from './panel';
 import { RefreshGate } from './task-flow';
 import { emptyView, SORT_OPTIONS, sortTasks, sourceLabel, statusText, type SortKey } from './task-model';
 
@@ -16,7 +17,7 @@ export interface TaskAction {
   run: (task: Task, anchor: HTMLElement) => void;
 }
 
-export interface TasksPanelHost {
+export interface TasksViewHost {
   project(): Project | null;
   /** Пояснение вместо панели, пока нет проекта с репозиториями; null - проект готов. */
   projectHint(): string[] | null;
@@ -25,26 +26,22 @@ export interface TasksPanelHost {
   sessionOf(key: string): OpenTaskSession | undefined;
   startTask(task: Task, anchor: HTMLElement): void;
   openSettings(): void;
-  onClosed(): void;
 }
 
 const api = window.cyborg;
 
-export class TasksPanel {
-  private readonly root = byId('tasks-panel');
-  private readonly toggle = byId<HTMLButtonElement>('tasks-toggle');
-  private readonly sessionsEl = byId('sessions');
+export class TasksView implements PanelView {
+  readonly element = el('div', 'panel-view');
   private readonly body = el('div', 'tasks-body');
   private readonly assigned = document.createElement('input');
   private readonly sort = document.createElement('select');
   private readonly reload = el('button', '', 'Обновить') as HTMLButtonElement;
   private readonly actions: TaskAction[];
-  private opened = false;
   private readonly gate = new RefreshGate();
   private result: TasksResult | null = null;
   private sortKey: SortKey = 'updated';
 
-  constructor(private readonly host: TasksPanelHost) {
+  constructor(private readonly host: TasksViewHost) {
     this.actions = [
       {
         id: 'start',
@@ -71,35 +68,13 @@ export class TasksPanel {
     sortLabel.append(document.createTextNode('Сортировка '), this.sort);
     const header = el('header', 'tasks-header');
     header.append(el('h2', '', 'Задачи'), filter, sortLabel, el('span', 'spacer'), this.reload);
-    this.root.replaceChildren(header, this.body);
-    this.toggle.addEventListener('click', () => (this.opened ? this.close() : this.open()));
-  }
-
-  get isOpen(): boolean {
-    return this.opened;
-  }
-
-  open(): void {
-    this.opened = true;
-    this.root.hidden = false;
-    this.sessionsEl.classList.add('tasks-open');
-    this.toggle.classList.add('active');
-    void this.refresh();
-  }
-
-  close(): void {
-    if (!this.opened) return;
-    this.opened = false;
-    this.root.hidden = true;
-    this.sessionsEl.classList.remove('tasks-open');
-    this.toggle.classList.remove('active');
-    this.host.onClosed();
+    this.element.replaceChildren(header, this.body);
   }
 
   onProjectChanged(): void {
+    this.gate.cancel();
     this.result = null;
-    // Смена проекта - новый вопрос: идёт в обход флага загрузки, ответ прежнего отбросит токен.
-    if (this.opened) void this.refresh(true);
+    this.render();
   }
 
   async refresh(force = false): Promise<void> {

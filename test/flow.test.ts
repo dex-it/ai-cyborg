@@ -2,8 +2,30 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { decideStart, RefreshGate, StartGuard, TaskSessionRegistry } from '../src/renderer/task-flow';
 
-type S = { project: { id: string }; task?: { key: string } };
+type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
 const sess = (project: string, key: string): S => ({ project: { id: project }, task: { key } });
+
+describe('TaskSessionRegistry: сессии MR', () => {
+  it('задача #5 и MR !5 одного репозитория - разные сессии; сессия с mr регистрируется и снимается', () => {
+    const reg = new TaskSessionRegistry<S>();
+    const task = sess('A', 'github:github.com/o/r#5');
+    const mr: S = { project: { id: 'A' }, mr: { key: 'github:github.com/o/r!5' } };
+    reg.add(task);
+    reg.add(mr);
+    assert.equal(reg.get('A', 'github:github.com/o/r#5'), task);
+    assert.equal(reg.get('A', 'github:github.com/o/r!5'), mr);
+    reg.remove(mr);
+    assert.equal(reg.get('A', 'github:github.com/o/r!5'), undefined);
+    assert.equal(reg.get('A', 'github:github.com/o/r#5'), task);
+  });
+  it('повторный клик до появления сессии MR: StartGuard не пускает второй старт; решение по repos MR', () => {
+    const guard = new StartGuard();
+    assert.equal(guard.begin('A', 'k!1'), true);
+    assert.equal(guard.begin('A', 'k!1'), false);
+    assert.deepEqual(decideStart(false, ['/a', '/b'], ['/a', '/b']), { action: 'menu', repos: ['/a', '/b'] });
+    assert.deepEqual(decideStart(false, ['/gone'], ['/a']), { action: 'none' });
+  });
+});
 
 describe('TaskSessionRegistry', () => {
   it('общий remote у двух проектов: сессии не смешиваются, закрытие одной не трогает другую', () => {

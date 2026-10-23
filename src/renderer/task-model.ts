@@ -14,10 +14,12 @@ const time = (iso: string): number => {
 };
 
 /** Новые сверху; при равенстве порядок по ключу, чтобы список не прыгал между обновлениями. */
-export function sortTasks(tasks: Task[], by: SortKey): Task[] {
-  const value = (t: Task): number => (by === 'number' ? t.number : time(by === 'created' ? t.createdAt : t.updatedAt));
-  return [...tasks].sort((a, b) => value(b) - value(a) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+export function sortByKey<T extends { number: number; key: string; createdAt: string; updatedAt: string }>(items: T[], by: SortKey): T[] {
+  const value = (t: T): number => (by === 'number' ? t.number : time(by === 'created' ? t.createdAt : t.updatedAt));
+  return [...items].sort((a, b) => value(b) - value(a) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
+
+export const sortTasks = (tasks: Task[], by: SortKey): Task[] => sortByKey(tasks, by);
 
 type Titled = Pick<Task, 'number' | 'title' | 'state' | 'workflow'>;
 
@@ -37,13 +39,21 @@ export const sourceLabel = (s: SourceResult): string => {
   return s.path ? `${name} ${s.host === 'github.com' ? '' : `${s.host}/`}${s.path}` : name;
 };
 
+export type EmptyView = 'disabled' | 'no-remotes' | 'none';
+
+/** Чем заполнить панель, когда записей нет: null - показывать список. */
+export function emptyOf(enabled: { github: boolean; gitlab: boolean }, count: number, sources: SourceResult[], none: 'none'): EmptyView | null {
+  if (!enabled.github && !enabled.gitlab) return 'disabled';
+  if (count) return null;
+  const real = sources.filter((s) => s.path);
+  if (!real.length) return 'no-remotes';
+  return real.some((s) => !s.error) ? none : null;
+}
+
 /** Чем заполнить панель, когда задач нет: null - показывать список. */
 export function emptyView(result: TasksResult): 'disabled' | 'no-remotes' | 'no-tasks' | null {
-  if (!result.enabled.github && !result.enabled.gitlab) return 'disabled';
-  if (result.tasks.length) return null;
-  const real = result.sources.filter((s) => s.path);
-  if (!real.length) return 'no-remotes';
-  return real.some((s) => !s.error) ? 'no-tasks' : null;
+  const view = emptyOf(result.enabled, result.tasks.length, result.sources, 'none');
+  return view === 'none' ? 'no-tasks' : view;
 }
 
 function authText(cli: 'gh' | 'glab', auth: AuthState, host?: string): string {

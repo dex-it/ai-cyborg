@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Task, TasksResult, TrackersStatus } from '../src/main/trackers';
-import { authLines, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
+import type { Mr, MrListResult } from '../src/main/mrs';
+import { mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
+import { authLines, sortByKey, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
 
 const task = (n: number, over: Partial<Task> = {}): Task => ({
   kind: 'github', host: 'github.com', path: 'o/r', number: n, key: `github:github.com/o/r#${n}`, title: `T${n}`, state: 'open',
@@ -81,5 +83,56 @@ describe('authLines', () => {
     const err = authLines('github', true, status({ github: { state: 'error', message: 'нет сети' } }))[0];
     assert.match(err, /Проверка не удалась: нет сети/);
     assert.ok(!/auth login/.test(err));
+  });
+});
+
+const mr = (n: number, over: Partial<Mr> = {}): Mr => ({
+  kind: 'gitlab', host: 'git.corp', path: 'g/p', number: n, key: `gitlab:git.corp/g/p!${n}`, title: `M${n}`, author: 'bob', sourceBranch: 'feat',
+  targetBranch: 'main', draft: false, state: 'open', pipeline: 'успешен', approvals: 'апрувов: 1', url: `https://git.corp/g/p/-/merge_requests/${n}`,
+  createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', own: false, repos: ['/a'], ...over,
+});
+
+describe('MR: сортировка', () => {
+  it('sortByKey: большее сверху, при равенстве по ключу', () => {
+    const a = mr(1, { updatedAt: '2026-03-01T00:00:00Z' });
+    const b = mr(2, { updatedAt: '2026-03-01T00:00:00Z' });
+    const c = mr(3, { updatedAt: 'мусор' });
+    assert.deepEqual(sortByKey([c, b, a], 'updated').map((m) => m.number), [1, 2, 3]);
+    assert.deepEqual(sortByKey([a, b, c], 'number').map((m) => m.number), [3, 2, 1]);
+  });
+});
+
+describe('MR: заголовки и действия', () => {
+  it('статус: открыт, черновик, влит, закрыт', () => {
+    assert.deepEqual([mr(1), mr(1, { draft: true }), mr(1, { state: 'merged' }), mr(1, { state: 'closed', draft: true })].map(mrStatusText), ['открыт', 'черновик', 'влит', 'закрыт']);
+  });
+  it('заголовок сессии и подсказка; пайплайн не получен - «—»; номер с префиксом вида', () => {
+    assert.equal(mrSessionLabel(3, mr(7, { title: 'Фикс' })), 'CC3 · !7 Фикс · открыт · успешен');
+    assert.equal(mrSessionLabel(3, mr(7, { kind: 'github', pipeline: null, state: 'merged' })), 'CC3 · #7 M7 · влит · —');
+    assert.equal(mrTooltip(mr(7)), '!7 M7\nСтатус: открыт\nПайплайн: успешен\nhttps://git.corp/g/p/-/merge_requests/7');
+  });
+  it('действие по автору: чужой - ревью, свой - доработка', () => {
+    assert.deepEqual([mrIntent(mr(1)), mrActionLabel(mr(1))], ['review', 'Ревью']);
+    assert.deepEqual([mrIntent(mr(1, { own: true })), mrActionLabel(mr(1, { own: true }))], ['rework', 'Доработать']);
+  });
+  it('строка: автор, ветки, черновик, пайплайн, апрувы; не полученное - «—»; название буквально текстом', () => {
+    assert.equal(mrMeta(mr(1, { draft: true })), 'bob · feat → main · черновик · пайплайн: успешен · апрувов: 1');
+    assert.equal(mrMeta(mr(1, { pipeline: null, approvals: null })), 'bob · feat → main · пайплайн: — · апрувов: —');
+    assert.equal(mrSessionLabel(1, mr(1, { title: '<img src=x onerror=1>' })).includes('<img src=x onerror=1>'), true);
+  });
+});
+
+describe('MR: пустые состояния', () => {
+  const result = (over: Partial<MrListResult>): MrListResult => ({ mrs: [], sources: [], tracked: [], enabled: { github: true, gitlab: false }, ...over });
+  const src = (error?: string) => ({ kind: 'github' as const, host: 'github.com', path: 'o/r', error });
+  it('четыре исхода', () => {
+    assert.equal(mrEmptyView(result({ enabled: { github: false, gitlab: false } })), 'disabled');
+    assert.equal(mrEmptyView(result({})), 'no-remotes');
+    assert.equal(mrEmptyView(result({ sources: [src()] })), 'no-mrs');
+    assert.equal(mrEmptyView(result({ sources: [src('boom')] })), null);
+    assert.equal(mrEmptyView(result({ mrs: [mr(1)], sources: [src()] })), null);
+  });
+  it('glab-ошибка без path не заменяет «нет remote»', () => {
+    assert.equal(mrEmptyView(result({ sources: [{ kind: 'gitlab', host: '', path: '', error: 'x' }] })), 'no-remotes');
   });
 });

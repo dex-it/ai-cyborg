@@ -1,12 +1,14 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { Project, ProjectsState } from '../main/projects';
+import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
 import { initSettings } from './settings';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
+import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
+import { TrackerPanel } from './panel';
 import { findTask, sessionLabel, taskTooltip } from './task-model';
-import { TasksPanel } from './tasks';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { TreeView, type TreeRoot } from './tree';
 import { applyMonacoTheme, FileViewer } from './viewer';
@@ -28,6 +30,8 @@ interface Session {
   exited: boolean;
   /** Задача трекера, из которой начата сессия; живёт только в памяти интерфейса. */
   task?: Task;
+  /** MR/PR, из которого начата сессия; тоже только в памяти интерфейса. */
+  mr?: Mr;
   color: string;
   term: Terminal;
   fit: FitAddon;
@@ -191,13 +195,14 @@ function treeRoots(s: Session): TreeRoot[] {
 }
 
 function updateSessionLabels(s: Session): void {
-  const label = s.task ? sessionLabel(s.id, s.task) : `CC${s.id} · ${rootLabel(s)}`;
+  const label = s.mr ? mrSessionLabel(s.id, s.mr) : s.task ? sessionLabel(s.id, s.task) : `CC${s.id} · ${rootLabel(s)}`;
+  const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : '';
   (s.stripTab.querySelector('.label') as HTMLElement).textContent = label;
-  s.stripTab.title = s.task ? `${taskTooltip(s.task)}\n${s.cwd}` : s.cwd;
+  s.stripTab.title = tooltip ? `${tooltip}\n${s.cwd}` : s.cwd;
   s.stripTab.classList.toggle('exited', s.exited);
   if (s === active) {
     treeTitle.textContent = label;
-    treeTitle.title = s.task ? taskTooltip(s.task) : '';
+    treeTitle.title = tooltip;
     // Шапка обрезает путь слева через direction: rtl; LRM не даёт ведущему «/» уехать в конец.
     treeMeta.textContent = `‎${s.exited ? `завершена · ${s.cwd}` : s.cwd}`;
   }
@@ -323,25 +328,31 @@ function createTerminal(id: number): Terminal {
   return term;
 }
 
-async function newSession(repo: string, task?: Task): Promise<void> {
+type StartFrom = { task: Task } | { mr: Mr; intent: MrIntent };
+
+const refOf = (x: MrRef): MrRef => ({ kind: x.kind, host: x.host, path: x.path, number: x.number });
+
+async function newSession(repo: string, start?: StartFrom): Promise<void> {
   const owner = project;
   if (!owner) return;
+  const key = start && ('task' in start ? start.task.key : start.mr.key);
   // Ключ держится до появления сессии в taskSessions: двойной клик «Начать» не создаст вторую.
-  if (task) {
-    if (!startGuard.begin(owner.id, task.key)) return;
+  if (key) {
+    if (!startGuard.begin(owner.id, key)) return;
   }
   try {
-    await createSessionView(owner, repo, task);
+    await createSessionView(owner, repo, start);
   } finally {
-    if (task) startGuard.end(owner.id, task.key);
+    if (key) startGuard.end(owner.id, key);
   }
 }
 
-async function createSessionView(owner: Project, repo: string, task?: Task): Promise<void> {
+async function createSessionView(owner: Project, repo: string, start?: StartFrom): Promise<void> {
+  // В канал идут только ссылка и намерение: название, ветки и автор в первое сообщение не попадают.
   const id = await api.createSession(
     repo,
     owner.repos.filter((r) => r !== repo),
-    task && { kind: task.kind, host: task.host, path: task.path, number: task.number },
+    start && ('task' in start ? { task: refOf(start.task) } : { mr: refOf(start.mr), intent: start.intent }),
   );
   const root = (await api.gitRoot(repo)) ?? repo;
   const color = sessionColor(colorIndex++);
@@ -374,7 +385,8 @@ async function createSessionView(owner: Project, repo: string, task?: Task): Pro
     cwd: repo,
     root,
     exited: false,
-    task,
+    task: start && 'task' in start ? start.task : undefined,
+    mr: start && 'mr' in start ? start.mr : undefined,
     color,
     term,
     fit,
@@ -544,8 +556,35 @@ function startTask(task: Task, anchor: HTMLElement): void {
   const existing = taskSessions.get(project.id, task.key);
   const decision = decideStart(!!existing, task.repos, project.repos);
   if (decision.action === 'switch' && existing) activateSession(existing);
-  else if (decision.action === 'create') void newSession(decision.repo, task);
-  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, task));
+  else if (decision.action === 'create') void newSession(decision.repo, { task });
+  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, { task }));
+}
+
+function startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement): void {
+  if (!project) return;
+  const existing = taskSessions.get(project.id, mr.key);
+  const decision = decideStart(!!existing, mr.repos, project.repos);
+  if (decision.action === 'switch' && existing) activateSession(existing);
+  else if (decision.action === 'create') void newSession(decision.repo, { mr, intent });
+  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где открыть MR', (repo) => void newSession(repo, { mr, intent }));
+}
+
+function applyMrStatuses(result: MrListResult): void {
+  for (const s of sessions) {
+    if (!s.mr) continue;
+    const fresh = findMr(result, s.mr.key);
+    if (!fresh) continue;
+    s.mr = { ...fresh, repos: s.mr.repos };
+    updateSessionLabels(s);
+  }
+}
+
+function trackedMrRefs(): MrRef[] {
+  const refs = new Map<string, MrRef>();
+  for (const s of sessions) {
+    if (s.project === project && s.mr) refs.set(s.mr.key, refOf(s.mr));
+  }
+  return [...refs.values()];
 }
 
 function applyStatuses(result: TasksResult): void {
@@ -567,18 +606,29 @@ function trackedRefs(): TaskRef[] {
 }
 
 const settings = initSettings(() => {
-  if (panel.isOpen) void panel.refresh(true);
+  if (panel.isOpen) void panel.refreshActive(true);
 });
 byId('settings-open').addEventListener('click', () => settings.open());
 
-const panel = new TasksPanel({
-  project: () => project,
-  projectHint,
-  trackedRefs,
-  applyStatuses,
-  sessionOf: (key) => (project ? taskSessions.get(project.id, key) : undefined),
-  startTask,
-  openSettings: () => settings.open(),
+const panel = new TrackerPanel({
+  tasks: {
+    project: () => project,
+    projectHint,
+    trackedRefs,
+    applyStatuses,
+    sessionOf: (key) => (project ? taskSessions.get(project.id, key) : undefined),
+    startTask,
+    openSettings: () => settings.open(),
+  },
+  mrs: {
+    project: () => project,
+    projectHint,
+    trackedRefs: trackedMrRefs,
+    applyStatuses: applyMrStatuses,
+    sessionOf: (key) => (project ? taskSessions.get(project.id, key) : undefined),
+    startMr,
+    openSettings: () => settings.open(),
+  },
   onClosed: () =>
     requestAnimationFrame(() => {
       if (!active) return;
