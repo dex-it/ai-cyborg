@@ -1,8 +1,11 @@
 import { execFile } from 'node:child_process';
 
+// Конфиг репозитория из cwd не доверенный: ключи, исполняющие команды, отключаются при каждом вызове.
+const SAFE_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+
 function git(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('git', ['-C', cwd, ...args], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) =>
+    execFile('git', [...SAFE_CONFIG, '-C', cwd, ...args], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) =>
       error ? reject(error) : resolve(stdout),
     );
   });

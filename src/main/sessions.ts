@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as pty from 'node-pty';
+import { createEventsFile, prepareEventsDir } from './events-store';
 
 type Emit = (channel: string, payload: unknown) => void;
 
@@ -60,7 +61,7 @@ export class SessionManager {
 
   constructor(userData: string, private readonly emit: Emit) {
     this.eventsDir = path.join(userData, 'sessions');
-    fs.mkdirSync(this.eventsDir, { recursive: true });
+    prepareEventsDir(this.eventsDir);
     this.removeOrphanedEvents();
     this.settingsFile = path.join(userData, 'claude-hooks.json');
     const hooks = Object.fromEntries(
@@ -75,7 +76,7 @@ export class SessionManager {
   create(cwd: string, addDirs: string[]): number {
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
-    fs.writeFileSync(eventsFile, '');
+    createEventsFile(eventsFile);
     const shell = process.env.SHELL || '/bin/bash';
     const args = addDirs.length ? ['--add-dir', ...addDirs] : [];
     // Логин-шелл даёт PATH пользователя: из меню приложений Electron стартует без ~/.local/bin.
