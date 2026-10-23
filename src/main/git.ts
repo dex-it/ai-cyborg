@@ -1,43 +1,69 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
 // Конфиг репозитория из cwd не доверенный: ключи, исполняющие команды, отключаются при каждом вызове.
 const SAFE_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
 
-function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+function gitRaw(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       [...SAFE_CONFIG, '-C', cwd, ...args],
-      { maxBuffer: 64 * 1024 * 1024, env: env ? { ...process.env, ...env } : process.env },
+      { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer', env: env ? { ...process.env, ...env } : process.env },
       (error, stdout) => (error ? reject(error) : resolve(stdout)),
     );
   });
 }
 
+async function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+  return (await gitRaw(cwd, args, env)).toString('utf8');
+}
+
 const FILTER_KEY = /^filter\..+\.(clean|process|required)$/;
 const REPO_SCOPES = new Set(['local', 'worktree']);
+// Глубже git status спустился бы без перекрытия, поэтому превышение предела - ошибка, а не обрезка.
+const MAX_DEPTH = 8;
+
+const isDir = (p: string) => fs.promises.stat(p).then((s) => s.isDirectory(), () => false);
+const exists = (p: string) => fs.promises.stat(p).then(() => true, () => false);
 
 // `git status` гоняет clean-фильтр по файлам с изменившимися stat-данными, а драйвер фильтра задаётся ключами конфига
 // репозитория; отключить фильтры одним ключом нельзя, поэтому ключи репозитория и вложенных (их status запускает дочерним
 // процессом с тем же окружением) перекрываются через GIT_CONFIG_COUNT: в отличие от -c, имя ключа берётся как есть.
 // Фильтры из пользовательского и системного конфига доверенные и остаются.
-async function repoFilterKeys(dir: string): Promise<Set<string>> {
+// Сбор ключей не должен молча давать неполный набор: любая ошибка, кроме «нет совпадений», уходит наверх.
+async function repoFilterKeys(dir: string, depth = 0): Promise<Set<string>> {
   const keys = new Set<string>();
+  let raw: Buffer;
   try {
-    const cfg = (await git(dir, ['config', '--show-scope', '--null', '--name-only', '--get-regexp', FILTER_KEY.source])).split('\0');
-    for (let i = 0; i + 1 < cfg.length; i += 2) if (REPO_SCOPES.has(cfg[i]) && FILTER_KEY.test(cfg[i + 1])) keys.add(cfg[i + 1]);
-  } catch {
-    // ключей нет (код 1) либо это не репозиторий
+    raw = await gitRaw(dir, ['config', '--show-scope', '--null', '--name-only', '--get-regexp', FILTER_KEY.source], {
+      LC_ALL: 'C',
+    });
+  } catch (e) {
+    if ((e as { code?: unknown }).code !== 1) throw e;
+    raw = Buffer.alloc(0);
   }
-  let subs: string[] = [];
-  try {
-    const index = (await git(dir, ['ls-files', '--stage', '-z'])).split('\0');
-    subs = index.filter((e) => e.startsWith('160000 ')).map((e) => e.slice(e.indexOf('\t') + 1));
-  } catch {
-    // индекса нет
+  // LC_ALL=C выше: в UTF-8 локали `.` в ERE git не матчит невалидный UTF-8, и такой ключ не попал бы в вывод.
+  // latin1 сохраняет байты один в один; ключ отбирает git, повторная проверка именем в JS расходилась бы с его ERE.
+  const cfg = raw.toString('latin1').split('\0');
+  for (let i = 0; i + 1 < cfg.length; i += 2) {
+    if (!REPO_SCOPES.has(cfg[i])) continue;
+    const bytes = Buffer.from(cfg[i + 1], 'latin1');
+    if (!Buffer.from(bytes.toString('utf8'), 'utf8').equals(bytes)) throw new Error('ключ фильтра не в UTF-8, перекрыть нельзя');
+    keys.add(bytes.toString('utf8'));
   }
-  for (const nested of await Promise.all(subs.map((sub) => repoFilterKeys(path.join(dir, sub))))) {
+  const index = (await git(dir, ['ls-files', '--stage', '-z'])).split('\0');
+  const subs = index.filter((e) => e.startsWith('160000 ')).map((e) => path.resolve(dir, e.slice(e.indexOf('\t') + 1)));
+  const populated: string[] = [];
+  for (const sub of subs) {
+    const rel = path.relative(dir, sub);
+    // Незаполненный подмодуль git status не открывает, а `git -C` из него нашёл бы родителя и зациклил рекурсию.
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+    if ((await isDir(sub)) && (await exists(path.join(sub, '.git')))) populated.push(sub);
+  }
+  if (populated.length > 0 && depth >= MAX_DEPTH) throw new Error('вложенность репозиториев глубже предела');
+  for (const nested of await Promise.all(populated.map((sub) => repoFilterKeys(sub, depth + 1)))) {
     for (const key of nested) keys.add(key);
   }
   return keys;
@@ -74,7 +100,8 @@ export async function gitBranch(root: string): Promise<string | null> {
 export async function gitStatus(root: string): Promise<Record<string, string>> {
   let out: string;
   try {
-    out = await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], await filterOverrides(root));
+    const overrides = await filterOverrides(root);
+    out = await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], overrides);
   } catch {
     return {};
   }

@@ -79,3 +79,124 @@ test('gitStatus вне репозитория возвращает пустой 
   const { base } = setup(t);
   assert.deepEqual(await gitStatus(base), {});
 });
+
+test('gitStatus перекрывает фильтр с U+2028 в имени подсекции', async (t) => {
+  const { base, marker, script } = setup(t);
+  const repo = path.join(base, 'repo');
+  const name = 'x\u2028y';
+  makeRepo(repo);
+  fs.writeFileSync(path.join(repo, '.gitattributes'), `f.txt filter=${name}\n`);
+  sh(repo, 'commit', '-q', '-am', 'attrs');
+  sh(repo, 'config', `filter.${name}.clean`, script);
+  touchOld(path.join(repo, 'f.txt'));
+
+  const status = await gitStatus(repo);
+
+  assert.equal(fs.existsSync(marker), false, 'драйвер фильтра выполнен');
+  assert.deepEqual(status, {});
+});
+
+// Подменяет git в PATH обёрткой: пишет аргументы каждого вызова в журнал, вызов с одним из fail-аргументов завершает кодом 2.
+function wrapGit(t: { after: (fn: () => void) => void }, base: string, fail: string[]): () => string[] {
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const bin = path.join(base, 'bin');
+  const log = path.join(base, 'git.log');
+  fs.mkdirSync(bin);
+  const cases = fail.map((arg) => `  *" ${arg} "*) exit 2;;\n`).join('');
+  fs.writeFileSync(
+    path.join(bin, 'git'),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase " $* " in\n${cases}esac\nexec '${realGit}' "$@"\n`,
+    { mode: 0o755 },
+  );
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  t.after(() => {
+    process.env.PATH = prevPath;
+  });
+  return () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+}
+
+for (const failing of ['--get-regexp', 'ls-files']) {
+  test(`gitStatus при ошибке ${failing} возвращает пустой статус и не запускает git status`, async (t) => {
+    const { base, marker, script } = setup(t);
+    const repo = path.join(base, 'repo');
+    makeRepo(repo);
+    sh(repo, 'config', 'filter.x.clean', script);
+    touchOld(path.join(repo, 'f.txt'));
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'n\n');
+    const calls = wrapGit(t, base, [failing]);
+
+    const status = await gitStatus(repo);
+
+    assert.deepEqual(status, {});
+    assert.equal(fs.existsSync(marker), false, 'драйвер фильтра выполнен');
+    assert.deepEqual(calls().filter((c) => / status /.test(` ${c} `)), [], 'git status запущен без перекрытия');
+  });
+}
+
+// Пустой каталог незаполненного подмодуля - обычный итог clone без --recurse-submodules.
+test('gitStatus не вызывает git для незаполненного подмодуля', { timeout: 10_000 }, async (t) => {
+  const { base } = setup(t);
+  const repo = path.join(base, 'repo');
+  makeRepo(repo);
+  const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  sh(repo, 'update-index', '--add', '--cacheinfo', `160000,${head},sub`);
+  sh(repo, 'commit', '-q', '-m', 'gitlink');
+  const sub = path.join(repo, 'sub');
+  fs.mkdirSync(sub);
+  const calls = wrapGit(t, base, []);
+
+  await gitStatus(repo);
+
+  assert.deepEqual(calls().filter((c) => c.includes(sub)), [], 'вызов git для незаполненного подмодуля');
+});
+
+test('gitStatus при имени подсекции не в UTF-8 возвращает пустой статус и не запускает фильтр', async (t) => {
+  const { base, marker, script } = setup(t);
+  const repo = path.join(base, 'repo');
+  makeRepo(repo);
+  fs.writeFileSync(path.join(repo, '.gitattributes'), Buffer.concat([Buffer.from('f.txt filter=p'), Buffer.from([0xff]), Buffer.from('q\n')]));
+  sh(repo, 'commit', '-q', '-am', 'attrs');
+  fs.appendFileSync(
+    path.join(repo, '.git', 'config'),
+    Buffer.concat([Buffer.from('[filter "p'), Buffer.from([0xff]), Buffer.from(`q"]\n\tclean = ${script}\n`)]),
+  );
+  touchOld(path.join(repo, 'f.txt'));
+  fs.writeFileSync(path.join(repo, 'new.txt'), 'n\n');
+
+  assert.deepEqual(await gitStatus(repo), {});
+  assert.equal(fs.existsSync(marker), false, 'драйвер фильтра выполнен');
+});
+
+// Цепочка заполненных репозиториев: каждый хранит gitlink на вложенный, как заполненный подмодуль.
+function makeChain(root: string, levels: number): string {
+  let dir = root;
+  makeRepo(dir);
+  for (let i = 0; i < levels; i++) {
+    const head = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    sh(dir, 'update-index', '--add', '--cacheinfo', `160000,${head},sub`);
+    sh(dir, 'commit', '-q', '-m', 'gitlink');
+    dir = path.join(dir, 'sub');
+    makeRepo(dir);
+  }
+  return dir;
+}
+
+test('gitStatus перекрывает фильтр репозитория на глубине 3', async (t) => {
+  const { base, marker, script } = setup(t);
+  const deepest = makeChain(path.join(base, 'repo'), 3);
+  sh(deepest, 'config', 'filter.x.clean', script);
+  touchOld(path.join(deepest, 'f.txt'));
+
+  await gitStatus(path.join(base, 'repo'));
+
+  assert.equal(fs.existsSync(marker), false, 'драйвер фильтра выполнен');
+});
+
+test('gitStatus при вложенности глубже предела возвращает пустой статус', { timeout: 30_000 }, async (t) => {
+  const { base } = setup(t);
+  makeChain(path.join(base, 'repo'), 12);
+  fs.writeFileSync(path.join(base, 'repo', 'new.txt'), 'n\n');
+
+  assert.deepEqual(await gitStatus(path.join(base, 'repo')), {});
+});
