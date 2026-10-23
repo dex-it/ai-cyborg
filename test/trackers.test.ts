@@ -607,6 +607,25 @@ describe('TrackersService: проверка входа при старте и п
     assert.deepEqual(assignees, ['a', 'a', 'b']);
   });
 
+  it('«Обновить»: у хоста без входа меняется только текст ошибки - выборка не перестраивается', async () => {
+    const down = (what: string) => `gitlab.com\n  x gitlab.com: api call failed: ${what}\n`;
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf('mmx') + down(++n === 1 ? 'dial tcp: i/o timeout' : 'dial tcp: no route')));
+    await svc.list('p1', true, []);
+    const once = listCalls().length;
+    await svc.list('p1', true, [], true);
+    assert.equal(listCalls().length, once * 2);
+  });
+
+  it('«Обновить»: хост без входа сменил состояние с ошибки на «не вошёл» - выборка перестроена', async () => {
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf('mmx') + (++n === 1 ? 'gitlab.com\n  x gitlab.com: api call failed: dial tcp: i/o timeout\n' : 'gitlab.com\n  x No token provided\n')));
+    await svc.list('p1', true, []);
+    const once = listCalls().length;
+    await svc.list('p1', true, [], true);
+    assert.equal(listCalls().length, once * 3);
+  });
+
   it('вход пропал после «Обновить»: тексты отказа прежние, источник заблокирован', async () => {
     let n = 0;
     const { svc } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : ok('', '')));

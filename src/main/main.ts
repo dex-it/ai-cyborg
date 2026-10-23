@@ -94,7 +94,7 @@ ipcMain.handle('git:branch', (_event, root: string) => gitBranch(root));
 ipcMain.handle('git:status', (_event, root: string) => gitStatus(root));
 
 app.whenReady().then(() => {
-  trackers.warmAuth();
+  void trackers.warmAuth();
   createWindow();
 });
 app.on('window-all-closed', () => {

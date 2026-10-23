@@ -4,7 +4,7 @@ import { el } from './dom';
 import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
-import { recheckFor, RefreshGate, type RefreshTrigger } from './task-flow';
+import { recheckFor, RefreshGate, wireRefresh, type RefreshTrigger } from './task-flow';
 import { sortByKey, sourceLabel, type SortKey } from './task-model';
 
 /** Сессия, начатая из MR: панелю нужно знать только, жива ли она. */
@@ -63,12 +63,11 @@ export class MrsView implements PanelView {
     };
     fill(this.filter, MR_FILTER_OPTIONS);
     fill(this.sort, MR_SORT_OPTIONS);
-    this.filter.addEventListener('change', () => void this.refresh(false, 'filter'));
     this.sort.addEventListener('change', () => {
       this.sortKey = this.sort.value as SortKey;
       this.render();
     });
-    this.reload.addEventListener('click', () => void this.refresh(false, 'reload'));
+    wireRefresh({ filter: this.filter, reload: this.reload }, (force, trigger) => this.refresh(force, trigger));
     const filterLabel = el('label', 'tasks-filter');
     filterLabel.append(document.createTextNode('Показать '), this.filter);
     const sortLabel = el('label', 'tasks-filter');

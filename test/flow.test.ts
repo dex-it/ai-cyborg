@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import type { MrListResult } from '../src/main/mrs';
 import { refreshMrs, type MrRefreshApi } from '../src/renderer/mr-refresh';
 import { MrMetaSlots, mrMeta } from '../src/renderer/mr-model';
-import { decideStart, recheckFor, RefreshGate, StartGuard, TaskSessionRegistry } from '../src/renderer/task-flow';
+import { decideStart, recheckFor, refreshOnPanelEvent, RefreshGate, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger } from '../src/renderer/task-flow';
 
 type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
 const sess = (project: string, key: string): S => ({ project: { id: project }, task: { key } });
@@ -201,6 +201,22 @@ describe('проводка выборки', () => {
   it('кэш входа сбрасывает только «Обновить»: открытие, вкладка, фильтр и проект - нет', () => {
     assert.equal(recheckFor('reload'), true);
     for (const t of ['open', 'tab', 'filter', 'project'] as const) assert.equal(recheckFor(t), false, t);
+  });
+
+  it('«Обновить» просит новую проверку входа, смена фильтра - нет; события панели - нет', () => {
+    const handlers = new Map<string, () => void>();
+    const control = (name: string) => ({ addEventListener: (type: string, fn: () => void) => void handlers.set(`${name}:${type}`, fn) });
+    const seen: [boolean, RefreshTrigger][] = [];
+    wireRefresh({ filter: control('filter'), reload: control('reload') }, async (force, trigger) => void seen.push([force, trigger]));
+    handlers.get('filter:change')!();
+    handlers.get('reload:click')!();
+    assert.deepEqual(seen, [[false, 'filter'], [false, 'reload']]);
+    assert.deepEqual(seen.map(([, t]) => recheckFor(t)), [false, true]);
+
+    const panel: [boolean, RefreshTrigger][] = [];
+    for (const e of ['open', 'tab', 'project'] as PanelEvent[]) void refreshOnPanelEvent(async (force, trigger) => void panel.push([force, trigger]), e);
+    assert.deepEqual(panel, [[false, 'open'], [false, 'tab'], [true, 'project']]);
+    assert.deepEqual(panel.map(([, t]) => recheckFor(t)), [false, false, false]);
   });
 
   it('детали дописываются в уже показанные строки: слоты те же, строки без слота пропускаются', () => {

@@ -65,6 +65,25 @@ export type RefreshTrigger = 'open' | 'tab' | 'filter' | 'project' | 'reload';
 
 export const recheckFor = (trigger: RefreshTrigger): boolean => trigger === 'reload';
 
+export interface Listenable {
+  addEventListener(type: string, listener: () => void): void;
+}
+
+type Refresh = (force: boolean, trigger: RefreshTrigger) => Promise<void>;
+
+/** Проводка шапки вида: смена фильтра и «Обновить» запускают выборку со своим триггером. */
+export function wireRefresh(controls: { filter: Listenable; reload: Listenable }, refresh: Refresh): void {
+  controls.filter.addEventListener('change', () => void refresh(false, 'filter'));
+  controls.reload.addEventListener('click', () => void refresh(false, 'reload'));
+}
+
+export type PanelEvent = 'open' | 'tab' | 'project';
+
+/** Выборка по событию панели: смена проекта идёт в обход флага загрузки; кэш входа ни одно из них не сбрасывает. */
+export function refreshOnPanelEvent(refresh: Refresh, event: PanelEvent): Promise<void> {
+  return refresh(event === 'project', event);
+}
+
 export class RefreshGate {
   private token = 0;
   private busy = false;

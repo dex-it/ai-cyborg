@@ -706,6 +706,74 @@ describe('MrsService.listMrs', () => {
     assert.ok(reviewsWhenTracked >= 0 && reviewsWhenTracked < 20, `к запросу MR с сессией начато ревью ${reviewsWhenTracked}: задачи повтора шли перед задачей более поздней выборки`);
   });
 
+  it('повтор уступает более поздней выборке и тогда, когда её список пришёл после постановки задач повтора в пул', async () => {
+    const prs = Array.from({ length: 20 }, (_, i) => ghRaw(i + 1));
+    let users = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let open!: () => void;
+    const hold = new Promise<void>((r) => (open = r));
+    let openList!: () => void;
+    const holdList = new Promise<void>((r) => (openList = r));
+    let reviewsWhenTracked = -1;
+    const ref = { kind: 'gitlab' as const, host: 'git.corp', path: 'g/q', number: 8 };
+    const { svc, calls } = setup({
+      remotes: { '/w/a': ['git@github.com:o/a.git'], '/w/other': ['git@git.corp:g/q.git'] },
+      hold: (c) => (url(c).includes('/reviews') ? hold : url(c).includes('g%2Fq/merge_requests?') ? holdList : undefined),
+      respond: ghResponder(prs, (c) => {
+        if (url(c) === 'projects/g%2Fq/merge_requests/8') {
+          reviewsWhenTracked = calls.filter((x) => url(x).includes('/reviews')).length;
+          return ok('{"iid":8,"state":"opened","title":"t","author":{"username":"bob"},"source_branch":"s","target_branch":"main"}');
+        }
+        return url(c).includes('g%2Fq/merge_requests?') ? ok('[]') : undefined;
+      }),
+      user: async () => {
+        if (++users === 2) await gate;
+        return ok(users === 1 ? 'A\n' : 'B\n');
+      },
+    });
+    await svc.listMrs('p1', 'all', []);
+    const refresh = svc.listMrs('p1', 'all', [], true);
+    await new Promise((r) => setTimeout(r, 20));
+    const laterP = svc.listMrs('p2', 'all', [ref]);
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    openList();
+    const later = await laterP;
+    await new Promise((r) => setTimeout(r, 20));
+    open();
+    await svc.details(later.detailsId!);
+    await refresh;
+    assert.ok(reviewsWhenTracked >= 0 && reviewsWhenTracked < 20, `к запросу MR с сессией начато ревью ${reviewsWhenTracked}: задачи повтора шли перед задачей более поздней выборки`);
+  });
+
+  it('повтор без более поздней выборки становится текущей: его задачи идут в пуле раньше хвоста отброшенных выборок', async () => {
+    const prs = Array.from({ length: 20 }, (_, i) => ghRaw(i + 1));
+    let users = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let open!: () => void;
+    const hold = new Promise<void>((r) => (open = r));
+    const { svc, calls } = setup({
+      remotes,
+      hold: (c) => (url(c).includes('/reviews') ? hold : undefined),
+      respond: ghResponder(prs),
+      user: async () => {
+        if (++users === 2) await gate;
+        return ok(users === 1 ? 'A\n' : 'B\n');
+      },
+    });
+    await svc.listMrs('p1', 'all', []);
+    const refresh = svc.listMrs('p1', 'all', [], true);
+    await new Promise((r) => setTimeout(r, 20));
+    release();
+    const list = await refresh;
+    open();
+    await svc.details(list.detailsId!);
+    const started = calls.filter((c) => url(c).includes('/reviews')).length;
+    assert.ok(started < 40, `к готовым деталям перестроенной выборки начато ревью ${started}: они ждали хвост отброшенных выборок`);
+  });
+
   it('детали - ровно у 200 самых свежих, у остальных «—»; MR с сессией получает детали и вне двухсотки', async () => {
     const prs = Array.from({ length: 205 }, (_, i) => ghRaw(i + 1, { updated_at: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString() }));
     const asked = (calls: Call[]) => new Set(calls.filter((c) => url(c).includes('/reviews')).map((c) => url(c).match(/pulls\/(\d+)\//)![1]));

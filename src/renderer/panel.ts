@@ -1,6 +1,6 @@
 import { byId, el } from './dom';
 import { MrsView, type MrsViewHost } from './mrs';
-import type { RefreshTrigger } from './task-flow';
+import { refreshOnPanelEvent, type RefreshTrigger } from './task-flow';
 import { TasksView, type TasksViewHost } from './tasks';
 
 /** Вид внутри панели: свой заголовок и список, обновление запрашивает панель. */
@@ -64,7 +64,7 @@ export class TrackerPanel {
     if (tab === this.tab) return;
     this.tab = tab;
     this.mount();
-    void this.view.refresh(false, 'tab');
+    void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'tab');
   }
 
   open(): void {
@@ -72,7 +72,7 @@ export class TrackerPanel {
     this.root.hidden = false;
     this.sessionsEl.classList.add('tasks-open');
     this.toggle.classList.add('active');
-    void this.view.refresh(false, 'open');
+    void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'open');
   }
 
   close(): void {
@@ -87,7 +87,7 @@ export class TrackerPanel {
   onProjectChanged(): void {
     for (const view of Object.values(this.views)) view.onProjectChanged();
     // Смена проекта - новый вопрос: идёт в обход флага загрузки, ответ прежнего отбросит токен.
-    if (this.opened) void this.view.refresh(true, 'project');
+    if (this.opened) void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'project');
   }
 
   refreshActive(force = false): Promise<void> {

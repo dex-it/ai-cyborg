@@ -404,7 +404,13 @@ class AuthCache<T> {
   }
 }
 
-const sameAuth = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** Что в результате проверки входа меняет выборку: хосты с входом и их пользователи, состояние остальных; текст ошибки не в счёт. */
+const authKey = (a: AuthState | { hosts: HostAuth[] }): string =>
+  'hosts' in a
+    ? JSON.stringify(a.hosts.map((h) => [h.host, h.auth.state, h.auth.state === 'logged-in' ? h.auth.user : '']))
+    : JSON.stringify([a.state, a.state === 'logged-in' ? a.user : '']);
+
+const sameAuth = (a: AuthState | { hosts: HostAuth[] }, b: AuthState | { hosts: HostAuth[] } | undefined): boolean => b !== undefined && authKey(a) === authKey(b);
 
 export class TrackersService {
   private readonly gitlabCache = new AuthCache(() => this.gitlabAuth());
@@ -419,10 +425,12 @@ export class TrackersService {
   }
 
   /** Проверка входа при старте приложения: один раз, результат ложится в кэш выборок (без опроса по таймеру). */
-  warmAuth(): void {
+  warmAuth(): Promise<void> {
     const enabled = this.deps.settings();
-    if (enabled.gitlab) this.gitlabCache.get();
-    if (enabled.github) this.githubCache.get();
+    const pending: Promise<unknown>[] = [];
+    if (enabled.gitlab) pending.push(this.gitlabCache.get().current);
+    if (enabled.github) pending.push(this.githubCache.get().current);
+    return Promise.all(pending).then(() => undefined);
   }
 
   async status(): Promise<TrackersStatus> {
