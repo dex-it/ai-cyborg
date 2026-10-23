@@ -92,19 +92,34 @@ export class MrsService {
 
   /** Список сразу после REST-запросов; детали досчитываются в фоне и забираются через details(detailsId). */
   async listMrs(projectId: string, filter: MrFilter, tracked: MrRef[], recheck = false): Promise<MrListResult> {
+    let prior: { stale: boolean } | undefined;
     return this.trackers.fetchRevised(
       projectId,
       recheck,
-      (r) => this.listFrom(r, filter, tracked, recheck),
+      async (r) => {
+        const out = await this.listFrom(r, filter, tracked, recheck, prior);
+        prior = out.scope;
+        return out.result;
+      },
       // Перестроенная по новой проверке входа выборка вытесняет первую: её детали никто не заберёт.
       (first) => first.detailsId !== null && this.pending.delete(first.detailsId),
     );
   }
 
-  private async listFrom(resolved: ResolvedSources, filter: MrFilter, tracked: MrRef[], recheck: boolean): Promise<MrListResult> {
+  private async listFrom(resolved: ResolvedSources, filter: MrFilter, tracked: MrRef[], recheck: boolean, prior?: { stale: boolean }): Promise<{ result: MrListResult; scope: { stale: boolean } }> {
     const scope = { stale: false };
-    this.scope.stale = true;
-    this.scope = scope;
+    // Повтор по revise вытесняет только свою первую выборку; начатую позже повтор не трогает и сам уступает ей.
+    if (prior && this.scope !== prior) {
+      prior.stale = true;
+      scope.stale = true;
+    } else {
+      this.scope.stale = true;
+      this.scope = scope;
+    }
+    return { result: await this.listBody(resolved, filter, tracked, recheck, scope), scope };
+  }
+
+  private async listBody(resolved: ResolvedSources, filter: MrFilter, tracked: MrRef[], recheck: boolean, scope: { stale: boolean }): Promise<MrListResult> {
     const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = resolved;
     const result: MrListResult = { mrs: [], sources: [...preErrors], tracked: [], enabled, detailsId: null, awaiting: [] };
     if (!project) return { ...result, error: 'Проект не найден' };

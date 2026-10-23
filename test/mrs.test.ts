@@ -236,14 +236,15 @@ const other: Project = { id: 'p2', name: 'Q', description: '', repos: ['/w/other
 
 interface Call { cmd: string; args: string[] }
 
-function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSettings; respond: (c: Call) => CliResult | undefined; user?: CliResult; slow?: boolean }) {
+function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSettings; respond: (c: Call) => CliResult | undefined; user?: CliResult | (() => CliResult | Promise<CliResult>); slow?: boolean; hold?: (c: Call) => Promise<void> | undefined }) {
   const calls: Call[] = [];
   const load = { now: 0, peak: 0 };
   const run = async (cmd: 'gh' | 'glab', args: string[]): Promise<CliResult> => {
     const call = { cmd, args };
     calls.push(call);
     if (cmd === 'glab' && args[0] === 'auth') return ok('', GLAB_STATUS);
-    if (cmd === 'gh' && args.includes('user')) return opts.user ?? ok('MMX\n');
+    if (cmd === 'gh' && args.includes('user')) return (typeof opts.user === 'function' ? opts.user() : opts.user) ?? ok('MMX\n');
+    await opts.hold?.(call);
     if (!opts.slow) return opts.respond(call) ?? ok('');
     load.peak = Math.max(load.peak, ++load.now);
     await new Promise((r) => setTimeout(r, 2));
@@ -667,6 +668,42 @@ describe('MrsService.listMrs', () => {
     assert.ok(asked < 40, `запросов ревью ${asked}: хвост прежней выборки не должен идти перед новой`);
     assert.equal((await svc.details(a.detailsId!))!.details.length, 20);
     assert.ok(load.peak <= MR_CONCURRENCY + 1, `пик ${load.peak}`);
+  });
+
+  it('повтор выборки по новой проверке входа не вытесняет выборку, начатую после него: её задача в пуле идёт раньше задач повтора', async () => {
+    const prs = Array.from({ length: 20 }, (_, i) => ghRaw(i + 1));
+    let users = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let open!: () => void;
+    const hold = new Promise<void>((r) => (open = r));
+    let reviewsWhenTracked = -1;
+    const ref = { kind: 'gitlab' as const, host: 'git.corp', path: 'g/q', number: 8 };
+    const { svc, calls } = setup({
+      remotes: { '/w/a': ['git@github.com:o/a.git'], '/w/other': ['git@git.corp:g/q.git'] },
+      hold: (c) => (url(c).includes('/reviews') ? hold : undefined),
+      respond: ghResponder(prs, (c) => {
+        if (url(c) === 'projects/g%2Fq/merge_requests/8') {
+          reviewsWhenTracked = calls.filter((x) => url(x).includes('/reviews')).length;
+          return ok('{"iid":8,"state":"opened","title":"t","author":{"username":"bob"},"source_branch":"s","target_branch":"main"}');
+        }
+        return url(c).includes('g%2Fq/merge_requests?') ? ok('[]') : undefined;
+      }),
+      user: async () => {
+        if (++users === 2) await gate;
+        return ok(users === 1 ? 'A\n' : 'B\n');
+      },
+    });
+    await svc.listMrs('p1', 'all', []);
+    const refresh = svc.listMrs('p1', 'all', [], true);
+    await new Promise((r) => setTimeout(r, 20));
+    const later = await svc.listMrs('p2', 'all', [ref]);
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    open();
+    await svc.details(later.detailsId!);
+    await refresh;
+    assert.ok(reviewsWhenTracked >= 0 && reviewsWhenTracked < 20, `к запросу MR с сессией начато ревью ${reviewsWhenTracked}: задачи повтора шли перед задачей более поздней выборки`);
   });
 
   it('детали - ровно у 200 самых свежих, у остальных «—»; MR с сессией получает детали и вне двухсотки', async () => {
