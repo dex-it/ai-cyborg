@@ -1,7 +1,11 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { Project, ProjectsState } from '../main/projects';
+import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
+import { initSettings } from './settings';
+import { sessionLabel, taskTooltip } from './task-model';
+import { TasksPanel } from './tasks';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { TreeView, type TreeRoot } from './tree';
 import { applyMonacoTheme, FileViewer } from './viewer';
@@ -21,6 +25,8 @@ interface Session {
   cwd: string;
   root: string;
   exited: boolean;
+  /** Задача трекера, из которой начата сессия; живёт только в памяти интерфейса. */
+  task?: Task;
   color: string;
   term: Terminal;
   fit: FitAddon;
@@ -47,6 +53,8 @@ const newSessionButton = byId<HTMLButtonElement>('new-session');
 const sessionsEl = byId('sessions');
 const empty = byId('empty');
 const repoMenu = byId('repo-menu');
+const taskSessions = new Map<string, Session>();
+const startingTasks = new Set<string>();
 
 let state: ProjectsState = { projects: [], lastProjectId: null };
 let project: Project | null = null;
@@ -82,8 +90,9 @@ function selectProject(next: Project | null): void {
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
-  if (session) activateSession(session);
+  if (session) activateSession(session, panel.isOpen);
   else showNoSession();
+  panel.onProjectChanged();
 }
 
 const projectDialog = byId<HTMLDialogElement>('project-dialog');
@@ -181,15 +190,23 @@ function treeRoots(s: Session): TreeRoot[] {
 }
 
 function updateSessionLabels(s: Session): void {
-  const label = `CC${s.id} · ${rootLabel(s)}`;
+  const label = s.task ? sessionLabel(s.id, s.task) : `CC${s.id} · ${rootLabel(s)}`;
   (s.stripTab.querySelector('.label') as HTMLElement).textContent = label;
-  s.stripTab.title = s.cwd;
+  s.stripTab.title = s.task ? `${taskTooltip(s.task)}\n${s.cwd}` : s.cwd;
   s.stripTab.classList.toggle('exited', s.exited);
   if (s === active) {
     treeTitle.textContent = label;
+    treeTitle.title = s.task ? taskTooltip(s.task) : '';
     // Шапка обрезает путь слева через direction: rtl; LRM не даёт ведущему «/» уехать в конец.
     treeMeta.textContent = `‎${s.exited ? `завершена · ${s.cwd}` : s.cwd}`;
   }
+}
+
+/** Пояснение, пока нет проекта с репозиториями; общее для пустой области и панели задач. */
+function projectHint(): string[] | null {
+  if (!state.projects.length) return ['Проектов нет.', '«+» слева вверху — создать проект и добавить в него репозитории.'];
+  if (!project?.repos.length) return ['В проекте нет репозиториев.', '«✎» слева вверху — добавить.'];
+  return null;
 }
 
 function showNoSession(): void {
@@ -200,20 +217,19 @@ function showNoSession(): void {
   }
   sidebar.style.removeProperty('--session');
   treeTitle.textContent = project ? 'Нет активной сессии' : 'Нет проекта';
+  treeTitle.title = '';
   treeMeta.textContent = '';
   treeEl.replaceChildren();
   empty.replaceChildren(
-    ...(!state.projects.length
-      ? ['Проектов нет.', '«+» слева вверху — создать проект и добавить в него репозитории.']
-      : !project?.repos.length
-        ? ['В проекте нет репозиториев.', '«✎» слева вверху — добавить.']
-        : ['Сессий нет.', '«+ CC» или Ctrl+Shift+N — запустить Claude Code в репозитории проекта.']
-    ).map((text) => el('p', '', text)),
+    ...(projectHint() ?? ['Сессий нет.', '«+ CC» или Ctrl+Shift+N — запустить Claude Code в репозитории проекта.']).map((text) =>
+      el('p', '', text),
+    ),
   );
   empty.hidden = false;
 }
 
-function activateSession(s: Session): void {
+function activateSession(s: Session, keepPanel = false): void {
+  if (!keepPanel) panel.close();
   active = s;
   lastSessionOf.set(s.project.id, s);
   for (const other of sessions) {
@@ -306,12 +322,26 @@ function createTerminal(id: number): Terminal {
   return term;
 }
 
-async function newSession(repo: string): Promise<void> {
+async function newSession(repo: string, task?: Task): Promise<void> {
   const owner = project;
   if (!owner) return;
+  // Ключ держится до появления сессии в taskSessions: двойной клик «Начать» не создаст вторую.
+  if (task) {
+    if (startingTasks.has(task.key)) return;
+    startingTasks.add(task.key);
+  }
+  try {
+    await createSessionView(owner, repo, task);
+  } finally {
+    if (task) startingTasks.delete(task.key);
+  }
+}
+
+async function createSessionView(owner: Project, repo: string, task?: Task): Promise<void> {
   const id = await api.createSession(
     repo,
     owner.repos.filter((r) => r !== repo),
+    task && { kind: task.kind, host: task.host, path: task.path, number: task.number },
   );
   const root = (await api.gitRoot(repo)) ?? repo;
   const color = sessionColor(colorIndex++);
@@ -344,6 +374,7 @@ async function newSession(repo: string): Promise<void> {
     cwd: repo,
     root,
     exited: false,
+    task,
     color,
     term,
     fit,
@@ -363,6 +394,7 @@ async function newSession(repo: string): Promise<void> {
   stripTab.addEventListener('click', () => activateSession(session));
   claudeTab.addEventListener('click', () => showInner(session, null));
   sessions.push(session);
+  if (task) taskSessions.set(task.key, session);
   updateSessionLabels(session);
   for (const chunk of pendingData.get(id) ?? []) term.write(chunk);
   pendingData.delete(id);
@@ -379,9 +411,10 @@ function closeSession(s: Session, force: boolean): void {
   s.container.remove();
   sessions.splice(sessions.indexOf(s), 1);
   if (lastSessionOf.get(s.project.id) === s) lastSessionOf.delete(s.project.id);
+  if (s.task && taskSessions.get(s.task.key) === s) taskSessions.delete(s.task.key);
   if (active === s) {
     const next = sessions.find((x) => x.project === project);
-    if (next) activateSession(next);
+    if (next) activateSession(next, panel.isOpen);
     else showNoSession();
   }
 }
@@ -475,6 +508,25 @@ setInterval(() => {
 
 // ---------- запуск сессии ----------
 
+function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPick: (repo: string) => void): void {
+  repoMenu.replaceChildren(
+    el('div', 'menu-title', title),
+    ...repos.map((repo) => {
+      const item = el('div', 'menu-item');
+      item.append(el('span', 'repo-name', basename(repo)), el('span', 'repo-path', repo));
+      item.addEventListener('click', () => {
+        repoMenu.hidden = true;
+        onPick(repo);
+      });
+      return item;
+    }),
+  );
+  const rect = anchor.getBoundingClientRect();
+  repoMenu.style.top = `${rect.bottom + 2}px`;
+  repoMenu.style.right = `${window.innerWidth - rect.right}px`;
+  repoMenu.hidden = false;
+}
+
 function requestSession(): void {
   const repos = project?.repos ?? [];
   if (repos.length === 1) {
@@ -482,23 +534,60 @@ function requestSession(): void {
     return;
   }
   if (!repos.length) return;
-  repoMenu.replaceChildren(
-    el('div', 'menu-title', 'Где запустить Claude Code'),
-    ...repos.map((repo) => {
-      const item = el('div', 'menu-item');
-      item.append(el('span', 'repo-name', basename(repo)), el('span', 'repo-path', repo));
-      item.addEventListener('click', () => {
-        repoMenu.hidden = true;
-        void newSession(repo);
-      });
-      return item;
-    }),
-  );
-  const rect = newSessionButton.getBoundingClientRect();
-  repoMenu.style.top = `${rect.bottom + 2}px`;
-  repoMenu.style.right = `${window.innerWidth - rect.right}px`;
-  repoMenu.hidden = false;
+  showRepoMenu(repos, newSessionButton, 'Где запустить Claude Code', (repo) => void newSession(repo));
 }
+
+// ---------- задачи трекеров ----------
+
+function startTask(task: Task, anchor: HTMLElement): void {
+  const existing = taskSessions.get(task.key);
+  if (existing && existing.project === project) {
+    activateSession(existing);
+    return;
+  }
+  const repos = project ? task.repos.filter((r) => project!.repos.includes(r)) : [];
+  if (repos.length === 1) void newSession(repos[0], task);
+  else if (repos.length > 1) showRepoMenu(repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, task));
+}
+
+function applyStatuses(result: TasksResult): void {
+  for (const s of sessions) {
+    if (!s.task) continue;
+    const fresh = result.tasks.find((t) => t.key === s.task!.key) ?? result.tracked.find((t) => t.key === s.task!.key);
+    if (!fresh) continue;
+    s.task = { ...fresh, repos: s.task.repos };
+    updateSessionLabels(s);
+  }
+}
+
+function trackedRefs(): TaskRef[] {
+  const refs = new Map<string, TaskRef>();
+  for (const s of sessions) {
+    if (s.project === project && s.task) refs.set(s.task.key, { kind: s.task.kind, host: s.task.host, path: s.task.path, number: s.task.number });
+  }
+  return [...refs.values()];
+}
+
+const settings = initSettings(() => {
+  if (panel.isOpen) void panel.refresh();
+});
+byId('settings-open').addEventListener('click', () => settings.open());
+
+const panel = new TasksPanel({
+  project: () => project,
+  projectHint,
+  trackedRefs,
+  applyStatuses,
+  sessionOf: (key) => taskSessions.get(key),
+  startTask,
+  openSettings: () => settings.open(),
+  onClosed: () =>
+    requestAnimationFrame(() => {
+      if (!active) return;
+      fitSession(active);
+      if (!active.activeFile) active.term.focus();
+    }),
+});
 
 newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as pty from 'node-pty';
+import { claudeArgs } from './claude-args';
 
 type Emit = (channel: string, payload: unknown) => void;
 
@@ -72,12 +73,12 @@ export class SessionManager {
     fs.writeFileSync(this.settingsFile, JSON.stringify({ hooks }, null, 2));
   }
 
-  create(cwd: string, addDirs: string[]): number {
+  create(cwd: string, addDirs: string[], prompt?: string): number {
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     fs.writeFileSync(eventsFile, '');
     const shell = process.env.SHELL || '/bin/bash';
-    const args = addDirs.length ? ['--add-dir', ...addDirs] : [];
+    const args = claudeArgs(addDirs, prompt);
     // Логин-шелл даёт PATH пользователя: из меню приложений Electron стартует без ~/.local/bin.
     const proc = pty.spawn(shell, ['-lc', 'exec claude --settings "$CYBORG_SETTINGS" "$@"', 'cyborg', ...args], {
       name: 'xterm-256color',

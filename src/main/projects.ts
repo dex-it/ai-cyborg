@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { writeJsonAtomic } from './jsonfile';
 
 export interface Project {
   id: string;
@@ -25,8 +26,6 @@ export class ProjectStore {
   }
 
   save(state: ProjectsState): void {
-    const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-    fs.renameSync(tmp, this.file);
+    writeJsonAtomic(this.file, state);
   }
 }
