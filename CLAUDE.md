@@ -19,7 +19,7 @@
 - Сборка - `npm run build`
 - Проверка типов - `npm run typecheck`
 - Линтер - нет
-- Тесты - нет
+- Тесты - `npm test` (node --test, без зависимостей)
 - CI - нет
 
 ## Карта
@@ -27,7 +27,7 @@
 - `dist/` - выход сборки esbuild (main.js, preload.js, renderer/), в git не входит
 - `docs/` - корпус документации: BRD продукта, ADR, счётчики; адреса в .docs_layout
 - `node_modules/` - установленные npm-зависимости, в git не входят
-- `package.json` - манифест: скрипты build/start/typecheck, main = dist/main.js
+- `package.json` - манифест: скрипты build/start/test/typecheck, main = dist/main.js
 - `scripts/` - build.mjs - сборка трёх бандлов esbuild и копирование статики и Monaco
 - `src/main/` - главный процесс Electron: сессии в pty, файлы, git, проекты; точки входа main.ts и preload.ts
 - `src/renderer/` - интерфейс: проекты, полоса сессий, xterm, дерево, Monaco; точка входа app.ts и index.html

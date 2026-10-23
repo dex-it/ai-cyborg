@@ -1,9 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import * as pty from 'node-pty';
-import { createEventsFile, prepareEventsDir } from './events-store';
+import type * as pty from 'node-pty';
+import { createEventsFile, prepareEventsDir } from './events-store.ts';
 
 type Emit = (channel: string, payload: unknown) => void;
+type Spawn = typeof pty.spawn;
+
+// node-pty собран под ABI Electron и в чистом node не грузится: модуль подключается при первом запуске сессии, а тест подставляет свой spawn.
+const nodePtySpawn: Spawn = (...args) => require('node-pty').spawn(...args);
 
 interface Session {
   id: number;
@@ -58,8 +62,12 @@ export class SessionManager {
   private nextId = 1;
   private readonly settingsFile: string;
   private readonly eventsDir: string;
+  private readonly emit: Emit;
+  private readonly spawn: Spawn;
 
-  constructor(userData: string, private readonly emit: Emit) {
+  constructor(userData: string, emit: Emit, spawn: Spawn = nodePtySpawn) {
+    this.emit = emit;
+    this.spawn = spawn;
     this.eventsDir = path.join(userData, 'sessions');
     prepareEventsDir(this.eventsDir);
     this.removeOrphanedEvents();
@@ -80,7 +88,7 @@ export class SessionManager {
     const shell = process.env.SHELL || '/bin/bash';
     const args = addDirs.length ? ['--add-dir', ...addDirs] : [];
     // Логин-шелл даёт PATH пользователя: из меню приложений Electron стартует без ~/.local/bin.
-    const proc = pty.spawn(shell, ['-lc', 'exec claude --settings "$CYBORG_SETTINGS" "$@"', 'cyborg', ...args], {
+    const proc = this.spawn(shell, ['-lc', 'exec claude --settings "$CYBORG_SETTINGS" "$@"', 'cyborg', ...args], {
       name: 'xterm-256color',
       cols: 120,
       rows: 40,
