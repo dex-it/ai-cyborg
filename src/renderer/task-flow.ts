@@ -60,6 +60,11 @@ export function decideStart(hasOpenSession: boolean, taskRepos: string[], projec
 }
 
 /** Одиночный полёт обновления и токен ответа: без force второй запрос не начинается, ответ не текущего токена отбрасывается. */
+/** Что запустило выборку; кэш входа в трекерах сбрасывает только «Обновить» (FR-1006). */
+export type RefreshTrigger = 'open' | 'tab' | 'filter' | 'project' | 'reload';
+
+export const recheckFor = (trigger: RefreshTrigger): boolean => trigger === 'reload';
+
 export class RefreshGate {
   private token = 0;
   private busy = false;

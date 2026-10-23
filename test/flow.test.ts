@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MrListResult } from '../src/main/mrs';
 import { refreshMrs, type MrRefreshApi } from '../src/renderer/mr-refresh';
-import { mrMeta } from '../src/renderer/mr-model';
-import { decideStart, RefreshGate, StartGuard, TaskSessionRegistry } from '../src/renderer/task-flow';
+import { MrMetaSlots, mrMeta } from '../src/renderer/mr-model';
+import { decideStart, recheckFor, RefreshGate, StartGuard, TaskSessionRegistry } from '../src/renderer/task-flow';
 
 type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
 const sess = (project: string, key: string): S => ({ project: { id: project }, task: { key } });
@@ -194,5 +194,24 @@ describe('refreshMrs: двухфазная выборка MR', () => {
     await refreshMrs(api, gate, gate.begin(false)!, args, sink);
     assert.deepEqual(events, ['listed']);
     assert.equal(detailsCalls, 0);
+  });
+});
+
+describe('проводка выборки', () => {
+  it('кэш входа сбрасывает только «Обновить»: открытие, вкладка, фильтр и проект - нет', () => {
+    assert.equal(recheckFor('reload'), true);
+    for (const t of ['open', 'tab', 'filter', 'project'] as const) assert.equal(recheckFor(t), false, t);
+  });
+
+  it('детали дописываются в уже показанные строки: слоты те же, строки без слота пропускаются', () => {
+    const slots = new MrMetaSlots();
+    const slot = { textContent: mrMeta({ author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline: null, approvals: null }, true) };
+    slots.set('k1', slot);
+    const mr = (key: string, pipeline: string) => ({ key, author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline, approvals: 'апрувов: 1' });
+    slots.fill({ mrs: [mr('k1', 'успешен'), mr('k2', 'упал')] });
+    assert.equal(slot.textContent, 'bob · f → m · пайплайн: успешен · апрувов: 1');
+    slots.clear();
+    slots.fill({ mrs: [mr('k1', 'упал')] });
+    assert.equal(slot.textContent, 'bob · f → m · пайплайн: успешен · апрувов: 1');
   });
 });

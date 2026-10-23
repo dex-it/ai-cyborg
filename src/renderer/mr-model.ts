@@ -45,6 +45,26 @@ export function mrMeta(mr: Pick<Mr, 'author' | 'sourceBranch' | 'targetBranch' |
   ].join(' · ');
 }
 
+/** Показанные строки MR по ключу: детали дописываются в них, список не пересоздаётся. */
+export class MrMetaSlots {
+  private readonly slots = new Map<string, { textContent: string | null }>();
+
+  clear(): void {
+    this.slots.clear();
+  }
+
+  set(key: string, slot: { textContent: string | null }): void {
+    this.slots.set(key, slot);
+  }
+
+  fill(result: { mrs: (Parameters<typeof mrMeta>[0] & { key: string })[] }): void {
+    for (const mr of result.mrs) {
+      const slot = this.slots.get(mr.key);
+      if (slot) slot.textContent = mrMeta(mr);
+    }
+  }
+}
+
 /** Список с пришедшими деталями; порядок строк прежний, MR без записи - «—». d = null - детали не получены. */
 export function applyMrDetails(result: MrListResult, d: MrDetailsResult | null): MrListResult {
   const byKey = new Map((d?.details ?? []).map((x) => [x.key, x]));

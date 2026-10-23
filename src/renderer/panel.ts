@@ -1,12 +1,13 @@
 import { byId, el } from './dom';
 import { MrsView, type MrsViewHost } from './mrs';
+import type { RefreshTrigger } from './task-flow';
 import { TasksView, type TasksViewHost } from './tasks';
 
 /** Вид внутри панели: свой заголовок и список, обновление запрашивает панель. */
 export interface PanelView {
   element: HTMLElement;
-  /** recheck - «Обновить»: вход в трекеры проверяется заново. */
-  refresh(force?: boolean, recheck?: boolean): Promise<void>;
+  /** trigger 'reload' - «Обновить»: вход в трекеры проверяется заново. */
+  refresh(force?: boolean, trigger?: RefreshTrigger): Promise<void>;
   onProjectChanged(): void;
 }
 
@@ -63,7 +64,7 @@ export class TrackerPanel {
     if (tab === this.tab) return;
     this.tab = tab;
     this.mount();
-    void this.view.refresh();
+    void this.view.refresh(false, 'tab');
   }
 
   open(): void {
@@ -71,7 +72,7 @@ export class TrackerPanel {
     this.root.hidden = false;
     this.sessionsEl.classList.add('tasks-open');
     this.toggle.classList.add('active');
-    void this.view.refresh();
+    void this.view.refresh(false, 'open');
   }
 
   close(): void {
@@ -86,10 +87,10 @@ export class TrackerPanel {
   onProjectChanged(): void {
     for (const view of Object.values(this.views)) view.onProjectChanged();
     // Смена проекта - новый вопрос: идёт в обход флага загрузки, ответ прежнего отбросит токен.
-    if (this.opened) void this.view.refresh(true);
+    if (this.opened) void this.view.refresh(true, 'project');
   }
 
   refreshActive(force = false): Promise<void> {
-    return this.view.refresh(force);
+    return this.view.refresh(force, 'open');
   }
 }

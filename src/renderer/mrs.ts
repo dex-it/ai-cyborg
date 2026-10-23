@@ -1,10 +1,10 @@
 import type { Mr, MrFilter, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Project } from '../main/projects';
 import { el } from './dom';
-import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
+import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
-import { RefreshGate } from './task-flow';
+import { recheckFor, RefreshGate, type RefreshTrigger } from './task-flow';
 import { sortByKey, sourceLabel, type SortKey } from './task-model';
 
 /** Сессия, начатая из MR: панелю нужно знать только, жива ли она. */
@@ -44,7 +44,7 @@ export class MrsView implements PanelView {
   private sortKey: SortKey = 'updated';
   /** Ключи MR, чьи пайплайн и апрувы ещё не пришли: в строке «…». */
   private pending = new Set<string>();
-  private readonly metaByKey = new Map<string, HTMLElement>();
+  private readonly metas = new MrMetaSlots();
 
   constructor(private readonly host: MrsViewHost) {
     this.actions = [
@@ -63,12 +63,12 @@ export class MrsView implements PanelView {
     };
     fill(this.filter, MR_FILTER_OPTIONS);
     fill(this.sort, MR_SORT_OPTIONS);
-    this.filter.addEventListener('change', () => void this.refresh());
+    this.filter.addEventListener('change', () => void this.refresh(false, 'filter'));
     this.sort.addEventListener('change', () => {
       this.sortKey = this.sort.value as SortKey;
       this.render();
     });
-    this.reload.addEventListener('click', () => void this.refresh(false, true));
+    this.reload.addEventListener('click', () => void this.refresh(false, 'reload'));
     const filterLabel = el('label', 'tasks-filter');
     filterLabel.append(document.createTextNode('Показать '), this.filter);
     const sortLabel = el('label', 'tasks-filter');
@@ -85,7 +85,7 @@ export class MrsView implements PanelView {
     this.render();
   }
 
-  async refresh(force = false, recheck = false): Promise<void> {
+  async refresh(force = false, trigger: RefreshTrigger = 'open'): Promise<void> {
     const token = this.gate.begin(force);
     if (token === null) return;
     const project = this.host.project();
@@ -97,7 +97,7 @@ export class MrsView implements PanelView {
       return;
     }
     this.render();
-    await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), recheck }, {
+    await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), recheck: recheckFor(trigger) }, {
       listed: (list, pending) => {
         this.result = list;
         this.pending = pending;
@@ -108,17 +108,9 @@ export class MrsView implements PanelView {
         this.result = result;
         this.pending.clear();
         this.host.applyStatuses(result);
-        this.fillMeta(result);
+        this.metas.fill(result);
       },
     });
-  }
-
-  /** Дописывает значения в уже показанные строки: список не пересоздаётся. */
-  private fillMeta(result: MrListResult): void {
-    for (const mr of result.mrs) {
-      const meta = this.metaByKey.get(mr.key);
-      if (meta) meta.textContent = mrMeta(mr);
-    }
   }
 
   private render(): void {
@@ -137,7 +129,7 @@ export class MrsView implements PanelView {
       this.body.replaceChildren(el('p', 'tasks-note', result.error));
       return;
     }
-    this.metaByKey.clear();
+    this.metas.clear();
     const nodes: HTMLElement[] = [];
     for (const source of result.sources) {
       if (source.error) nodes.push(el('p', 'tasks-error', `${sourceLabel(source)}: ${source.error}`));
@@ -170,7 +162,7 @@ export class MrsView implements PanelView {
     title.append(el('span', 'task-number', mrNumber(mr.kind, mr.number)), el('span', '', ` ${mr.title}`));
     title.title = mr.title;
     const meta = el('div', 'task-meta', mrMeta(mr, this.pending.has(mr.key)));
-    this.metaByKey.set(mr.key, meta);
+    this.metas.set(mr.key, meta);
     meta.title = `${sourceLabel(mr)}\n${mr.url}`;
     main.append(title, meta);
     const actions = el('div', 'task-actions');

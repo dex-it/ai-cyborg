@@ -21,7 +21,7 @@ import {
   type MrRef,
   type ParsedMr,
 } from './mrs';
-import { enc, firstLine, interpret, MAX_TRACKED, sourceKey, type CliRunner, type Fetched, type Source, type TrackersService } from './trackers';
+import { enc, firstLine, interpret, MAX_TRACKED, sourceKey, type CliRunner, type Fetched, type ResolvedSources, type Source, type TrackersService } from './trackers';
 
 // Только чтение: ни -X, ни --input. Единственный graphql - постоянные запросы ниже без mutation; путь проекта и курсор идут переменными через -f.
 const GL_MR_PAGE = 'mergeRequests(state: opened, first: 100, after: $endCursor){ pageInfo{ hasNextPage endCursor } nodes{ iid headPipeline{ status } ';
@@ -73,7 +73,7 @@ export class MrsService {
   /** Пул процессов деталей общий для выборок: «Обновить» во время деталей не умножает процессы CLI (ADR-0008 п.4). */
   private readonly pool = createLimiter(MR_CONCURRENCY);
   /** GraphQL источника в полёте: перекрывающиеся выборки ждут один процесс, а не запускают свои. */
-  private readonly glInflight = new Map<string, Promise<Map<number, Detail>>>();
+  private readonly glInflight = new Map<string, { p: Promise<Map<number, Detail>>; fresh: boolean }>();
   /** Область последней выборки: новая помечает прежнюю устаревшей, и её задачи в очереди пула уступают место задачам новой. */
   private scope = { stale: false };
   private seq = 0;
@@ -92,10 +92,20 @@ export class MrsService {
 
   /** Список сразу после REST-запросов; детали досчитываются в фоне и забираются через details(detailsId). */
   async listMrs(projectId: string, filter: MrFilter, tracked: MrRef[], recheck = false): Promise<MrListResult> {
+    return this.trackers.fetchRevised(
+      projectId,
+      recheck,
+      (r) => this.listFrom(r, filter, tracked, recheck),
+      // Перестроенная по новой проверке входа выборка вытесняет первую: её детали никто не заберёт.
+      (first) => first.detailsId !== null && this.pending.delete(first.detailsId),
+    );
+  }
+
+  private async listFrom(resolved: ResolvedSources, filter: MrFilter, tracked: MrRef[], recheck: boolean): Promise<MrListResult> {
     const scope = { stale: false };
     this.scope.stale = true;
     this.scope = scope;
-    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.trackers.resolveSources(projectId, recheck);
+    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = resolved;
     const result: MrListResult = { mrs: [], sources: [...preErrors], tracked: [], enabled, detailsId: null, awaiting: [] };
     if (!project) return { ...result, error: 'Проект не найден' };
     if (!enabled.github && !enabled.gitlab) return result;
@@ -242,15 +252,18 @@ export class MrsService {
     return { pipeline, approvals: reviews ? approvalsText(githubApprovals(reviews as { login?: unknown; state?: unknown }[])) : null };
   }
 
-  /** «Обновить» (fresh) не берёт запрос, начатый до неё: в нём нет MR, появившихся после его старта. */
+  /**
+   * «Обновить» (fresh) не берёт запрос, начатый до неё: в нём нет MR, появившихся после его старта. Запрос, начатый
+   * самой «Обновить», берёт: повторные «Обновить» во время graphql держат на источник один свежий процесс.
+   */
   private sharedGitlabDetails(source: Source, fresh: boolean): Promise<Map<number, Detail>> {
     const key = sourceKey(source);
     const inflight = this.glInflight.get(key);
-    if (inflight && !fresh) return inflight;
+    if (inflight && (!fresh || inflight.fresh)) return inflight.p;
     const p: Promise<Map<number, Detail>> = this.gitlabDetails(source).finally(() => {
-      if (this.glInflight.get(key) === p) this.glInflight.delete(key);
+      if (this.glInflight.get(key)?.p === p) this.glInflight.delete(key);
     });
-    this.glInflight.set(key, p);
+    this.glInflight.set(key, { p, fresh });
     return p;
   }
 

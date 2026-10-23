@@ -2,7 +2,7 @@ import type { Project } from '../main/projects';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { el } from './dom';
 import type { PanelView } from './panel';
-import { RefreshGate } from './task-flow';
+import { recheckFor, RefreshGate, type RefreshTrigger } from './task-flow';
 import { emptyView, SORT_OPTIONS, sortTasks, sourceLabel, statusText, type SortKey } from './task-model';
 
 /** Сессия, начатая из задачи: панелю нужно знать только, жива ли она. */
@@ -51,7 +51,7 @@ export class TasksView implements PanelView {
     ];
     this.assigned.type = 'checkbox';
     this.assigned.checked = true;
-    this.assigned.addEventListener('change', () => void this.refresh());
+    this.assigned.addEventListener('change', () => void this.refresh(false, 'filter'));
     for (const option of SORT_OPTIONS) {
       const node = el('option', '', option.label) as HTMLOptionElement;
       node.value = option.key;
@@ -61,7 +61,7 @@ export class TasksView implements PanelView {
       this.sortKey = this.sort.value as SortKey;
       this.render();
     });
-    this.reload.addEventListener('click', () => void this.refresh(false, true));
+    this.reload.addEventListener('click', () => void this.refresh(false, 'reload'));
     const filter = el('label', 'tasks-filter');
     filter.append(this.assigned, document.createTextNode(' Назначено мне'));
     const sortLabel = el('label', 'tasks-filter');
@@ -77,7 +77,7 @@ export class TasksView implements PanelView {
     this.render();
   }
 
-  async refresh(force = false, recheck = false): Promise<void> {
+  async refresh(force = false, trigger: RefreshTrigger = 'open'): Promise<void> {
     const token = this.gate.begin(force);
     if (token === null) return;
     const project = this.host.project();
@@ -90,7 +90,7 @@ export class TasksView implements PanelView {
     this.render();
     let result: TasksResult;
     try {
-      result = await api.listTasks(project.id, this.assigned.checked, this.host.trackedRefs(), recheck);
+      result = await api.listTasks(project.id, this.assigned.checked, this.host.trackedRefs(), recheckFor(trigger));
     } catch (error) {
       result = { tasks: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message };
     }

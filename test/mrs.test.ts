@@ -641,6 +641,20 @@ describe('MrsService.listMrs', () => {
     assert.equal((await svc.details(a.detailsId!))!.details.length, 2);
   });
 
+  it('«Обновить» подряд во время graphql: свежий graphql источника один, а не по одному на нажатие', async () => {
+    let release!: (r: CliResult) => void;
+    const held = new Promise<CliResult>((r) => (release = r));
+    const { svc, calls } = setup({ remotes: glRemotes, respond: glab(() => held as unknown as CliResult, glList(2)) });
+    const a = await svc.listMrs('p1', 'all', []);
+    const b = await svc.listMrs('p1', 'all', [], true);
+    const c = await svc.listMrs('p1', 'all', [], true);
+    const d = await svc.listMrs('p1', 'all', [], true);
+    assert.equal(gqlCalls(calls).length, 2);
+    release(ok(page([node(1, 'SUCCESS', 0), node(2, 'FAILED', 0)])));
+    const all = await Promise.all([a, b, c, d].map((l) => svc.details(l.detailsId!)));
+    assert.ok(all.every((x) => x!.details.length === 2));
+  });
+
   it('«Обновить» во время деталей GitHub: ещё не стартовавшие задачи прежней выборки не выполняются перед новой', async () => {
     const prs = Array.from({ length: 20 }, (_, i) => ghRaw(i + 1));
     const { svc, calls, load } = setup({ remotes, slow: true, respond: ghResponder(prs) });

@@ -368,27 +368,61 @@ export interface ResolvedSources {
   gitlabUsers: Map<string, string>;
   /** Логин gh; проверка входа общая с кэшем сервиса. */
   loginOf: () => Promise<string | { error: string }>;
+  /**
+   * Выборка шла по прежнему результату проверки входа: после новой проверки отдаёт источники, перестроенные
+   * по ней, если хосты с входом, пользователи или состояние gh изменились, иначе null.
+   */
+  revise: () => Promise<ResolvedSources | null>;
 }
 
+/** Кэш проверки входа: промис в полёте общий, сброс отсекает его результат от кэша, прежний результат переживает сброс. */
+class AuthCache<T> {
+  private p?: Promise<T>;
+  private done = false;
+  private last?: T;
+
+  constructor(private readonly check: () => Promise<T>) {}
+
+  reset(): void {
+    this.p = undefined;
+    this.done = false;
+  }
+
+  /** `prior` - результат прежней проверки, пока текущая не завершилась; без него выборка ждёт `current`. */
+  get(): { current: Promise<T>; prior?: T } {
+    if (!this.p) {
+      const p: Promise<T> = this.check().then((v) => {
+        if (this.p === p) {
+          this.last = v;
+          this.done = true;
+        }
+        return v;
+      });
+      this.p = p;
+    }
+    return { current: this.p, prior: this.done ? undefined : this.last };
+  }
+}
+
+const sameAuth = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
 export class TrackersService {
-  // Кэш проверки входа хранит промис: проверка в полёте тоже общая, а сброс отсекает её результат от кэша.
-  private gitlabAuthP?: Promise<AuthState | { hosts: HostAuth[] }>;
-  private githubAuthP?: Promise<AuthState>;
+  private readonly gitlabCache = new AuthCache(() => this.gitlabAuth());
+  private readonly githubCache = new AuthCache(() => this.githubAuth());
 
   constructor(private readonly deps: TrackerDeps) {}
 
   /** Следующая выборка проверит вход заново; проверка, начатая до сброса, в кэш не попадает. */
   resetAuth(): void {
-    this.gitlabAuthP = undefined;
-    this.githubAuthP = undefined;
+    this.gitlabCache.reset();
+    this.githubCache.reset();
   }
 
-  private cachedGitlabAuth(): Promise<AuthState | { hosts: HostAuth[] }> {
-    return (this.gitlabAuthP ??= this.gitlabAuth());
-  }
-
-  private cachedGithubAuth(): Promise<AuthState> {
-    return (this.githubAuthP ??= this.githubAuth());
+  /** Проверка входа при старте приложения: один раз, результат ложится в кэш выборок (без опроса по таймеру). */
+  warmAuth(): void {
+    const enabled = this.deps.settings();
+    if (enabled.gitlab) this.gitlabCache.get();
+    if (enabled.github) this.githubCache.get();
   }
 
   async status(): Promise<TrackersStatus> {
@@ -426,15 +460,17 @@ export class TrackersService {
       preErrors: [],
       gitlabUsers: new Map(),
       loginOf: () => Promise.resolve({ error: 'gh не залогинен' }),
+      revise: () => Promise.resolve(null),
     };
     if (!project || (!enabled.github && !enabled.gitlab)) return resolved;
 
     const { gitlabUsers, sources, blocked } = resolved;
     // Хосты glab, на которых вход не подтверждён: remote такого хоста - источник с причиной, а не отсутствие remote.
     const gitlabDown = new Map<string, string>();
-    // Вход и remote читаются параллельно: они не зависят друг от друга.
+    const gl = enabled.gitlab ? this.gitlabCache.get() : null;
+    // Вход и remote читаются параллельно: они не зависят друг от друга. После сброса кэша идём по прежнему результату входа.
     const [status, remotes] = await Promise.all([
-      enabled.gitlab ? this.cachedGitlabAuth() : Promise.resolve(null),
+      gl ? Promise.resolve(gl.prior ?? gl.current) : Promise.resolve(null),
       Promise.all(project.repos.map(async (repo) => ({ repo, urls: await this.deps.remotes(repo) }))),
     ]);
     if (status) {
@@ -464,15 +500,37 @@ export class TrackersService {
       }
     }
 
-    resolved.loginOf = () =>
-      this.cachedGithubAuth().then((a) =>
+    let gh: { current: Promise<AuthState>; prior?: AuthState } | undefined;
+    resolved.loginOf = () => {
+      gh ??= this.githubCache.get();
+      return Promise.resolve(gh.prior ?? gh.current).then((a) =>
         a.state === 'logged-in' ? a.user : { error: a.state === 'logged-out' ? 'gh не залогинен' : a.state === 'missing' ? 'gh не установлен' : a.state === 'error' ? a.message : '' },
       );
+    };
+    resolved.revise = async () => {
+      const [glNext, ghNext] = await Promise.all([gl?.prior !== undefined ? gl.current : undefined, gh?.prior !== undefined ? gh.current : undefined]);
+      const changed = (gl?.prior !== undefined && !sameAuth(gl.prior, glNext)) || (gh?.prior !== undefined && !sameAuth(gh.prior, ghNext));
+      return changed ? this.resolveSources(projectId) : null;
+    };
     return resolved;
   }
 
+  /** Выборка по источникам; шла по прежнему результату входа и новая проверка его изменила - выполняется заново по ней. */
+  async fetchRevised<T>(projectId: string, recheck: boolean, run: (r: ResolvedSources) => Promise<T>, discard?: (out: T) => void): Promise<T> {
+    const first = await this.resolveSources(projectId, recheck);
+    const out = await run(first);
+    const next = await first.revise();
+    if (!next) return out;
+    discard?.(out);
+    return run(next);
+  }
+
   async list(projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck = false): Promise<TasksResult> {
-    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.resolveSources(projectId, recheck);
+    return this.fetchRevised(projectId, recheck, (r) => this.listFrom(r, assignedToMe, tracked));
+  }
+
+  private async listFrom(resolved: ResolvedSources, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> {
+    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = resolved;
     const result: TasksResult = { tasks: [], sources: [...preErrors], tracked: [], enabled };
     if (!project) return { ...result, error: 'Проект не найден' };
     if (!enabled.github && !enabled.gitlab) return result;

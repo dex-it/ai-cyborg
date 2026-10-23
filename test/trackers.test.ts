@@ -517,6 +517,119 @@ describe('TrackersService: кэш проверки входа', () => {
   });
 });
 
+describe('TrackersService: проверка входа при старте и после сброса', () => {
+  const statusOf = (user: string) => `git.corp\n  ✓ Logged in to git.corp as ${user} (/x)\n`;
+  const tick = () => new Promise((r) => setImmediate(r));
+  const make = (glabAuth: () => Promise<CliResult> | CliResult, ghUser: () => Promise<CliResult> | CliResult = () => ok('me\n')) => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const svc = new TrackersService({
+      run: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === 'glab' && args[0] === 'auth') return glabAuth();
+        if (cmd === 'gh' && args.includes('user')) return ghUser();
+        return ok('[]');
+      },
+      remotes: async () => ['git@github.com:o/a.git', 'git@git.corp:g/p.git'],
+      projects: () => ({ projects: [project], lastProjectId: null }),
+      settings: () => ({ github: true, gitlab: true }),
+    });
+    const isAuth = (c: { cmd: string; args: string[] }) => (c.cmd === 'glab' && c.args[0] === 'auth') || (c.cmd === 'gh' && c.args.includes('user'));
+    const listCalls = () => calls.filter((c) => !isAuth(c));
+    return { svc, calls, listCalls, authCalls: () => calls.filter(isAuth).length };
+  };
+
+  it('warmAuth: проверка запущена до первого списка, открытие после неё не зовёт auth status и api user', async () => {
+    const { svc, calls, listCalls, authCalls } = make(() => ok('', statusOf('mmx')));
+    svc.warmAuth();
+    await tick();
+    assert.equal(authCalls(), 2);
+    assert.equal(listCalls().length, 0);
+    await svc.list('p1', true, []);
+    assert.equal(authCalls(), 2);
+    assert.ok(calls.findIndex((c) => !(c.cmd === 'glab' && c.args[0] === 'auth') && !c.args.includes('user')) >= 2);
+    await svc.list('p1', true, []);
+    assert.equal(authCalls(), 2);
+  });
+
+  it('warmAuth: выключенный трекер не проверяется; повтора по таймеру нет', async () => {
+    const calls: string[] = [];
+    const svc = new TrackersService({
+      run: async (cmd) => (calls.push(cmd), ok('')),
+      remotes: async () => [],
+      projects: () => ({ projects: [project], lastProjectId: null }),
+      settings: () => ({ github: false, gitlab: true }),
+    });
+    svc.warmAuth();
+    await tick();
+    assert.deepEqual(calls, ['glab']);
+  });
+
+  it('без прежнего результата выборка ждёт проверку', async () => {
+    let release!: (r: CliResult) => void;
+    const { svc, listCalls } = make(() => new Promise<CliResult>((r) => (release = r)));
+    const p = svc.list('p1', false, []);
+    await tick();
+    assert.equal(listCalls().length, 0);
+    release(ok('', statusOf('mmx')));
+    await p;
+    assert.ok(listCalls().length > 0);
+  });
+
+  it('«Обновить» с прежним результатом: список стартует до завершения новой auth status; результат не изменился - выборка одна', async () => {
+    let n = 0;
+    let release!: (r: CliResult) => void;
+    const { svc, listCalls } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : new Promise<CliResult>((r) => (release = r))));
+    await svc.list('p1', true, []);
+    const before = listCalls().length;
+    const p = svc.list('p1', true, [], true);
+    await tick();
+    assert.ok(listCalls().length > before, 'список не стартовал до новой проверки');
+    release(ok('', statusOf('mmx')));
+    await p;
+    assert.equal(listCalls().length - before, before);
+  });
+
+  it('новая проверка изменила пользователя GitLab: выборка перестроена по ней', async () => {
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf(++n === 1 ? 'old' : 'new')));
+    await svc.list('p1', true, []);
+    await svc.list('p1', true, [], true);
+    const assignees = listCalls().map((c) => c.args.at(-1)!).filter((u) => u.includes('assignee_username'));
+    assert.deepEqual(assignees.map((u) => u.match(/assignee_username=(\w+)/)![1]), ['old', 'old', 'new']);
+  });
+
+  it('новая проверка изменила логин gh: выборка перестроена по нему', async () => {
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf('mmx')), () => ok(++n === 1 ? 'a\n' : 'b\n'));
+    await svc.list('p1', true, []);
+    await svc.list('p1', true, [], true);
+    const assignees = listCalls().map((c) => c.args.at(-1)!).filter((u) => u.includes('repos/o/a/issues')).map((u) => u.match(/assignee=(\w+)/)![1]);
+    assert.deepEqual(assignees, ['a', 'a', 'b']);
+  });
+
+  it('вход пропал после «Обновить»: тексты отказа прежние, источник заблокирован', async () => {
+    let n = 0;
+    const { svc } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : ok('', '')));
+    await svc.list('p1', false, []);
+    const r = await svc.list('p1', false, [], true);
+    assert.ok(r.sources.some((s) => s.error === 'вход glab не выполнен'));
+  });
+
+  it('сохранение настроек: следующая выборка идёт по прежнему результату параллельно с новой проверкой', async () => {
+    let n = 0;
+    let release!: (r: CliResult) => void;
+    const { svc, listCalls } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : new Promise<CliResult>((r) => (release = r))));
+    await svc.list('p1', false, []);
+    const before = listCalls().length;
+    svc.resetAuth();
+    const p = svc.list('p1', false, []);
+    await tick();
+    assert.ok(listCalls().length > before);
+    release(ok('', statusOf('mmx')));
+    await p;
+  });
+});
+
 describe('saveTrackerSettings', () => {
   it('сохранение настроек сбрасывает кэш входа; некорректные настройки не сохраняются и кэш не трогают', () => {
     const events: string[] = [];
