@@ -1,7 +1,7 @@
 import type { Mr, MrFilter, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Project } from '../main/projects';
 import { el } from './dom';
-import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
+import { applyMrDetails, MR_FILTER_OPTIONS, MR_SORT_OPTIONS, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import type { PanelView } from './panel';
 import { RefreshGate } from './task-flow';
 import { sortByKey, sourceLabel, type SortKey } from './task-model';
@@ -41,6 +41,9 @@ export class MrsView implements PanelView {
   private readonly gate = new RefreshGate();
   private result: MrListResult | null = null;
   private sortKey: SortKey = 'updated';
+  /** Ключи MR, чьи пайплайн и апрувы ещё не пришли: в строке «…». */
+  private pending = new Set<string>();
+  private readonly metaByKey = new Map<string, HTMLElement>();
 
   constructor(private readonly host: MrsViewHost) {
     this.actions = [
@@ -64,7 +67,7 @@ export class MrsView implements PanelView {
       this.sortKey = this.sort.value as SortKey;
       this.render();
     });
-    this.reload.addEventListener('click', () => void this.refresh());
+    this.reload.addEventListener('click', () => void this.refresh(false, true));
     const filterLabel = el('label', 'tasks-filter');
     filterLabel.append(document.createTextNode('Показать '), this.filter);
     const sortLabel = el('label', 'tasks-filter');
@@ -77,30 +80,50 @@ export class MrsView implements PanelView {
   onProjectChanged(): void {
     this.gate.cancel();
     this.result = null;
+    this.pending.clear();
     this.render();
   }
 
-  async refresh(force = false): Promise<void> {
+  async refresh(force = false, recheck = false): Promise<void> {
     const token = this.gate.begin(force);
     if (token === null) return;
     const project = this.host.project();
     this.result = null;
+    this.pending.clear();
     if (!project || this.host.projectHint()) {
       this.gate.cancel();
       this.render();
       return;
     }
     this.render();
-    let result: MrListResult;
+    let list: MrListResult;
     try {
-      result = await api.listMrs(project.id, this.filter.value as MrFilter, this.host.trackedRefs());
+      list = await api.listMrs(project.id, this.filter.value as MrFilter, this.host.trackedRefs(), recheck);
     } catch (error) {
-      result = { mrs: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message };
+      list = { mrs: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message, detailsId: null, awaiting: [] };
     }
     if (!this.gate.finish(token)) return;
-    this.result = result;
-    this.host.applyStatuses(result);
+    this.result = list;
+    this.pending = new Set(list.awaiting);
+    this.host.applyStatuses(list);
     this.render();
+    if (list.detailsId === null) return;
+
+    // Новая выборка меняет токен: детали прежней отбрасываются, её процессы CLI дорабатывают.
+    const details = await api.mrDetails(list.detailsId).catch(() => null);
+    if (!this.gate.isCurrent(token)) return;
+    this.result = applyMrDetails(list, details);
+    this.pending.clear();
+    this.host.applyStatuses(this.result);
+    this.fillMeta(this.result);
+  }
+
+  /** Дописывает значения в уже показанные строки: список не пересоздаётся. */
+  private fillMeta(result: MrListResult): void {
+    for (const mr of result.mrs) {
+      const meta = this.metaByKey.get(mr.key);
+      if (meta) meta.textContent = mrMeta(mr);
+    }
   }
 
   private render(): void {
@@ -119,6 +142,7 @@ export class MrsView implements PanelView {
       this.body.replaceChildren(el('p', 'tasks-note', result.error));
       return;
     }
+    this.metaByKey.clear();
     const nodes: HTMLElement[] = [];
     for (const source of result.sources) {
       if (source.error) nodes.push(el('p', 'tasks-error', `${sourceLabel(source)}: ${source.error}`));
@@ -150,7 +174,8 @@ export class MrsView implements PanelView {
     const title = el('div', 'task-title');
     title.append(el('span', 'task-number', mrNumber(mr.kind, mr.number)), el('span', '', ` ${mr.title}`));
     title.title = mr.title;
-    const meta = el('div', 'task-meta', mrMeta(mr));
+    const meta = el('div', 'task-meta', mrMeta(mr, this.pending.has(mr.key)));
+    this.metaByKey.set(mr.key, meta);
     meta.title = `${sourceLabel(mr)}\n${mr.url}`;
     main.append(title, meta);
     const actions = el('div', 'task-actions');

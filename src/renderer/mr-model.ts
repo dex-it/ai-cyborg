@@ -1,4 +1,4 @@
-import type { Mr, MrFilter, MrIntent, MrListResult } from '../main/mrs';
+import type { Mr, MrDetailsResult, MrFilter, MrIntent, MrListResult } from '../main/mrs';
 import type { TrackerKind } from '../main/trackers';
 import { emptyOf, type SortKey } from './task-model';
 
@@ -34,15 +34,27 @@ export const mrIntent = (mr: Pick<Mr, 'own'>): MrIntent => (mr.own ? 'rework' : 
 
 export const mrActionLabel = (mr: Pick<Mr, 'own'>): string => (mrIntent(mr) === 'rework' ? 'Доработать' : 'Ревью');
 
-/** Строка под названием: автор, ветки, черновик, пайплайн, апрувы; не полученное - «—». */
-export function mrMeta(mr: Pick<Mr, 'author' | 'sourceBranch' | 'targetBranch' | 'draft' | 'pipeline' | 'approvals'>): string {
+/** Строка под названием: автор, ветки, черновик, пайплайн, апрувы; не полученное - «—», ожидаемое (pending) - «…». */
+export function mrMeta(mr: Pick<Mr, 'author' | 'sourceBranch' | 'targetBranch' | 'draft' | 'pipeline' | 'approvals'>, pending = false): string {
   return [
     mr.author,
     `${mr.sourceBranch} → ${mr.targetBranch}`,
     ...(mr.draft ? ['черновик'] : []),
-    `пайплайн: ${mr.pipeline ?? '—'}`,
-    mr.approvals ?? 'апрувов: —',
+    pending ? 'пайплайн: …' : `пайплайн: ${mr.pipeline ?? '—'}`,
+    pending ? 'апрувов: …' : (mr.approvals ?? 'апрувов: —'),
   ].join(' · ');
+}
+
+/** Список с пришедшими деталями; порядок строк прежний, MR без записи - «—». d = null - детали не получены. */
+export function applyMrDetails(result: MrListResult, d: MrDetailsResult | null): MrListResult {
+  const byKey = new Map((d?.details ?? []).map((x) => [x.key, x]));
+  return {
+    ...result,
+    mrs: result.mrs.map((m) => ({ ...m, pipeline: byKey.get(m.key)?.pipeline ?? null, approvals: byKey.get(m.key)?.approvals ?? null })),
+    tracked: d?.tracked ?? [],
+    detailsId: null,
+    awaiting: [],
+  };
 }
 
 export const findMr = (result: MrListResult, key: string): Mr | undefined => result.mrs.find((m) => m.key === key) ?? result.tracked.find((m) => m.key === key);

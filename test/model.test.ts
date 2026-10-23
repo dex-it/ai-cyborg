@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Task, TasksResult, TrackersStatus } from '../src/main/trackers';
 import type { Mr, MrListResult } from '../src/main/mrs';
-import { mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
+import { applyMrDetails, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
 import { authLines, sortByKey, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
 
 const task = (n: number, over: Partial<Task> = {}): Task => ({
@@ -122,12 +122,28 @@ describe('MR: заголовки и действия', () => {
   it('строка: автор, ветки, черновик, пайплайн, апрувы; не полученное - «—»; название буквально текстом', () => {
     assert.equal(mrMeta(mr(1, { draft: true })), 'bob · feat → main · черновик · пайплайн: успешен · апрувов: 1');
     assert.equal(mrMeta(mr(1, { pipeline: null, approvals: null })), 'bob · feat → main · пайплайн: — · апрувов: —');
+    assert.equal(mrMeta(mr(1, { pipeline: null, approvals: null }), true), 'bob · feat → main · пайплайн: … · апрувов: …');
     assert.equal(mrSessionLabel(1, mr(1, { title: '<img src=x onerror=1>' })).includes('<img src=x onerror=1>'), true);
   });
 });
 
+describe('applyMrDetails', () => {
+  const list = (): MrListResult => ({ mrs: [mr(1, { pipeline: null, approvals: null }), mr(2, { pipeline: null, approvals: null }), mr(3, { pipeline: null, approvals: null })], sources: [], tracked: [], enabled: { github: false, gitlab: true }, detailsId: 4, awaiting: ['a'] });
+  it('значения встают по ключам, порядок прежний, MR без записи - «—», хвост tracked из деталей', () => {
+    const extra = mr(9);
+    const r = applyMrDetails(list(), { details: [{ key: mr(3).key, pipeline: 'упал', approvals: 'апрувов: 2' }, { key: mr(1).key, pipeline: null, approvals: 'апрувов: 0' }], tracked: [extra] });
+    assert.deepEqual(r.mrs.map((m) => [m.number, m.pipeline, m.approvals]), [[1, null, 'апрувов: 0'], [2, null, null], [3, 'упал', 'апрувов: 2']]);
+    assert.deepEqual([r.tracked, r.awaiting, r.detailsId], [[extra], [], null]);
+  });
+  it('детали не получены - у всех «—»', () => {
+    const r = applyMrDetails(list(), null);
+    assert.ok(r.mrs.every((m) => m.pipeline === null && m.approvals === null));
+    assert.deepEqual(r.tracked, []);
+  });
+});
+
 describe('MR: пустые состояния', () => {
-  const result = (over: Partial<MrListResult>): MrListResult => ({ mrs: [], sources: [], tracked: [], enabled: { github: true, gitlab: false }, ...over });
+  const result = (over: Partial<MrListResult>): MrListResult => ({ mrs: [], sources: [], tracked: [], enabled: { github: true, gitlab: false }, detailsId: null, awaiting: [], ...over });
   const src = (error?: string) => ({ kind: 'github' as const, host: 'github.com', path: 'o/r', error });
   it('четыре исхода', () => {
     assert.equal(mrEmptyView(result({ enabled: { github: false, gitlab: false } })), 'disabled');

@@ -220,10 +220,12 @@ export interface ListArgs {
   projectId: string;
   assignedToMe: boolean;
   tracked: TaskRef[];
+  /** «Обновить»: перед выборкой вход проверяется заново. */
+  recheck: boolean;
 }
 
-export function validateListArgs(projectId: unknown, assignedToMe: unknown, tracked: unknown): ListArgs | null {
-  if (typeof projectId !== 'string' || typeof assignedToMe !== 'boolean') return null;
+export function validateListArgs(projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown): ListArgs | null {
+  if (typeof projectId !== 'string' || typeof assignedToMe !== 'boolean' || typeof recheck !== 'boolean') return null;
   if (!Array.isArray(tracked) || tracked.length > MAX_TRACKED) return null;
   const refs: TaskRef[] = [];
   for (const item of tracked) {
@@ -231,7 +233,7 @@ export function validateListArgs(projectId: unknown, assignedToMe: unknown, trac
     if (!ref) return null;
     refs.push(ref);
   }
-  return { projectId, assignedToMe, tracked: refs };
+  return { projectId, assignedToMe, tracked: refs, recheck };
 }
 
 /** Сессия с задачей стартует только в репозиториях проектов. */
@@ -356,12 +358,30 @@ export interface ResolvedSources {
   /** Отказы, не привязанные к репозиторию (glab не установлен или не залогинен). */
   preErrors: SourceResult[];
   gitlabUsers: Map<string, string>;
-  /** Логин gh; считается один раз на выборку. */
+  /** Логин gh; проверка входа общая с кэшем сервиса. */
   loginOf: () => Promise<string | { error: string }>;
 }
 
 export class TrackersService {
+  // Кэш проверки входа хранит промис: проверка в полёте тоже общая, а сброс отсекает её результат от кэша.
+  private gitlabAuthP?: Promise<AuthState | { hosts: HostAuth[] }>;
+  private githubAuthP?: Promise<AuthState>;
+
   constructor(private readonly deps: TrackerDeps) {}
+
+  /** Следующая выборка проверит вход заново; проверка, начатая до сброса, в кэш не попадает. */
+  resetAuth(): void {
+    this.gitlabAuthP = undefined;
+    this.githubAuthP = undefined;
+  }
+
+  private cachedGitlabAuth(): Promise<AuthState | { hosts: HostAuth[] }> {
+    return (this.gitlabAuthP ??= this.gitlabAuth());
+  }
+
+  private cachedGithubAuth(): Promise<AuthState> {
+    return (this.githubAuthP ??= this.githubAuth());
+  }
 
   async status(): Promise<TrackersStatus> {
     const [github, gitlab] = await Promise.all([this.githubAuth(), this.gitlabAuth()]);
@@ -386,7 +406,8 @@ export class TrackersService {
   }
 
   /** Источники проекта: remote его репозиториев, признанные трекерами; общий разбор для задач и MR. */
-  async resolveSources(projectId: string): Promise<ResolvedSources> {
+  async resolveSources(projectId: string, recheck = false): Promise<ResolvedSources> {
+    if (recheck) this.resetAuth();
     const enabled = this.deps.settings();
     const project = this.deps.projects().projects.find((p) => p.id === projectId);
     const resolved: ResolvedSources = {
@@ -403,8 +424,12 @@ export class TrackersService {
     const { gitlabUsers, sources, blocked } = resolved;
     // Хосты glab, на которых вход не подтверждён: remote такого хоста - источник с причиной, а не отсутствие remote.
     const gitlabDown = new Map<string, string>();
-    if (enabled.gitlab) {
-      const status = await this.gitlabAuth();
+    // Вход и remote читаются параллельно: они не зависят друг от друга.
+    const [status, remotes] = await Promise.all([
+      enabled.gitlab ? this.cachedGitlabAuth() : Promise.resolve(null),
+      Promise.all(project.repos.map(async (repo) => ({ repo, urls: await this.deps.remotes(repo) }))),
+    ]);
+    if (status) {
       if ('hosts' in status) {
         for (const { host, auth } of status.hosts) {
           if (auth.state === 'logged-in') gitlabUsers.set(host, auth.user);
@@ -416,7 +441,6 @@ export class TrackersService {
     }
 
     const knownHosts = new Set([...gitlabUsers.keys(), ...gitlabDown.keys()]);
-    const remotes = await Promise.all(project.repos.map(async (repo) => ({ repo, urls: await this.deps.remotes(repo) })));
     for (const { repo, urls } of remotes) {
       for (const url of urls) {
         const found = classifyRemote(url, knownHosts);
@@ -432,16 +456,15 @@ export class TrackersService {
       }
     }
 
-    let githubLogin: Promise<string | { error: string }> | undefined;
     resolved.loginOf = () =>
-      (githubLogin ??= this.githubAuth().then((a) =>
+      this.cachedGithubAuth().then((a) =>
         a.state === 'logged-in' ? a.user : { error: a.state === 'logged-out' ? 'gh не залогинен' : a.state === 'missing' ? 'gh не установлен' : a.state === 'error' ? a.message : '' },
-      ));
+      );
     return resolved;
   }
 
-  async list(projectId: string, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> {
-    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.resolveSources(projectId);
+  async list(projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck = false): Promise<TasksResult> {
+    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.resolveSources(projectId, recheck);
     const result: TasksResult = { tasks: [], sources: [...preErrors], tracked: [], enabled };
     if (!project) return { ...result, error: 'Проект не найден' };
     if (!enabled.github && !enabled.gitlab) return result;

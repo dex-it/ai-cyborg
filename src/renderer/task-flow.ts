@@ -81,6 +81,11 @@ export class RefreshGate {
     this.busy = false;
   }
 
+  /** true - выборка токена остаётся текущей: ни новой выборки, ни смены проекта после неё. */
+  isCurrent(token: number): boolean {
+    return token === this.token;
+  }
+
   /** true - ответ актуален и загрузка закончена; false - ответ устарел. */
   finish(token: number): boolean {
     if (token !== this.token) return false;

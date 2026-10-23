@@ -15,11 +15,14 @@ import {
   parseMr,
   runLimited,
   toMr,
+  validateMrDetailsArgs,
   validateMrListArgs,
   validateSessionStart,
+  type MrListResult,
   type ParsedMr,
 } from '../src/main/mrs';
 import { MrsService } from '../src/main/mrs-service';
+import { applyMrDetails } from '../src/renderer/mr-model';
 import type { Project } from '../src/main/projects';
 import { taskKey, TrackersService, type CliResult, type TrackerSettings } from '../src/main/trackers';
 
@@ -146,17 +149,24 @@ describe('ключи, URL и сообщения', () => {
 describe('validateMrListArgs', () => {
   const ref = { kind: 'github', host: 'github.com', path: 'o/r', number: 5 };
   it('принимает корректные аргументы', () => {
-    assert.ok(validateMrListArgs('p', 'review', [ref]));
-    assert.ok(validateMrListArgs('p', 'all', Array(200).fill(ref)));
+    assert.ok(validateMrListArgs('p', 'review', [ref], false));
+    assert.ok(validateMrListArgs('p', 'all', Array(200).fill(ref), true));
+  });
+  it('recheck - только boolean', () => {
+    for (const bad of [undefined, 'x', 1, null]) assert.equal(validateMrListArgs('p', 'all', [], bad), null);
+  });
+  it('номер выборки деталей: целое больше нуля', () => {
+    assert.equal(validateMrDetailsArgs(1), 1);
+    for (const bad of [0, -1, 1.5, '1', NaN, 2 ** 53, null, undefined]) assert.equal(validateMrDetailsArgs(bad), null);
   });
   it('отвергает фильтр вне трёх значений, не массив, больше 200, плохие ссылки', () => {
-    assert.equal(validateMrListArgs('p', 'mine', []), null);
-    assert.equal(validateMrListArgs('p', true, []), null);
-    assert.equal(validateMrListArgs(1, 'all', []), null);
-    assert.equal(validateMrListArgs('p', 'all', 'x'), null);
-    assert.equal(validateMrListArgs('p', 'all', Array(201).fill(ref)), null);
+    assert.equal(validateMrListArgs('p', 'mine', [], false), null);
+    assert.equal(validateMrListArgs('p', true, [], false), null);
+    assert.equal(validateMrListArgs(1, 'all', [], false), null);
+    assert.equal(validateMrListArgs('p', 'all', 'x', false), null);
+    assert.equal(validateMrListArgs('p', 'all', Array(201).fill(ref), false), null);
     for (const bad of [{ ...ref, number: 0 }, { ...ref, number: 2 ** 31 + 1 }, { ...ref, number: 1.5 }, { ...ref, path: 'o/..' }, { ...ref, host: 'evil.com' }]) {
-      assert.equal(validateMrListArgs('p', 'all', [bad]), null);
+      assert.equal(validateMrListArgs('p', 'all', [bad], false), null);
     }
   });
 });
@@ -249,48 +259,193 @@ const ghResponder = (prs: object[], extra: (c: Call) => CliResult | undefined = 
   return undefined;
 };
 
+/** Обе фазы выборки, как их складывает интерфейс: список, детали по номеру, слияние. */
+async function full(svc: MrsService, ...args: Parameters<MrsService['listMrs']>): Promise<MrListResult> {
+  const list = await svc.listMrs(...args);
+  if (list.detailsId === null) return list;
+  return applyMrDetails(list, await svc.details(list.detailsId));
+}
+
+const gqlCalls = (calls: Call[]) => calls.filter((c) => c.args[3] === 'graphql');
+const gqlVar = (c: Call, name: string) => c.args.find((a) => a.startsWith(`${name}=`))?.slice(name.length + 1);
+const node = (iid: number | string, status: string | null | undefined, by: number, required?: number) => ({
+  iid: String(iid),
+  ...(status === undefined ? {} : { headPipeline: status === null ? null : { status } }),
+  ...(required === undefined ? {} : { approvalsRequired: required }),
+  approvedBy: { nodes: Array.from({ length: by }, (_, i) => ({ username: `u${i}` })) },
+});
+const page = (nodes: object[], next: string | null = null) =>
+  JSON.stringify({ data: { project: { mergeRequests: { pageInfo: { hasNextPage: next !== null, endCursor: next }, nodes } } } });
+const undefinedField = JSON.stringify({ errors: [{ message: "Field 'approvalsRequired' doesn't exist on type 'MergeRequest'", extensions: { code: 'undefinedField', typeName: 'MergeRequest', fieldName: 'approvalsRequired' } }] });
+const glRemotes = { '/w/a': ['git@git.corp:g/p.git'] };
+const glList = (n: number) => ok(JSON.stringify(Array.from({ length: n }, (_, i) => ({ iid: i + 1, title: 't', author: { username: 'bob' }, source_branch: 's', target_branch: 'main' }))));
+const glab = (graphql: (c: Call) => CliResult, list: CliResult = glList(3)) => (c: Call): CliResult | undefined =>
+  c.args[3] === 'graphql' ? graphql(c) : c.args.at(-1)!.includes('merge_requests?') ? list : undefined;
+
 describe('MrsService.listMrs', () => {
   const remotes = { '/w/a': ['git@github.com:o/a.git'] };
 
   it('список: --paginate, state=open, черновики входят, строка с пайплайном и апрувами', async () => {
     const { svc, calls } = setup({ remotes, respond: ghResponder([ghRaw(1), ghRaw(2, { draft: true })]) });
-    const r = await svc.listMrs('p1', 'all', []);
+    const r = await full(svc, 'p1', 'all', []);
     const list = calls.find(ghList)!;
     assert.ok(list.args.includes('--paginate'));
     assert.ok(url(list).startsWith('repos/o/a/pulls?state=open&per_page=100'));
     assert.deepEqual(r.mrs.map((m) => [m.number, m.draft, m.pipeline, m.approvals]), [[1, false, 'успешен', 'апрувов: 1'], [2, true, 'успешен', 'апрувов: 1']]);
   });
 
-  it('склеенные страницы glab дают все MR; пайплайн и «N из M»', async () => {
-    const page = (from: number, to: number) => JSON.stringify(Array.from({ length: to - from }, (_, i) => ({ iid: from + i, title: 't', author: { username: 'bob' }, source_branch: 's', target_branch: 'main' })));
-    const { svc } = setup({
-      remotes: { '/w/a': ['git@git.corp:g/p.git'] },
-      respond: (c) => {
-        const u = url(c);
-        if (u.includes('merge_requests?state=opened&per_page=100')) return ok(page(1, 101) + page(101, 151));
-        if (u.endsWith('/approvals')) return ok('{"approved_by":[{},{}],"approvals_required":3}');
-        if (/merge_requests\/\d+$/.test(u)) return ok('{"head_pipeline":{"status":"manual"}}');
-        return undefined;
-      },
-    });
-    const r = await svc.listMrs('p1', 'all', []);
-    assert.equal(r.mrs.length, 150);
-    assert.deepEqual([r.mrs[0].pipeline, r.mrs[0].approvals], ['manual', 'апрувов: 2 из 3']);
+  it('GitLab: список и один graphql на источник; пайплайн и «N из M» из ответа', async () => {
+    const { svc, calls } = setup({ remotes: glRemotes, respond: glab(() => ok(page([node(1, 'MANUAL', 2, 3), node(2, null, 1), node(3, 'SUCCESS', 0)]))) });
+    const r = await full(svc, 'p1', 'all', []);
+    assert.equal(calls.filter((c) => c.cmd === 'glab' && c.args[0] === 'api').length, 2);
+    assert.equal(gqlCalls(calls).length, 1);
+    assert.equal(calls.filter((c) => c.args.at(-1)!.includes('/approvals') || /merge_requests\/\d+$/.test(c.args.at(-1)!)).length, 0);
+    assert.deepEqual(r.mrs.map((m) => [m.number, m.pipeline, m.approvals]), [[1, 'manual', 'апрувов: 2 из 3'], [2, 'нет пайплайна', 'апрувов: 1'], [3, 'успешен', 'апрувов: 0']]);
   });
 
-  it('GitLab CE без approvals_required и без пайплайна', async () => {
+  it('пайплайн GraphQL теми же словами, что REST: регистр, null, неизвестный статус строкой', async () => {
+    const statuses = ['SUCCESS', 'FAILED', 'RUNNING', 'PENDING', 'CANCELED', 'MANUAL', null];
+    const { svc } = setup({ remotes: glRemotes, respond: glab(() => ok(page(statuses.map((st, i) => node(i + 1, st, 0)))), glList(7)) });
+    const r = await full(svc, 'p1', 'all', []);
+    assert.deepEqual(r.mrs.map((m) => m.pipeline), ['успешен', 'упал', 'идёт', 'ожидает', 'отменён', 'manual', 'нет пайплайна']);
+  });
+
+  it('без поля правил апрува: «апрувов: N»; статус не строка и отсутствие headPipeline - «—»', async () => {
+    const { svc } = setup({ remotes: glRemotes, respond: glab(() => ok(page([node(1, 'SUCCESS', 1), { ...node(2, undefined, 0), headPipeline: { status: 5 } }, node(3, undefined, 0)]))) });
+    const r = await full(svc, 'p1', 'all', []);
+    assert.deepEqual(r.mrs.map((m) => [m.pipeline, m.approvals]), [['успешен', 'апрувов: 1'], [null, 'апрувов: 0'], [null, 'апрувов: 0']]);
+  });
+
+  it('список возвращается до деталей: «—» не подставляется, ожидаемые ключи названы, details отдаёт значения один раз', async () => {
+    let release!: (r: CliResult) => void;
+    const held = new Promise<CliResult>((r) => (release = r));
+    const { svc } = setup({ remotes: glRemotes, respond: glab(() => held as unknown as CliResult, glList(2)) });
+    const list = await svc.listMrs('p1', 'all', []);
+    assert.deepEqual(list.mrs.map((m) => m.pipeline), [null, null]);
+    assert.deepEqual(list.awaiting, list.mrs.map((m) => m.key));
+    assert.notEqual(list.detailsId, null);
+    release(ok(page([node(1, 'FAILED', 1), node(2, 'RUNNING', 0)])));
+    const d = await svc.details(list.detailsId!);
+    assert.deepEqual(d!.details.map((x) => [x.key, x.pipeline, x.approvals]), [[list.awaiting[0], 'упал', 'апрувов: 1'], [list.awaiting[1], 'идёт', 'апрувов: 0']]);
+    assert.equal(await svc.details(list.detailsId!), null);
+  });
+
+  it('вытеснение: восьми выборок хватает, девятая вытесняет первую', async () => {
+    const { svc } = setup({ remotes: glRemotes, respond: glab(() => ok(page([node(1, 'SUCCESS', 0)])), glList(1)) });
+    const ids: number[] = [];
+    for (let i = 0; i < 9; i++) ids.push((await svc.listMrs('p1', 'all', [])).detailsId!);
+    assert.equal(await svc.details(ids[0]), null);
+    assert.notEqual(await svc.details(ids[1]), null);
+    assert.equal(await svc.details(999), null);
+  });
+
+  it('нет MR к ожиданию - detailsId пуст, «…» не нужен', async () => {
+    const { svc } = setup({ remotes: glRemotes, respond: glab(() => ok(page([])), ok('[]')) });
+    const r = await svc.listMrs('p1', 'all', []);
+    assert.deepEqual([r.detailsId, r.awaiting], [null, []]);
+  });
+
+  it('страницы по курсору: второй вызов несёт курсор первой, детали у обеих; предел 200 не действует', async () => {
+    const nodes = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => node(from + i, 'SUCCESS', 1));
+    const pages = [page(nodes(1, 101), 'c1'), page(nodes(101, 201), 'c2'), page(nodes(201, 206))];
+    const { svc, calls } = setup({ remotes: glRemotes, respond: glab(() => ok(pages[gqlCalls(calls).length - 1]), glList(205)) });
+    const r = await full(svc, 'p1', 'all', []);
+    const gql = gqlCalls(calls);
+    assert.deepEqual(gql.map((c) => gqlVar(c, 'endCursor')), [undefined, 'c1', 'c2']);
+    assert.equal(r.mrs.length, 205);
+    assert.ok(r.mrs.every((m) => m.pipeline === 'успешен' && m.approvals === 'апрувов: 1'));
+  });
+
+  it('повторный или пустой курсор останавливает обход', async () => {
+    for (const next of ['c1', '']) {
+      const { svc, calls } = setup({ remotes: glRemotes, respond: glab(() => ok(page([node(1, 'SUCCESS', 0)], next)), glList(1)) });
+      const r = await full(svc, 'p1', 'all', []);
+      assert.equal(gqlCalls(calls).length, next ? 2 : 1);
+      assert.equal(r.mrs[0].pipeline, 'успешен');
+    }
+  });
+
+  it('отказ второй страницы: детали первой остаются, у остальных «—», источник без ошибки', async () => {
     const { svc } = setup({
-      remotes: { '/w/a': ['git@git.corp:g/p.git'] },
-      respond: (c) => {
-        const u = url(c);
-        if (u.includes('merge_requests?')) return ok('[{"iid":1}]');
-        if (u.endsWith('/approvals')) return ok('{"approved_by":[{}]}');
-        if (u.endsWith('/merge_requests/1')) return ok('{"iid":1,"head_pipeline":null}');
-        return undefined;
-      },
+      remotes: glRemotes,
+      respond: glab((c) => (gqlVar(c, 'endCursor') ? fail(1, 'glab: boom') : ok(page([node(1, 'SUCCESS', 1)], 'c1'))), glList(2)),
     });
-    const m = (await svc.listMrs('p1', 'all', [])).mrs[0];
-    assert.deepEqual([m.pipeline, m.approvals], ['нет пайплайна', 'апрувов: 1']);
+    const r = await full(svc, 'p1', 'all', []);
+    assert.deepEqual(r.mrs.map((m) => m.pipeline), ['успешен', null]);
+    assert.equal(r.sources.find((s) => s.path)!.error, undefined);
+  });
+
+  it('отказ graphql целиком (код выхода, HTTP 4xx, errors без data, мусор): «—» в деталях, строки остаются, повтора нет', async () => {
+    const cases: CliResult[] = [
+      fail(1, 'glab: boom'),
+      ok('{"message":"401 Unauthorized"}', 'HTTP 401'),
+      ok('{"errors":[{"message":"timeout"}]}'),
+      ok('<html>'),
+      ok(JSON.stringify({ errors: [{ message: 'x', extensions: { code: 'undefinedField', fieldName: 'other' } }] })),
+    ];
+    for (const res of cases) {
+      const { svc, calls } = setup({ remotes: glRemotes, respond: glab(() => res) });
+      const r = await full(svc, 'p1', 'all', []);
+      assert.equal(r.mrs.length, 3);
+      assert.ok(r.mrs.every((m) => m.pipeline === null && m.approvals === null));
+      assert.equal(r.sources.find((s) => s.path)!.error, undefined);
+      assert.equal(gqlCalls(calls).length, 1);
+    }
+  });
+
+  it('MR вне ответа и project: null - «—», источник не отказывает', async () => {
+    const { svc } = setup({ remotes: glRemotes, respond: glab(() => ok(page([node(1, 'SUCCESS', 0), node('x', 'SUCCESS', 0), node(0, 'SUCCESS', 0)])), glList(2)) });
+    const r = await full(svc, 'p1', 'all', []);
+    assert.deepEqual(r.mrs.map((m) => m.pipeline), ['успешен', null]);
+    const none = setup({ remotes: glRemotes, respond: glab(() => ok('{"data":{"project":null}}'), glList(2)) });
+    const n = await full(none.svc, 'p1', 'all', []);
+    assert.deepEqual(n.mrs.map((m) => [m.pipeline, m.approvals]), [[null, null], [null, null]]);
+    assert.equal(n.sources.find((s) => s.path)!.error, undefined);
+  });
+
+  it('хост без полей правил: первый запрос повторяется без них, хост запоминается и на «Обновить», и на сброс входа', async () => {
+    const { svc, calls } = setup({
+      remotes: glRemotes,
+      respond: glab((c) => (gqlVar(c, 'query')!.includes('approvalsRequired') ? ok(undefinedField) : ok(page([node(1, 'SUCCESS', 2), node(2, 'SUCCESS', 0), node(3, 'SUCCESS', 1)])))),
+    });
+    const first = await full(svc, 'p1', 'all', []);
+    assert.equal(gqlCalls(calls).length, 2);
+    assert.deepEqual(first.mrs.map((m) => m.approvals), ['апрувов: 2', 'апрувов: 0', 'апрувов: 1']);
+    await full(svc, 'p1', 'all', [], true);
+    assert.equal(gqlCalls(calls).length, 3);
+    assert.ok(!gqlVar(gqlCalls(calls)[2], 'query')!.includes('approvalsRequired'));
+  });
+
+  it('GraphQL только читает: query - одна из двух постоянных строк без mutation, курсор из ответа - значение переменной -f, а не текст запроса', async () => {
+    const { svc, calls } = setup({
+      remotes: glRemotes,
+      respond: glab((c) => (gqlVar(c, 'endCursor') ? ok(page([node(2, 'SUCCESS', 0)])) : ok(page([node(1, 'SUCCESS', 0)], 'c"1}'))), glList(2)),
+    });
+    await full(svc, 'p1', 'all', []);
+    const gql = gqlCalls(calls);
+    assert.equal(gql.length, 2);
+    const queries = new Set<string>();
+    for (const c of gql) {
+      assert.deepEqual(c.args.slice(0, 4), ['api', '--hostname', 'git.corp', 'graphql']);
+      const rest = c.args.slice(4);
+      assert.ok(rest.length % 2 === 0 && rest.filter((_, i) => i % 2 === 0).every((f) => f === '-f'), c.args.join(' '));
+      queries.add(gqlVar(c, 'query')!);
+      assert.ok(!/\bmutation\b/i.test(gqlVar(c, 'query')!));
+      assert.ok(!gqlVar(c, 'query')!.includes('g/p'));
+    }
+    assert.equal(queries.size, 1);
+    assert.equal(gqlVar(gql[0], 'fullPath'), 'g/p');
+    assert.equal(gqlVar(gql[1], 'endCursor'), 'c"1}');
+  });
+
+  it('отказ списка GitHub не мешает деталям GitLab', async () => {
+    const { svc, calls } = setup({
+      remotes: { '/w/a': ['git@github.com:o/a.git', 'git@git.corp:g/p.git'] },
+      respond: (c) => (c.cmd === 'gh' ? (ghList(c) ? fail(1, 'gh: boom') : undefined) : glab(() => ok(page([node(1, 'SUCCESS', 0)])), glList(1))(c)),
+    });
+    const r = await full(svc, 'p1', 'all', []);
+    assert.deepEqual(r.mrs.map((m) => m.pipeline), ['успешен']);
+    assert.equal(gqlCalls(calls).length, 1);
   });
 
   it('отказ второй страницы, таймаут и переполнение - отказ источника целиком, MR источника нет', async () => {
@@ -302,7 +457,7 @@ describe('MrsService.listMrs', () => {
     ];
     for (const [res, re] of cases) {
       const { svc } = setup({ remotes, respond: (c) => (ghList(c) ? res : undefined) });
-      const r = await svc.listMrs('p1', 'all', []);
+      const r = await full(svc, 'p1', 'all', []);
       assert.deepEqual(r.mrs, []);
       assert.match(r.sources.find((s) => s.path)!.error!, re);
     }
@@ -313,27 +468,26 @@ describe('MrsService.listMrs', () => {
       remotes: { '/w/a': ['git@github.com:o/a.git', 'git@git.corp:g/p.git'] },
       respond: (c) => {
         if (c.cmd === 'gh') return ghList(c) ? fail(1, 'gh: boom') : undefined;
-        const u = url(c);
-        return u.includes('merge_requests?') ? ok('[{"iid":4}]') : u.endsWith('/approvals') ? ok('{"approved_by":[]}') : ok('{"head_pipeline":null}');
+        return c.args[3] === 'graphql' ? ok(page([node(4, null, 0)])) : ok('[{"iid":4}]');
       },
     });
-    const r = await svc.listMrs('p1', 'all', []);
+    const r = await full(svc, 'p1', 'all', []);
     assert.deepEqual(r.mrs.map((m) => m.number), [4]);
     assert.equal(r.sources.find((s) => s.kind === 'github')!.error, 'gh: boom');
   });
 
   it('отказ деталей одного MR даёт «—» только в своём поле, строка остаётся', async () => {
     const { svc } = setup({ remotes, respond: ghResponder([ghRaw(1)], (c) => (url(c).includes('/reviews') ? fail(1, 'gh: HTTP 403') : undefined)) });
-    const m = (await svc.listMrs('p1', 'all', [])).mrs[0];
+    const m = (await full(svc, 'p1', 'all', [])).mrs[0];
     assert.deepEqual([m.pipeline, m.approvals], ['успешен', null]);
     const b = setup({ remotes, respond: ghResponder([ghRaw(1)], (c) => (url(c).includes('/check-runs') ? fail(1, 'x') : undefined)) });
-    const n = (await b.svc.listMrs('p1', 'all', [])).mrs[0];
+    const n = (await full(b.svc, 'p1', 'all', [])).mrs[0];
     assert.deepEqual([n.pipeline, n.approvals], [null, 'апрувов: 1']);
   });
 
   it('головной коммит не hex - пайплайн «—» без вызова CLI', async () => {
     const { svc, calls } = setup({ remotes, respond: ghResponder([ghRaw(1, { head_sha: '../x' })]) });
-    const m = (await svc.listMrs('p1', 'all', [])).mrs[0];
+    const m = (await full(svc, 'p1', 'all', [])).mrs[0];
     assert.equal(m.pipeline, null);
     assert.ok(!calls.some((c) => url(c).includes('/commits/')));
   });
@@ -341,26 +495,26 @@ describe('MrsService.listMrs', () => {
   it('фильтры: «Назначено мне» и «Я ревьюер» по логину gh; детали только прошедшим', async () => {
     const prs = [ghRaw(1, { assignees: ['mmx'] }), ghRaw(2, { reviewers: ['MMX'] }), ghRaw(3)];
     const a = setup({ remotes, respond: ghResponder(prs) });
-    assert.deepEqual((await a.svc.listMrs('p1', 'assigned', [])).mrs.map((m) => m.number), [1]);
+    assert.deepEqual((await full(a.svc, 'p1', 'assigned', [])).mrs.map((m) => m.number), [1]);
     assert.ok(!a.calls.some((c) => url(c).includes('/pulls/2/') || url(c).includes('/pulls/3/')));
     const r = setup({ remotes, respond: ghResponder(prs) });
-    assert.deepEqual((await r.svc.listMrs('p1', 'review', [])).mrs.map((m) => m.number), [2]);
+    assert.deepEqual((await full(r.svc, 'p1', 'review', [])).mrs.map((m) => m.number), [2]);
   });
 
   it('логин не получен: с фильтром - ошибка источника без MR, без фильтра - список с «Ревью»', async () => {
     const user = fail(4, 'gh auth login');
     const f = setup({ remotes, user, respond: ghResponder([ghRaw(1, { assignees: ['mmx'] })]) });
-    const r = await f.svc.listMrs('p1', 'assigned', []);
+    const r = await full(f.svc, 'p1', 'assigned', []);
     assert.deepEqual(r.mrs, []);
     assert.equal(r.sources.find((s) => s.path)!.error, 'gh не залогинен');
     assert.ok(!f.calls.some(ghList));
     const all = setup({ remotes, user, respond: ghResponder([ghRaw(1, { user: 'mmx' })]) });
-    assert.deepEqual((await all.svc.listMrs('p1', 'all', [])).mrs.map((m) => m.own), [false]);
+    assert.deepEqual((await full(all.svc, 'p1', 'all', [])).mrs.map((m) => m.own), [false]);
   });
 
   it('own: автор - пользователь хоста', async () => {
     const { svc } = setup({ remotes, respond: ghResponder([ghRaw(1, { user: 'mmx' }), ghRaw(2)]) });
-    assert.deepEqual((await svc.listMrs('p1', 'all', [])).mrs.map((m) => m.own), [true, false]);
+    assert.deepEqual((await full(svc, 'p1', 'all', [])).mrs.map((m) => m.own), [true, false]);
   });
 
   it('только remote своего проекта; MR через два репозитория - одна строка с двумя repos', async () => {
@@ -368,7 +522,7 @@ describe('MrsService.listMrs', () => {
       remotes: { '/w/a': ['git@github.com:o/a.git'], '/w/b': ['https://github.com/O/A.git'], '/w/other': ['git@github.com:x/other.git'] },
       respond: ghResponder([ghRaw(1)]),
     });
-    const r = await svc.listMrs('p1', 'all', []);
+    const r = await full(svc, 'p1', 'all', []);
     assert.equal(r.mrs.length, 1);
     assert.deepEqual(r.mrs[0].repos, ['/w/a', '/w/b']);
     assert.ok(!calls.some((c) => url(c).includes('x/other')));
@@ -376,17 +530,17 @@ describe('MrsService.listMrs', () => {
 
   it('выключенный источник не опрашивается; оба выключены - ни одного вызова', async () => {
     const one = setup({ remotes, settings: { github: false, gitlab: true }, respond: () => undefined });
-    await one.svc.listMrs('p1', 'all', []);
+    await full(one.svc, 'p1', 'all', []);
     assert.equal(one.calls.filter((c) => c.cmd === 'gh').length, 0);
     const none = setup({ remotes, settings: { github: false, gitlab: false }, respond: () => undefined });
-    const r = await none.svc.listMrs('p1', 'all', []);
+    const r = await full(none.svc, 'p1', 'all', []);
     assert.equal(none.calls.length, 0);
     assert.deepEqual(r.enabled, { github: false, gitlab: false });
   });
 
   it('неизвестный проект - ошибка без вызовов', async () => {
     const { svc, calls } = setup({ remotes, respond: () => undefined });
-    assert.equal((await svc.listMrs('nope', 'all', [])).error, 'Проект не найден');
+    assert.equal((await full(svc, 'nope', 'all', [])).error, 'Проект не найден');
     assert.equal(calls.length, 0);
   });
 
@@ -400,11 +554,11 @@ describe('MrsService.listMrs', () => {
       remotes,
       respond: ghResponder([ghRaw(1)], (c) => (url(c) === 'repos/o/a/pulls/99' ? ok(JSON.stringify(ghRaw(99, { state: 'closed', merged: true }))) : undefined)),
     });
-    const r = await svc.listMrs('p1', 'all', tracked);
+    const r = await full(svc, 'p1', 'all', tracked);
     assert.deepEqual(r.tracked.map((m) => [m.number, m.state, m.pipeline]), [[99, 'merged', 'успешен']]);
     assert.ok(!calls.some((c) => url(c) === 'repos/o/a/pulls/1' || url(c).includes('x/other')));
     const down = setup({ remotes, respond: (c) => (ghList(c) ? fail(1, 'boom') : undefined) });
-    const d = await down.svc.listMrs('p1', 'all', [tracked[0]]);
+    const d = await full(down.svc, 'p1', 'all', [tracked[0]]);
     assert.deepEqual(d.tracked, []);
     assert.ok(!down.calls.some((c) => url(c) === 'repos/o/a/pulls/99'));
   });
@@ -412,7 +566,7 @@ describe('MrsService.listMrs', () => {
   it('процессов gh одновременно не больше пула плюс источники, а не по три на MR', async () => {
     const prs = Array.from({ length: 12 }, (_, i) => ghRaw(i + 1));
     const { svc, load } = setup({ remotes, slow: true, respond: ghResponder(prs) });
-    const r = await svc.listMrs('p1', 'all', []);
+    const r = await full(svc, 'p1', 'all', []);
     assert.equal(r.mrs.length, 12);
     assert.ok(load.peak > 1 && load.peak <= MR_CONCURRENCY + 1, `пик ${load.peak}`);
   });
@@ -421,12 +575,12 @@ describe('MrsService.listMrs', () => {
     const prs = Array.from({ length: 205 }, (_, i) => ghRaw(i + 1, { updated_at: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString() }));
     const asked = (calls: Call[]) => new Set(calls.filter((c) => url(c).includes('/reviews')).map((c) => url(c).match(/pulls\/(\d+)\//)![1]));
     const a = setup({ remotes, respond: ghResponder(prs) });
-    const r = await a.svc.listMrs('p1', 'all', []);
+    const r = await full(a.svc, 'p1', 'all', []);
     const nums = asked(a.calls);
     assert.equal(nums.size, MAX_DETAILED);
     for (const m of r.mrs) assert.deepEqual([m.pipeline !== null, m.approvals !== null, nums.has(String(m.number))], m.number > 5 ? [true, true, true] : [false, false, false]);
     const b = setup({ remotes, respond: ghResponder(prs) });
-    const rb = await b.svc.listMrs('p1', 'all', [{ kind: 'github', host: 'github.com', path: 'o/a', number: 1 }]);
+    const rb = await full(b.svc, 'p1', 'all', [{ kind: 'github', host: 'github.com', path: 'o/a', number: 1 }]);
     assert.notEqual(rb.mrs.find((m) => m.number === 1)!.pipeline, null);
     assert.equal(asked(b.calls).size, MAX_DETAILED + 1);
   });
@@ -437,26 +591,53 @@ describe('MrsService.listMrs', () => {
       remotes: { '/w/a': ['git@git.corp:g/p.git'] },
       respond: (c) => (url(c) === 'projects/g%2Fp/merge_requests/8' ? ok('{"iid":8,"state":"merged","head_pipeline":{"status":"failed"}}') : ok('[]')),
     });
-    assert.deepEqual((await svc.listMrs('p1', 'all', [ref])).tracked.map((m) => [m.state, m.pipeline]), [['merged', 'упал']]);
+    assert.deepEqual((await full(svc, 'p1', 'all', [ref])).tracked.map((m) => [m.state, m.pipeline]), [['merged', 'упал']]);
     const gone = setup({
       remotes: { '/w/a': ['git@git.corp:g/p.git'] },
       respond: (c) => (url(c) === 'projects/g%2Fp/merge_requests/8' ? fail(1, 'glab: 404 Not Found (HTTP 404)') : ok('[]')),
     });
-    assert.deepEqual((await gone.svc.listMrs('p1', 'all', [ref])).tracked, []);
+    assert.deepEqual((await full(gone.svc, 'p1', 'all', [ref])).tracked, []);
   });
 
-  it('только читающие вызовы: ни -X, ни полей, ни graphql, ни токена', async () => {
+  it('только читающие вызовы: ни -X, ни --input, ни токена; graphql - только постоянные запросы через -f', async () => {
     const { svc, calls } = setup({
       remotes: { '/w/a': ['git@github.com:o/a.git', 'git@git.corp:g/p.git'] },
-      respond: (c) => (c.cmd === 'gh' ? ghResponder([ghRaw(1)])(c) : undefined),
+      respond: (c) => (c.cmd === 'gh' ? ghResponder([ghRaw(1)])(c) : glab(() => ok(page([node(1, 'SUCCESS', 0)])), glList(1))(c)),
     });
-    await svc.listMrs('p1', 'all', [{ kind: 'github', host: 'github.com', path: 'o/a', number: 77 }, { kind: 'gitlab', host: 'git.corp', path: 'g/p', number: 78 }]);
+    await full(svc, 'p1', 'all', [{ kind: 'github', host: 'github.com', path: 'o/a', number: 77 }, { kind: 'gitlab', host: 'git.corp', path: 'g/p', number: 78 }]);
     assert.ok(calls.length > 5);
+    assert.equal(gqlCalls(calls).length, 1);
     for (const { cmd, args } of calls) {
       assert.ok(args[0] === 'api' || (cmd === 'glab' && args[0] === 'auth' && args[1] === 'status'), args.join(' '));
-      assert.ok(!args.some((a) => /^(-X|--method|-f|-F|--raw-field|--field|--input|graphql)$/.test(a)), args.join(' '));
+      assert.ok(!args.some((a) => /^(-X|--method|-F|--raw-field|--field|--input|--show-token|-t)$/.test(a)), args.join(' '));
+      assert.ok(args.includes('-f') === (args[3] === 'graphql'), args.join(' '));
+      assert.ok(!(args[0] === 'auth' && args[1] === 'token'));
       const host = args[args.indexOf('--hostname') + 1];
       if (args.includes('--hostname')) assert.ok(host === 'github.com' || host === 'git.corp', host);
     }
+  });
+
+  it('GitHub: пул деталей и MR с сессией общий, а список приходит раньше деталей', async () => {
+    const { svc } = setup({ remotes, respond: ghResponder([ghRaw(1)]) });
+    const list = await svc.listMrs('p1', 'all', []);
+    assert.deepEqual([list.mrs[0].pipeline, list.mrs[0].approvals, list.awaiting], [null, null, [list.mrs[0].key]]);
+    assert.deepEqual((await svc.details(list.detailsId!))!.details, [{ key: list.mrs[0].key, pipeline: 'успешен', approvals: 'апрувов: 1' }]);
+  });
+});
+
+describe('TrackersService: кэш проверки входа', () => {
+  const statusCalls = (calls: Call[]) => calls.filter((c) => c.cmd === 'glab' && c.args[0] === 'auth').length;
+  const userCalls = (calls: Call[]) => calls.filter((c) => c.cmd === 'gh' && c.args.includes('user')).length;
+  const remotes = { '/w/a': ['git@github.com:o/a.git', 'git@git.corp:g/p.git'] };
+  const respond = (c: Call) => (c.cmd === 'gh' ? ghResponder([ghRaw(1, { user: 'mmx' })])(c) : glab(() => ok(page([node(1, 'SUCCESS', 0)])), glList(1))(c));
+
+  it('второе обновление задач и MR не зовёт auth status и api user; recheck зовёт снова', async () => {
+    const { svc, calls } = setup({ remotes, respond });
+    await full(svc, 'p1', 'assigned', []);
+    await full(svc, 'p1', 'all', []);
+    await full(svc, 'p1', 'assigned', []);
+    assert.deepEqual([statusCalls(calls), userCalls(calls)], [1, 1]);
+    await full(svc, 'p1', 'assigned', [], true);
+    assert.deepEqual([statusCalls(calls), userCalls(calls)], [2, 2]);
   });
 });

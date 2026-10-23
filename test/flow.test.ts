@@ -95,6 +95,17 @@ describe('RefreshGate', () => {
     assert.equal(g.finish(fresh), true);
     assert.equal(g.loading, false);
   });
+  it('isCurrent: токен текущей выборки, пока нет новой и не было cancel', () => {
+    const g = new RefreshGate();
+    const first = g.begin(false)!;
+    assert.equal(g.isCurrent(first), true);
+    g.finish(first);
+    assert.equal(g.isCurrent(first), true);
+    const second = g.begin(false)!;
+    assert.equal(g.isCurrent(first), false);
+    g.cancel();
+    assert.equal(g.isCurrent(second), false);
+  });
   it('cancel отбрасывает ответ в полёте', () => {
     const g = new RefreshGate();
     const t = g.begin(false)!;

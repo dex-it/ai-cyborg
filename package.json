@@ -8,6 +8,7 @@
     "build": "node scripts/build.mjs",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
+    "measure": "node scripts/measure.mjs",
     "postinstall": "electron-rebuild -f -w node-pty",
     "test": "node --test 'src/**/*.test.ts' && node scripts/test.mjs"
   },

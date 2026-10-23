@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DirEntry } from './files';
-import type { MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
+import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsState } from './projects';
 import type { TaskRef, TasksResult, TrackerSettings, TrackersStatus } from './trackers';
 
@@ -13,10 +13,11 @@ const api = {
   loadTrackerSettings: (): Promise<TrackerSettings> => ipcRenderer.invoke('trackers:load'),
   saveTrackerSettings: (settings: TrackerSettings): Promise<void> => ipcRenderer.invoke('trackers:save', settings),
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),
-  listTasks: (projectId: string, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> =>
-    ipcRenderer.invoke('tasks:list', projectId, assignedToMe, tracked),
-  listMrs: (projectId: string, filter: MrFilter, tracked: MrRef[]): Promise<MrListResult> =>
-    ipcRenderer.invoke('mrs:list', projectId, filter, tracked),
+  listTasks: (projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck: boolean): Promise<TasksResult> =>
+    ipcRenderer.invoke('tasks:list', projectId, assignedToMe, tracked, recheck),
+  listMrs: (projectId: string, filter: MrFilter, tracked: MrRef[], recheck: boolean): Promise<MrListResult> =>
+    ipcRenderer.invoke('mrs:list', projectId, filter, tracked, recheck),
+  mrDetails: (id: number): Promise<MrDetailsResult | null> => ipcRenderer.invoke('mrs:details', id),
   input: (id: number, data: string): void => ipcRenderer.send('session:input', id, data),
   resize: (id: number, cols: number, rows: number): void => ipcRenderer.send('session:resize', id, cols, rows),
   kill: (id: number): void => ipcRenderer.send('session:kill', id),

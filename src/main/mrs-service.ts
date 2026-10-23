@@ -14,6 +14,8 @@ import {
   type CheckRun,
   type CombinedStatus,
   type Mr,
+  type MrDetail,
+  type MrDetailsResult,
   type MrFilter,
   type MrListResult,
   type MrRef,
@@ -21,7 +23,12 @@ import {
 } from './mrs';
 import { enc, firstLine, interpret, MAX_TRACKED, sourceKey, type CliRunner, type Fetched, type Source, type TrackersService } from './trackers';
 
-// Только чтение: ни -X, ни полей запроса, ни graphql.
+// Только чтение: ни -X, ни --input. Единственный graphql - постоянные запросы ниже без mutation; путь проекта и курсор идут переменными через -f.
+const GL_MR_PAGE = 'mergeRequests(state: opened, first: 100, after: $endCursor){ pageInfo{ hasNextPage endCursor } nodes{ iid headPipeline{ status } ';
+const GL_MR_QUERY = `query($fullPath: ID!, $endCursor: String){ project(fullPath: $fullPath){ ${GL_MR_PAGE}approvalsRequired approvedBy{ nodes{ username } } } } } }`;
+/** Без правил апрува: у редакции GitLab без них поля approvalsRequired нет. */
+const GL_MR_QUERY_LITE = `query($fullPath: ID!, $endCursor: String){ project(fullPath: $fullPath){ ${GL_MR_PAGE}approvedBy{ nodes{ username } } } } } }`;
+const DETAILS_KEPT = 8;
 const GH_MR_JQ =
   '.[] | {number,title,draft,created_at,updated_at,user:.user.login,head_ref:.head.ref,head_label:.head.label,head_repo:.head.repo.full_name,head_sha:.head.sha,base_ref:.base.ref,assignees:[.assignees[].login],reviewers:[.requested_reviewers[].login]}';
 const GH_MR_ONE_JQ =
@@ -31,17 +38,56 @@ const GH_STATUS_JQ = '{state,total_count}';
 const GH_REVIEWS_JQ = '.[] | {login:.user.login,state}';
 
 type Values = unknown[] | null;
+type Detail = Pick<MrDetail, 'pipeline' | 'approvals'>;
+type GitlabPage = { details: Map<number, Detail>; next: string | null };
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+
+/** Все ошибки ответа - «у MR нет поля approvalsRequired»: хост без правил апрува. */
+function lacksApprovalRules(body: unknown): boolean {
+  const errors = isRecord(body) ? body.errors : undefined;
+  if (!Array.isArray(errors) || !errors.length) return false;
+  return errors.every((e) => {
+    if (!isRecord(e)) return false;
+    const ext = isRecord(e.extensions) ? e.extensions : {};
+    return (ext.code === 'undefinedField' && ext.fieldName === 'approvalsRequired') || (typeof e.message === 'string' && /Field 'approvalsRequired' doesn't exist/.test(e.message));
+  });
+}
+
+function gitlabNode(node: unknown): [number, Detail] | null {
+  if (!isRecord(node)) return null;
+  const iid = Number(node.iid);
+  if (!Number.isSafeInteger(iid) || iid < 1) return null;
+  const head = node.headPipeline;
+  const pipeline = head === null ? NO_PIPELINE : isRecord(head) && typeof head.status === 'string' ? gitlabPipeline(head.status.toLowerCase()) : null;
+  const approvedBy = isRecord(node.approvedBy) ? node.approvedBy.nodes : undefined;
+  const approvals = Array.isArray(approvedBy) ? approvalsText(approvedBy.length, typeof node.approvalsRequired === 'number' ? node.approvalsRequired : undefined) : null;
+  return [iid, { pipeline, approvals }];
+}
 
 /** Выборка открытых MR/PR по remote репозиториев проекта через gh и glab; источники разбирает TrackersService. */
 export class MrsService {
+  /** Хосты GitLab без правил апрува: запоминаются на время работы приложения, чтобы не платить лишним вызовом. */
+  private readonly noApprovalRules = new Set<string>();
+  private readonly pending = new Map<number, Promise<MrDetailsResult>>();
+  private seq = 0;
+
   constructor(
     private readonly trackers: TrackersService,
     private readonly run: CliRunner,
   ) {}
 
-  async listMrs(projectId: string, filter: MrFilter, tracked: MrRef[]): Promise<MrListResult> {
-    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.trackers.resolveSources(projectId);
-    const result: MrListResult = { mrs: [], sources: [...preErrors], tracked: [], enabled };
+  /** Вторая фаза выборки по номеру из listMrs; номер одноразовый, неизвестный и вытесненный дают null. */
+  details(id: number): Promise<MrDetailsResult | null> {
+    const p = this.pending.get(id);
+    this.pending.delete(id);
+    return Promise.resolve(p ?? null);
+  }
+
+  /** Список сразу после REST-запросов; детали досчитываются в фоне и забираются через details(detailsId). */
+  async listMrs(projectId: string, filter: MrFilter, tracked: MrRef[], recheck = false): Promise<MrListResult> {
+    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = await this.trackers.resolveSources(projectId, recheck);
+    const result: MrListResult = { mrs: [], sources: [...preErrors], tracked: [], enabled, detailsId: null, awaiting: [] };
     if (!project) return { ...result, error: 'Проект не найден' };
     if (!enabled.github && !enabled.gitlab) return result;
 
@@ -50,6 +96,10 @@ export class MrsService {
       const login = await loginOf();
       return typeof login === 'string' ? { me: login } : { error: login.error };
     };
+
+    // GraphQL GitLab стартует вместе со списком: он от списка не зависит.
+    const glDetails = new Map<string, Promise<Map<number, Detail>>>();
+    for (const source of sources.values()) if (source.kind === 'gitlab') glDetails.set(sourceKey(source), this.gitlabDetails(source));
 
     const fetched = await Promise.all(
       [...sources.values()].map(async (source) => {
@@ -78,21 +128,22 @@ export class MrsService {
     }
     result.sources.push(...blocked.values());
 
-    // Детали - по свежим MR из отфильтрованных; остальные остаются с «—». MR с открытой сессией
+    result.mrs = items.map((x) => x.item.mr);
+
+    // Детали GitHub - по свежим MR из отфильтрованных; остальные остаются с «—». MR с открытой сессией
     // получают детали сверх предела (их не больше MAX_TRACKED): иначе заголовок сессии затёрся бы «—».
+    // Предел задан ценой REST-вызовов на MR; GraphQL GitLab отдаёт все открытые MR источника.
     const trackedKeys = new Set(tracked.slice(0, MAX_TRACKED).map(mrKey));
+    const github = items.filter((x) => x.source.kind === 'github');
     const detailed = new Set(
-      [...items]
+      [...github]
         .sort((a, b) => (Date.parse(b.item.mr.updatedAt) || 0) - (Date.parse(a.item.mr.updatedAt) || 0))
         .slice(0, MAX_DETAILED)
         .map((x) => x.item),
     );
-    for (const x of items) if (trackedKeys.has(x.item.mr.key)) detailed.add(x.item);
-    await runLimited(
-      items.filter((x) => detailed.has(x.item)).map((x) => () => this.fill(x.source, x.item)),
-      MR_CONCURRENCY,
-    );
-    result.mrs = items.map((x) => x.item.mr);
+    for (const x of github) if (trackedKeys.has(x.item.mr.key)) detailed.add(x.item);
+    const githubItems = github.filter((x) => detailed.has(x.item));
+    const gitlabItems = items.filter((x) => x.source.kind === 'gitlab');
 
     const have = new Set(result.mrs.map((m) => m.key));
     const wanted = new Map<string, { source: Source; ref: MrRef }>();
@@ -103,18 +154,48 @@ export class MrsService {
       if (have.has(key) || wanted.has(key) || !source || failed.has(sk)) continue;
       wanted.set(key, { source, ref });
     }
-    const singles = await runLimited(
-      [...wanted.values()].map(({ source, ref }) => async () => {
-        try {
-          return await this.fetchOne(source, ref.number);
-        } catch {
-          return null;
-        }
-      }),
+
+    result.awaiting = [...gitlabItems, ...githubItems].map((x) => x.item.mr.key);
+    if (!result.awaiting.length && !wanted.size) return result;
+
+    // Пул общий для деталей GitHub и MR с сессией вне списка: процессов CLI не больше MR_CONCURRENCY плюс GraphQL источников.
+    const pooled = runLimited<{ detail: MrDetail } | { mr: Mr | null }>(
+      [
+        ...githubItems.map((x) => async () => ({ detail: { key: x.item.mr.key, ...(await this.fill(x.source, x.item)) } })),
+        ...[...wanted.values()].map(({ source, ref }) => async () => {
+          try {
+            return { mr: await this.fetchOne(source, ref.number) };
+          } catch {
+            return { mr: null };
+          }
+        }),
+      ],
       MR_CONCURRENCY,
     );
-    result.tracked = singles.filter((m): m is Mr => m !== null);
+    const collect = async (): Promise<MrDetailsResult> => {
+      const [maps, rest] = await Promise.all([Promise.all(gitlabItems.map((x) => glDetails.get(sourceKey(x.source)))), pooled]);
+      const details: MrDetail[] = [];
+      const singles: Mr[] = [];
+      for (const r of rest) {
+        if ('detail' in r) details.push(r.detail);
+        else if (r.mr) singles.push(r.mr);
+      }
+      gitlabItems.forEach((x, i) => {
+        const d = maps[i]?.get(x.item.mr.number);
+        details.push({ key: x.item.mr.key, pipeline: d?.pipeline ?? null, approvals: d?.approvals ?? null });
+      });
+      return { details, tracked: singles };
+    };
+    result.detailsId = this.keep(collect().catch(() => ({ details: [], tracked: [] })));
     return result;
+  }
+
+  private keep(details: Promise<MrDetailsResult>): number {
+    const id = ++this.seq;
+    this.pending.set(id, details);
+    // Вытесненная выборка дорабатывает свои процессы CLI, результат теряется.
+    while (this.pending.size > DETAILS_KEPT) this.pending.delete(this.pending.keys().next().value!);
+    return id;
   }
 
   private async fetchList(source: Source): Promise<Fetched> {
@@ -144,22 +225,68 @@ export class MrsService {
     return githubPipeline(runs as CheckRun[], (status[0] ?? null) as CombinedStatus | null);
   }
 
-  /** Пайплайн и апрувы одного MR; каждое поле независимо. */
-  private async fill(source: Source, item: ParsedMr): Promise<void> {
-    const { mr } = item;
-    if (source.kind === 'github') {
-      const pipeline = await this.githubPipelineOf(source, item.headSha);
-      const reviews = await this.values('gh', 'github', ['api', '--hostname', 'github.com', '--paginate', '--jq', GH_REVIEWS_JQ, `repos/${source.path}/pulls/${mr.number}/reviews?per_page=100`]);
-      mr.pipeline = pipeline;
-      mr.approvals = reviews ? approvalsText(githubApprovals(reviews as { login?: unknown; state?: unknown }[])) : null;
-      return;
+  /** Пайплайн и апрувы одного PR GitHub; каждое поле независимо. */
+  private async fill(source: Source, item: ParsedMr): Promise<Detail> {
+    const pipeline = await this.githubPipelineOf(source, item.headSha);
+    const reviews = await this.values('gh', 'github', ['api', '--hostname', 'github.com', '--paginate', '--jq', GH_REVIEWS_JQ, `repos/${source.path}/pulls/${item.mr.number}/reviews?per_page=100`]);
+    return { pipeline, approvals: reviews ? approvalsText(githubApprovals(reviews as { login?: unknown; state?: unknown }[])) : null };
+  }
+
+  /** Детали всех открытых MR источника GitLab страницами GraphQL; не отклоняется: при отказе отдаёт собранное. */
+  private async gitlabDetails(source: Source): Promise<Map<number, Detail>> {
+    const out = new Map<number, Detail>();
+    try {
+      const seen = new Set<string>();
+      let cursor: string | null = null;
+      for (;;) {
+        const page = await this.gitlabPage(source, cursor);
+        if (!page) break;
+        for (const [iid, d] of page.details) out.set(iid, d);
+        if (!page.next || seen.has(page.next)) break;
+        seen.add(page.next);
+        cursor = page.next;
+      }
+    } catch {
+      // отказ задевает только детали: у MR без записи будет «—»
     }
-    const project = `projects/${enc(source.path)}/merge_requests/${mr.number}`;
-    const one = await this.values('glab', 'gitlab', ['api', '--hostname', source.host, project]);
-    const approvals = await this.values('glab', 'gitlab', ['api', '--hostname', source.host, `${project}/approvals`]);
-    mr.pipeline = one ? gitlabPipelineOf(one[0]) : null;
-    const body = approvals?.[0] as { approved_by?: unknown; approvals_required?: unknown } | undefined;
-    mr.approvals = body && Array.isArray(body.approved_by) ? approvalsText(body.approved_by.length, typeof body.approvals_required === 'number' ? body.approvals_required : undefined) : null;
+    return out;
+  }
+
+  /** Одна страница; null - отказ. Хост без поля approvalsRequired запоминается, страница повторяется без него. */
+  private async gitlabPage(source: Source, cursor: string | null): Promise<GitlabPage | null> {
+    for (;;) {
+      const full = !this.noApprovalRules.has(source.host);
+      const res = await this.run('glab', [
+        'api', '--hostname', source.host, 'graphql',
+        '-f', `query=${full ? GL_MR_QUERY : GL_MR_QUERY_LITE}`,
+        '-f', `fullPath=${source.path}`,
+        ...(cursor ? ['-f', `endCursor=${cursor}`] : []),
+      ]);
+      const out = interpret('gitlab', res, null);
+      let body: unknown;
+      if ('values' in out) body = out.values[0];
+      else
+        try {
+          body = JSON.parse(res.stdout);
+        } catch {
+          return null;
+        }
+      if (full && lacksApprovalRules(body)) {
+        this.noApprovalRules.add(source.host);
+        continue;
+      }
+      if (!('values' in out) || !isRecord(body) || !isRecord(body.data)) return null;
+      const project = body.data.project;
+      const connection = isRecord(project) && isRecord(project.mergeRequests) ? project.mergeRequests : null;
+      const details = new Map<number, Detail>();
+      for (const node of Array.isArray(connection?.nodes) ? connection.nodes : []) {
+        const entry = gitlabNode(node);
+        if (entry) details.set(entry[0], entry[1]);
+      }
+      const info = connection && isRecord(connection.pageInfo) ? connection.pageInfo : {};
+      const next = info.hasNextPage === true && typeof info.endCursor === 'string' && info.endCursor ? info.endCursor : null;
+      return { details, next };
+    }
   }
 
   /** Один MR вне списка: статус и пайплайн для заголовка сессии. */

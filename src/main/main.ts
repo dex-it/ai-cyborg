@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
 import { listDir, readTextFile } from './files';
 import { gitBranch, gitRemotes, gitRoot, gitStatus } from './git';
 import { MrsService } from './mrs-service';
-import { validateMrListArgs, validateSessionStart } from './mrs';
+import { validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore, type ProjectsState } from './projects';
 import { SessionManager } from './sessions';
 import {
@@ -71,17 +71,24 @@ ipcMain.handle('trackers:save', (_event, settings: unknown) => {
   const valid = validateSettings(settings);
   if (!valid) throw new Error('Некорректные настройки трекеров');
   trackerSettings.save(valid);
+  // Включённые трекеры другие: следующая выборка проверит вход заново.
+  trackers.resetAuth();
 });
 ipcMain.handle('trackers:status', () => trackers.status());
-ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown) => {
-  const args = validateListArgs(projectId, assignedToMe, tracked);
+ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) => {
+  const args = validateListArgs(projectId, assignedToMe, tracked, recheck);
   if (!args) throw new Error('Некорректные аргументы tasks:list');
-  return trackers.list(args.projectId, args.assignedToMe, args.tracked);
+  return trackers.list(args.projectId, args.assignedToMe, args.tracked, args.recheck);
 });
-ipcMain.handle('mrs:list', (_event, projectId: unknown, filter: unknown, tracked: unknown) => {
-  const args = validateMrListArgs(projectId, filter, tracked);
+ipcMain.handle('mrs:list', (_event, projectId: unknown, filter: unknown, tracked: unknown, recheck: unknown) => {
+  const args = validateMrListArgs(projectId, filter, tracked, recheck);
   if (!args) throw new Error('Некорректные аргументы mrs:list');
-  return mrs.listMrs(args.projectId, args.filter, args.tracked);
+  return mrs.listMrs(args.projectId, args.filter, args.tracked, args.recheck);
+});
+ipcMain.handle('mrs:details', (_event, id: unknown) => {
+  const valid = validateMrDetailsArgs(id);
+  if (valid === null) throw new Error('Некорректные аргументы mrs:details');
+  return mrs.details(valid);
 });
 ipcMain.on('session:input', (_event, id: number, data: string) => sessions.write(id, data));
 ipcMain.on('session:resize', (_event, id: number, cols: number, rows: number) => sessions.resize(id, cols, rows));

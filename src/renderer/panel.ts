@@ -5,7 +5,8 @@ import { TasksView, type TasksViewHost } from './tasks';
 /** Вид внутри панели: свой заголовок и список, обновление запрашивает панель. */
 export interface PanelView {
   element: HTMLElement;
-  refresh(force?: boolean): Promise<void>;
+  /** recheck - «Обновить»: вход в трекеры проверяется заново. */
+  refresh(force?: boolean, recheck?: boolean): Promise<void>;
   onProjectChanged(): void;
 }
 

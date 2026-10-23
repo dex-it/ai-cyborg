@@ -31,6 +31,23 @@ export interface MrListResult {
   tracked: Mr[];
   enabled: TrackerSettings;
   error?: string;
+  /** Номер выборки для mrs:details; null - деталей не будет. */
+  detailsId: number | null;
+  /** Ключи MR, чьи пайплайн и апрувы придут с деталями. */
+  awaiting: string[];
+}
+
+export interface MrDetail {
+  key: string;
+  /** null - не получен. */
+  pipeline: string | null;
+  approvals: string | null;
+}
+
+/** Вторая фаза выборки: пайплайн и апрувы списка и MR с сессией вне списка. */
+export interface MrDetailsResult {
+  details: MrDetail[];
+  tracked: Mr[];
 }
 
 /** Что присылает интерфейс при старте сессии: только проверяемые ссылки, без названий и веток. */
@@ -70,10 +87,12 @@ export interface MrListArgs {
   projectId: string;
   filter: MrFilter;
   tracked: MrRef[];
+  /** «Обновить»: перед выборкой вход проверяется заново. */
+  recheck: boolean;
 }
 
-export function validateMrListArgs(projectId: unknown, filter: unknown, tracked: unknown): MrListArgs | null {
-  if (typeof projectId !== 'string' || typeof filter !== 'string' || !FILTERS.includes(filter)) return null;
+export function validateMrListArgs(projectId: unknown, filter: unknown, tracked: unknown, recheck: unknown): MrListArgs | null {
+  if (typeof projectId !== 'string' || typeof filter !== 'string' || !FILTERS.includes(filter) || typeof recheck !== 'boolean') return null;
   if (!Array.isArray(tracked) || tracked.length > MAX_TRACKED) return null;
   const refs: MrRef[] = [];
   for (const item of tracked) {
@@ -81,8 +100,11 @@ export function validateMrListArgs(projectId: unknown, filter: unknown, tracked:
     if (!ref) return null;
     refs.push(ref);
   }
-  return { projectId, filter: filter as MrFilter, tracked: refs };
+  return { projectId, filter: filter as MrFilter, tracked: refs, recheck };
 }
+
+/** Номер выборки для mrs:details; null - аргумент некорректен. */
+export const validateMrDetailsArgs = (id: unknown): number | null => (typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : null);
 
 /** Начальный промпт по аргументу session:create; null - аргумент некорректен. Лишние поля игнорируются. */
 export function validateSessionStart(value: unknown): string | null {

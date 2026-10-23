@@ -116,12 +116,13 @@ describe('валидация аргументов каналов', () => {
     assert.equal(validateSettings({ github: true }), null);
   });
   it('validateListArgs: типы, лимит 200, плохой ref отклоняет вызов', () => {
-    assert.ok(validateListArgs('p', true, [ref]));
-    assert.equal(validateListArgs('p', 'true', []), null);
-    assert.equal(validateListArgs(1, true, []), null);
-    assert.equal(validateListArgs('p', true, Array(201).fill(ref)), null);
-    assert.ok(validateListArgs('p', true, Array(200).fill(ref)));
-    assert.equal(validateListArgs('p', true, [{ ...ref, path: '../x' }]), null);
+    assert.ok(validateListArgs('p', true, [ref], false));
+    assert.equal(validateListArgs('p', 'true', [], false), null);
+    for (const bad of [undefined, 'x', 1, null]) assert.equal(validateListArgs('p', true, [], bad), null);
+    assert.equal(validateListArgs(1, true, [], false), null);
+    assert.equal(validateListArgs('p', true, Array(201).fill(ref), false), null);
+    assert.ok(validateListArgs('p', true, Array(200).fill(ref), false));
+    assert.equal(validateListArgs('p', true, [{ ...ref, path: '../x' }], false), null);
   });
   it('sessionDirsAllowed: каталоги только из репозиториев проектов', () => {
     const state = { projects: [{ id: 'p', name: 'p', description: '', repos: ['/a', '/b'] }], lastProjectId: null };
@@ -433,5 +434,84 @@ describe('TrackersService.status', () => {
     });
     assert.deepEqual((await make(ok('u'), missing).status()).gitlab, { state: 'missing' });
     assert.deepEqual((await make(ok('u'), ok('', '')).status()).gitlab, { state: 'logged-out' });
+  });
+});
+
+describe('TrackersService: кэш проверки входа', () => {
+  const make = (glab: () => Promise<CliResult> | CliResult, gh: () => CliResult = () => ok('me\n')) => {
+    const calls: Call[] = [];
+    const svc = new TrackersService({
+      run: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === 'glab' && args[0] === 'auth') return glab();
+        if (cmd === 'gh' && args.includes('user')) return gh();
+        return ok('');
+      },
+      remotes: async () => ['git@github.com:o/a.git', 'git@git.corp:g/p.git'],
+      projects: () => ({ projects: [project], lastProjectId: null }),
+      settings: () => ({ github: true, gitlab: true }),
+    });
+    const auth = (cmd: string) => calls.filter((c) => c.cmd === cmd && (c.args[0] === 'auth' || c.args.includes('user'))).length;
+    return { svc, auth };
+  };
+
+  it('второе обновление не зовёт auth status и api user; «Обновить» (recheck) зовёт снова', async () => {
+    const { svc, auth } = make(() => ok('', GLAB_STATUS));
+    await svc.list('p1', true, []);
+    await svc.list('p1', true, []);
+    assert.deepEqual([auth('glab'), auth('gh')], [1, 1]);
+    await svc.list('p1', true, [], true);
+    assert.deepEqual([auth('glab'), auth('gh')], [2, 2]);
+  });
+
+  it('одновременные выборки при пустом кэше ждут одну проверку в полёте', async () => {
+    const { svc, auth } = make(() => ok('', GLAB_STATUS));
+    await Promise.all([svc.list('p1', true, []), svc.list('p1', true, []), svc.resolveSources('p1')]);
+    assert.deepEqual([auth('glab'), auth('gh')], [1, 1]);
+  });
+
+  it('проверка, начатая до сброса, в кэш не попадает', async () => {
+    let release!: (r: CliResult) => void;
+    let first = true;
+    const { svc, auth } = make(() => {
+      if (!first) return ok('', GLAB_STATUS);
+      first = false;
+      return new Promise<CliResult>((r) => (release = r));
+    });
+    const inFlight = svc.resolveSources('p1');
+    await new Promise((r) => setImmediate(r));
+    svc.resetAuth();
+    const fresh = await svc.resolveSources('p1');
+    assert.equal(fresh.gitlabUsers.get('git.corp'), 'mmx003');
+    release(ok('', 'git.corp\n  x git.corp: api call failed\n'));
+    assert.equal((await inFlight).gitlabUsers.size, 0);
+    await svc.resolveSources('p1');
+    assert.equal(auth('glab'), 2);
+  });
+
+  it('исход «не залогинен» переиспользуется до сброса', async () => {
+    let out = fail(4, 'x');
+    const { svc, auth } = make(() => ok('', ''), () => out);
+    const a = await svc.list('p1', true, []);
+    out = ok('me\n');
+    const b = await svc.list('p1', true, []);
+    assert.deepEqual(b.sources, a.sources);
+    assert.deepEqual([auth('glab'), auth('gh')], [1, 1]);
+    assert.match(a.sources.map((s) => s.error).join(), /gh не залогинен/);
+    svc.resetAuth();
+    await svc.list('p1', true, []);
+    assert.equal(auth('gh'), 2);
+  });
+
+  it('status() окна настроек проверяет заново при каждом открытии и кэш списков не трогает', async () => {
+    const { svc, auth } = make(() => ok('', GLAB_STATUS));
+    await svc.status();
+    await svc.status();
+    assert.deepEqual([auth('glab'), auth('gh')], [2, 2]);
+    await svc.list('p1', true, []);
+    assert.deepEqual([auth('glab'), auth('gh')], [3, 3]);
+    await svc.status();
+    await svc.list('p1', true, []);
+    assert.deepEqual([auth('glab'), auth('gh')], [4, 4]);
   });
 });
