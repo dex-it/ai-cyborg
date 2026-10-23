@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import type { MrListResult } from '../src/main/mrs';
 import { refreshMrs, type MrRefreshApi } from '../src/renderer/mr-refresh';
 import { MrMetaSlots, mrMeta } from '../src/renderer/mr-model';
-import { decideStart, recheckFor, refreshOnPanelEvent, RefreshGate, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger } from '../src/renderer/task-flow';
+import { decideStart, fetchTasks, recheckFor, refreshOnPanelEvent, RefreshGate, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger } from '../src/renderer/task-flow';
 
 type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
 const sess = (project: string, key: string): S => ({ project: { id: project }, task: { key } });
@@ -121,7 +121,7 @@ describe('RefreshGate', () => {
 describe('refreshMrs: двухфазная выборка MR', () => {
   const mr = (n: number) => ({ key: `k${n}`, kind: 'gitlab', number: n, author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline: null, approvals: null });
   const list = { mrs: [mr(1)], sources: [], tracked: [], enabled: { github: false, gitlab: true }, detailsId: 7, awaiting: ['k1'] } as unknown as MrListResult;
-  const args = { projectId: 'p', filter: 'all' as const, tracked: [], recheck: false };
+  const args = { projectId: 'p', filter: 'all' as const, tracked: [], trigger: 'open' as const };
   const harness = (details: Promise<unknown>) => {
     const events: string[] = [];
     const api: MrRefreshApi = { listMrs: async () => list, mrDetails: () => details as never };
@@ -219,10 +219,38 @@ describe('проводка выборки', () => {
     assert.deepEqual(panel.map(([, t]) => recheckFor(t)), [false, false, false]);
   });
 
+  it('канал списка задач получает recheck из триггера: true только у «Обновить»', async () => {
+    const seen: boolean[] = [];
+    const api = { listTasks: async (_p: string, _a: boolean, _t: never[], recheck: boolean) => (seen.push(recheck), null) };
+    for (const t of ['open', 'tab', 'filter', 'project', 'reload'] as RefreshTrigger[]) await fetchTasks(api, 'p', false, [], t);
+    assert.deepEqual(seen, [false, false, false, false, true]);
+  });
+
+  it('канал списка MR получает recheck из триггера: true только у «Обновить»', async () => {
+    const seen: boolean[] = [];
+    const api: MrRefreshApi = {
+      listMrs: async (_p, _f, _t, recheck) => (seen.push(recheck), { mrs: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, detailsId: null, awaiting: [] } as unknown as MrListResult),
+      mrDetails: async () => null,
+    };
+    for (const trigger of ['open', 'tab', 'filter', 'project', 'reload'] as RefreshTrigger[]) {
+      const gate = new RefreshGate();
+      await refreshMrs(api, gate, gate.begin(false)!, { projectId: 'p', filter: 'all', tracked: [], trigger }, { listed: () => {}, detailed: () => {} });
+    }
+    assert.deepEqual(seen, [false, false, false, false, true]);
+  });
+
+  it('register запоминает строку под ключом MR и возвращает её же: детали ложатся в неё', () => {
+    const slots = new MrMetaSlots();
+    const node = slots.register('k1', { textContent: 'до' });
+    node.textContent = mrMeta({ author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline: null, approvals: null }, true);
+    slots.fill({ mrs: [{ key: 'k1', author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline: 'упал', approvals: 'апрувов: 2' }] });
+    assert.equal(node.textContent, 'bob · f → m · пайплайн: упал · апрувов: 2');
+  });
+
   it('детали дописываются в уже показанные строки: слоты те же, строки без слота пропускаются', () => {
     const slots = new MrMetaSlots();
     const slot = { textContent: mrMeta({ author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline: null, approvals: null }, true) };
-    slots.set('k1', slot);
+    slots.register('k1', slot);
     const mr = (key: string, pipeline: string) => ({ key, author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline, approvals: 'апрувов: 1' });
     slots.fill({ mrs: [mr('k1', 'успешен'), mr('k2', 'упал')] });
     assert.equal(slot.textContent, 'bob · f → m · пайплайн: успешен · апрувов: 1');

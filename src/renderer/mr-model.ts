@@ -53,8 +53,10 @@ export class MrMetaSlots {
     this.slots.clear();
   }
 
-  set(key: string, slot: { textContent: string | null }): void {
+  /** Запоминает строку под ключом MR и возвращает её же. */
+  register<T extends { textContent: string | null }>(key: string, slot: T): T {
     this.slots.set(key, slot);
+    return slot;
   }
 
   fill(result: { mrs: (Parameters<typeof mrMeta>[0] & { key: string })[] }): void {

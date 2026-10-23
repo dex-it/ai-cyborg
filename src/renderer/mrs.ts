@@ -4,7 +4,7 @@ import { el } from './dom';
 import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
-import { recheckFor, RefreshGate, wireRefresh, type RefreshTrigger } from './task-flow';
+import { RefreshGate, wireRefresh, type RefreshTrigger } from './task-flow';
 import { sortByKey, sourceLabel, type SortKey } from './task-model';
 
 /** Сессия, начатая из MR: панелю нужно знать только, жива ли она. */
@@ -96,7 +96,7 @@ export class MrsView implements PanelView {
       return;
     }
     this.render();
-    await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), recheck: recheckFor(trigger) }, {
+    await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), trigger }, {
       listed: (list, pending) => {
         this.result = list;
         this.pending = pending;
@@ -160,8 +160,7 @@ export class MrsView implements PanelView {
     const title = el('div', 'task-title');
     title.append(el('span', 'task-number', mrNumber(mr.kind, mr.number)), el('span', '', ` ${mr.title}`));
     title.title = mr.title;
-    const meta = el('div', 'task-meta', mrMeta(mr, this.pending.has(mr.key)));
-    this.metas.set(mr.key, meta);
+    const meta = this.metas.register(mr.key, el('div', 'task-meta', mrMeta(mr, this.pending.has(mr.key))));
     meta.title = `${sourceLabel(mr)}\n${mr.url}`;
     main.append(title, meta);
     const actions = el('div', 'task-actions');

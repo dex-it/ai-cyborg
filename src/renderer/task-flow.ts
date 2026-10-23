@@ -1,5 +1,7 @@
 /** Правила работы панели задач без DOM: подставляемый вход и состояние, проверяемые в npm test. */
 
+import type { TaskRef } from '../main/trackers';
+
 interface TaskSessionLike {
   project: { id: string };
   task?: { key: string };
@@ -64,6 +66,17 @@ export function decideStart(hasOpenSession: boolean, taskRepos: string[], projec
 export type RefreshTrigger = 'open' | 'tab' | 'filter' | 'project' | 'reload';
 
 export const recheckFor = (trigger: RefreshTrigger): boolean => trigger === 'reload';
+
+/** Вызов канала списка задач: флаг новой проверки входа берётся из триггера. */
+export function fetchTasks<R>(
+  api: { listTasks(projectId: string, assigned: boolean, tracked: TaskRef[], recheck: boolean): Promise<R> },
+  projectId: string,
+  assigned: boolean,
+  tracked: TaskRef[],
+  trigger: RefreshTrigger,
+): Promise<R> {
+  return api.listTasks(projectId, assigned, tracked, recheckFor(trigger));
+}
 
 export interface Listenable {
   addEventListener(type: string, listener: () => void): void;

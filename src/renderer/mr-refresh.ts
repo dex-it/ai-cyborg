@@ -1,6 +1,6 @@
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef } from '../main/mrs';
 import { applyMrDetails } from './mr-model';
-import type { RefreshGate } from './task-flow';
+import { recheckFor, type RefreshGate, type RefreshTrigger } from './task-flow';
 
 export interface MrRefreshApi {
   listMrs(projectId: string, filter: MrFilter, tracked: MrRef[], recheck: boolean): Promise<MrListResult>;
@@ -18,12 +18,12 @@ export async function refreshMrs(
   api: MrRefreshApi,
   gate: RefreshGate,
   token: number,
-  args: { projectId: string; filter: MrFilter; tracked: MrRef[]; recheck: boolean },
+  args: { projectId: string; filter: MrFilter; tracked: MrRef[]; trigger: RefreshTrigger },
   sink: MrRefreshSink,
 ): Promise<void> {
   let list: MrListResult;
   try {
-    list = await api.listMrs(args.projectId, args.filter, args.tracked, args.recheck);
+    list = await api.listMrs(args.projectId, args.filter, args.tracked, recheckFor(args.trigger));
   } catch (error) {
     list = { mrs: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message, detailsId: null, awaiting: [] };
   }
