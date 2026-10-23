@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Cyborg</title>
+    <link rel="stylesheet" href="xterm.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div id="project-bar">
+          <select id="project-select" title="Проект"></select>
+          <button id="project-edit" class="icon-button" title="Свойства проекта">✎</button>
+          <button id="project-new" class="icon-button" title="Новый проект">+</button>
+        </div>
+        <header id="tree-header">
+          <div id="tree-title"></div>
+          <div id="tree-meta"></div>
+        </header>
+        <div id="tree"></div>
+      </aside>
+      <div id="splitter"></div>
+      <main id="workspace">
+        <nav id="session-strip">
+          <div id="session-list"></div>
+          <button id="new-session" title="Новая сессия Claude Code (Ctrl+Shift+N)">+ CC</button>
+        </nav>
+        <div id="sessions">
+          <div id="empty"></div>
+        </div>
+      </main>
+    </div>
+
+    <div id="repo-menu" class="menu" hidden></div>
+
+    <dialog id="project-dialog">
+      <form method="dialog">
+        <h2 id="project-dialog-title"></h2>
+        <label class="field">
+          <span>Название</span>
+          <input id="project-name" required autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Описание</span>
+          <textarea id="project-description" rows="4" placeholder="Что за продукт, кому и зачем"></textarea>
+        </label>
+        <div class="field">
+          <span>Репозитории</span>
+          <ul id="project-repos"></ul>
+          <button type="button" id="project-add-repo">Добавить репозиторий…</button>
+        </div>
+        <footer>
+          <button type="button" id="project-delete" class="danger">Удалить проект</button>
+          <span class="spacer"></span>
+          <button value="cancel" formnovalidate>Отмена</button>
+          <button value="save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <script src="vs/loader.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
