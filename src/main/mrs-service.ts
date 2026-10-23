@@ -78,13 +78,16 @@ export class MrsService {
     }
     result.sources.push(...blocked.values());
 
-    // Детали - по свежим MR из отфильтрованных; остальные остаются с «—».
+    // Детали - по свежим MR из отфильтрованных; остальные остаются с «—». MR с открытой сессией
+    // получают детали сверх предела (их не больше MAX_TRACKED): иначе заголовок сессии затёрся бы «—».
+    const trackedKeys = new Set(tracked.slice(0, MAX_TRACKED).map(mrKey));
     const detailed = new Set(
       [...items]
         .sort((a, b) => (Date.parse(b.item.mr.updatedAt) || 0) - (Date.parse(a.item.mr.updatedAt) || 0))
         .slice(0, MAX_DETAILED)
         .map((x) => x.item),
     );
+    for (const x of items) if (trackedKeys.has(x.item.mr.key)) detailed.add(x.item);
     await runLimited(
       items.filter((x) => detailed.has(x.item)).map((x) => () => this.fill(x.source, x.item)),
       MR_CONCURRENCY,
@@ -134,10 +137,9 @@ export class MrsService {
   private async githubPipelineOf(source: Source, sha: string): Promise<string | null> {
     if (!isSha(sha)) return null;
     const base = ['api', '--hostname', 'github.com'];
-    const [runs, status] = await Promise.all([
-      this.values('gh', 'github', [...base, '--paginate', '--jq', GH_RUNS_JQ, `repos/${source.path}/commits/${sha}/check-runs?per_page=100`]),
-      this.values('gh', 'github', [...base, '--jq', GH_STATUS_JQ, `repos/${source.path}/commits/${sha}/status`]),
-    ]);
+    // Вызовы одного MR идут подряд: пул MR_CONCURRENCY ограничивает число процессов CLI, а не только MR.
+    const runs = await this.values('gh', 'github', [...base, '--paginate', '--jq', GH_RUNS_JQ, `repos/${source.path}/commits/${sha}/check-runs?per_page=100`]);
+    const status = await this.values('gh', 'github', [...base, '--jq', GH_STATUS_JQ, `repos/${source.path}/commits/${sha}/status`]);
     if (!runs || !status) return null;
     return githubPipeline(runs as CheckRun[], (status[0] ?? null) as CombinedStatus | null);
   }
@@ -146,19 +148,15 @@ export class MrsService {
   private async fill(source: Source, item: ParsedMr): Promise<void> {
     const { mr } = item;
     if (source.kind === 'github') {
-      const [pipeline, reviews] = await Promise.all([
-        this.githubPipelineOf(source, item.headSha),
-        this.values('gh', 'github', ['api', '--hostname', 'github.com', '--paginate', '--jq', GH_REVIEWS_JQ, `repos/${source.path}/pulls/${mr.number}/reviews?per_page=100`]),
-      ]);
+      const pipeline = await this.githubPipelineOf(source, item.headSha);
+      const reviews = await this.values('gh', 'github', ['api', '--hostname', 'github.com', '--paginate', '--jq', GH_REVIEWS_JQ, `repos/${source.path}/pulls/${mr.number}/reviews?per_page=100`]);
       mr.pipeline = pipeline;
       mr.approvals = reviews ? approvalsText(githubApprovals(reviews as { login?: unknown; state?: unknown }[])) : null;
       return;
     }
     const project = `projects/${enc(source.path)}/merge_requests/${mr.number}`;
-    const [one, approvals] = await Promise.all([
-      this.values('glab', 'gitlab', ['api', '--hostname', source.host, project]),
-      this.values('glab', 'gitlab', ['api', '--hostname', source.host, `${project}/approvals`]),
-    ]);
+    const one = await this.values('glab', 'gitlab', ['api', '--hostname', source.host, project]);
+    const approvals = await this.values('glab', 'gitlab', ['api', '--hostname', source.host, `${project}/approvals`]);
     mr.pipeline = one ? gitlabPipelineOf(one[0]) : null;
     const body = approvals?.[0] as { approved_by?: unknown; approvals_required?: unknown } | undefined;
     mr.approvals = body && Array.isArray(body.approved_by) ? approvalsText(body.approved_by.length, typeof body.approvals_required === 'number' ? body.approvals_required : undefined) : null;

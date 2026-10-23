@@ -7,6 +7,8 @@ import {
   githubApprovals,
   githubPipeline,
   gitlabPipeline,
+  MAX_DETAILED,
+  MR_CONCURRENCY,
   mrKey,
   mrPrompt,
   mrUrl,
@@ -208,13 +210,18 @@ const other: Project = { id: 'p2', name: 'Q', description: '', repos: ['/w/other
 
 interface Call { cmd: string; args: string[] }
 
-function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSettings; respond: (c: Call) => CliResult | undefined; user?: CliResult }) {
+function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSettings; respond: (c: Call) => CliResult | undefined; user?: CliResult; slow?: boolean }) {
   const calls: Call[] = [];
+  const load = { now: 0, peak: 0 };
   const run = async (cmd: 'gh' | 'glab', args: string[]): Promise<CliResult> => {
     const call = { cmd, args };
     calls.push(call);
     if (cmd === 'glab' && args[0] === 'auth') return ok('', GLAB_STATUS);
     if (cmd === 'gh' && args.includes('user')) return opts.user ?? ok('MMX\n');
+    if (!opts.slow) return opts.respond(call) ?? ok('');
+    load.peak = Math.max(load.peak, ++load.now);
+    await new Promise((r) => setTimeout(r, 2));
+    load.now--;
     return opts.respond(call) ?? ok('');
   };
   const trackers = new TrackersService({
@@ -223,7 +230,7 @@ function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSett
     projects: () => ({ projects: [project, other], lastProjectId: null }),
     settings: () => opts.settings ?? { github: true, gitlab: true },
   });
-  return { svc: new MrsService(trackers, run), calls };
+  return { svc: new MrsService(trackers, run), calls, load };
 }
 
 const url = (c: Call) => c.args.at(-1)!;
@@ -400,6 +407,28 @@ describe('MrsService.listMrs', () => {
     const d = await down.svc.listMrs('p1', 'all', [tracked[0]]);
     assert.deepEqual(d.tracked, []);
     assert.ok(!down.calls.some((c) => url(c) === 'repos/o/a/pulls/99'));
+  });
+
+  it('процессов gh одновременно не больше пула плюс источники, а не по три на MR', async () => {
+    const prs = Array.from({ length: 12 }, (_, i) => ghRaw(i + 1));
+    const { svc, load } = setup({ remotes, slow: true, respond: ghResponder(prs) });
+    const r = await svc.listMrs('p1', 'all', []);
+    assert.equal(r.mrs.length, 12);
+    assert.ok(load.peak > 1 && load.peak <= MR_CONCURRENCY + 1, `пик ${load.peak}`);
+  });
+
+  it('детали - ровно у 200 самых свежих, у остальных «—»; MR с сессией получает детали и вне двухсотки', async () => {
+    const prs = Array.from({ length: 205 }, (_, i) => ghRaw(i + 1, { updated_at: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString() }));
+    const asked = (calls: Call[]) => new Set(calls.filter((c) => url(c).includes('/reviews')).map((c) => url(c).match(/pulls\/(\d+)\//)![1]));
+    const a = setup({ remotes, respond: ghResponder(prs) });
+    const r = await a.svc.listMrs('p1', 'all', []);
+    const nums = asked(a.calls);
+    assert.equal(nums.size, MAX_DETAILED);
+    for (const m of r.mrs) assert.deepEqual([m.pipeline !== null, m.approvals !== null, nums.has(String(m.number))], m.number > 5 ? [true, true, true] : [false, false, false]);
+    const b = setup({ remotes, respond: ghResponder(prs) });
+    const rb = await b.svc.listMrs('p1', 'all', [{ kind: 'github', host: 'github.com', path: 'o/a', number: 1 }]);
+    assert.notEqual(rb.mrs.find((m) => m.number === 1)!.pipeline, null);
+    assert.equal(asked(b.calls).size, MAX_DETAILED + 1);
   });
 
   it('GitLab tracked: один запрос даёт статус и пайплайн; 404 - MR не возвращается', async () => {

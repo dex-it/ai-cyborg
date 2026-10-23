@@ -574,7 +574,8 @@ function applyMrStatuses(result: MrListResult): void {
     if (!s.mr) continue;
     const fresh = findMr(result, s.mr.key);
     if (!fresh) continue;
-    s.mr = { ...fresh, repos: s.mr.repos };
+    // pipeline null - вызов не удался: прежний пайплайн остаётся в заголовке.
+    s.mr = { ...fresh, repos: s.mr.repos, pipeline: fresh.pipeline ?? s.mr.pipeline };
     updateSessionLabels(s);
   }
 }
