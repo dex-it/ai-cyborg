@@ -12,7 +12,7 @@ import {
   TrackerSettingsStore,
   TrackersService,
   validateListArgs,
-  validateSettings,
+  saveTrackerSettings,
 } from './trackers';
 
 let win: BrowserWindow | null = null;
@@ -67,13 +67,7 @@ ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?
   return sessions.create(cwd, addDirs, prompt);
 });
 ipcMain.handle('trackers:load', () => trackerSettings.load());
-ipcMain.handle('trackers:save', (_event, settings: unknown) => {
-  const valid = validateSettings(settings);
-  if (!valid) throw new Error('Некорректные настройки трекеров');
-  trackerSettings.save(valid);
-  // Включённые трекеры другие: следующая выборка проверит вход заново.
-  trackers.resetAuth();
-});
+ipcMain.handle('trackers:save', (_event, settings: unknown) => saveTrackerSettings(settings, trackerSettings, trackers));
 ipcMain.handle('trackers:status', () => trackers.status());
 ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) => {
   const args = validateListArgs(projectId, assignedToMe, tracked, recheck);

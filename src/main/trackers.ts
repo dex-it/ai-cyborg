@@ -245,6 +245,14 @@ export function sessionDirsAllowed(state: ProjectsState, cwd: unknown, addDirs: 
 
 // ---------- настройки ----------
 
+/** Сохранение настроек из канала trackers:save: включённые трекеры другие, поэтому вход проверяется заново. */
+export function saveTrackerSettings(settings: unknown, store: { save(s: TrackerSettings): void }, trackers: { resetAuth(): void }): void {
+  const valid = validateSettings(settings);
+  if (!valid) throw new Error('Некорректные настройки трекеров');
+  store.save(valid);
+  trackers.resetAuth();
+}
+
 export class TrackerSettingsStore {
   constructor(private readonly file: string) {}
 

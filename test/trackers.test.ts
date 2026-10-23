@@ -5,6 +5,7 @@ import {
   classifyRemote,
   parseGlabStatus,
   parseRemote,
+  saveTrackerSettings,
   sessionDirsAllowed,
   splitJsonValues,
   taskPrompt,
@@ -513,5 +514,18 @@ describe('TrackersService: кэш проверки входа', () => {
     await svc.status();
     await svc.list('p1', true, []);
     assert.deepEqual([auth('glab'), auth('gh')], [4, 4]);
+  });
+});
+
+describe('saveTrackerSettings', () => {
+  it('сохранение настроек сбрасывает кэш входа; некорректные настройки не сохраняются и кэш не трогают', () => {
+    const events: string[] = [];
+    const store = { save: () => void events.push('save') };
+    const trackers = { resetAuth: () => void events.push('reset') };
+    saveTrackerSettings({ github: true, gitlab: false }, store, trackers);
+    assert.deepEqual(events, ['save', 'reset']);
+    events.length = 0;
+    assert.throws(() => saveTrackerSettings({ github: 'x' }, store, trackers), /Некорректные настройки/);
+    assert.deepEqual(events, []);
   });
 });

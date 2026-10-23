@@ -1,7 +1,8 @@
 import type { Mr, MrFilter, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Project } from '../main/projects';
 import { el } from './dom';
-import { applyMrDetails, MR_FILTER_OPTIONS, MR_SORT_OPTIONS, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
+import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
+import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
 import { RefreshGate } from './task-flow';
 import { sortByKey, sourceLabel, type SortKey } from './task-model';
@@ -96,26 +97,20 @@ export class MrsView implements PanelView {
       return;
     }
     this.render();
-    let list: MrListResult;
-    try {
-      list = await api.listMrs(project.id, this.filter.value as MrFilter, this.host.trackedRefs(), recheck);
-    } catch (error) {
-      list = { mrs: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message, detailsId: null, awaiting: [] };
-    }
-    if (!this.gate.finish(token)) return;
-    this.result = list;
-    this.pending = new Set(list.awaiting);
-    this.host.applyStatuses(list);
-    this.render();
-    if (list.detailsId === null) return;
-
-    // Новая выборка меняет токен: детали прежней отбрасываются, её процессы CLI дорабатывают.
-    const details = await api.mrDetails(list.detailsId).catch(() => null);
-    if (!this.gate.isCurrent(token)) return;
-    this.result = applyMrDetails(list, details);
-    this.pending.clear();
-    this.host.applyStatuses(this.result);
-    this.fillMeta(this.result);
+    await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), recheck }, {
+      listed: (list, pending) => {
+        this.result = list;
+        this.pending = pending;
+        this.host.applyStatuses(list);
+        this.render();
+      },
+      detailed: (result) => {
+        this.result = result;
+        this.pending.clear();
+        this.host.applyStatuses(result);
+        this.fillMeta(result);
+      },
+    });
   }
 
   /** Дописывает значения в уже показанные строки: список не пересоздаётся. */

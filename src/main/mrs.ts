@@ -245,6 +245,24 @@ export function githubApprovals(reviews: { login?: unknown; state?: unknown }[])
   return [...last.values()].filter((state) => state === 'APPROVED').length;
 }
 
+/** Общий предел одновременных задач: все выборки сервиса делят его, а не каждая заводит свой пул. */
+export function createLimiter(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (running >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+    else running++;
+    try {
+      return await task();
+    } finally {
+      // Слот переходит ожидающему без освобождения: running не падает ниже занятого.
+      const next = waiting.shift();
+      if (next) next();
+      else running--;
+    }
+  };
+}
+
 /** Выполняет задачи не более limit одновременно; порядок результатов - порядок задач. */
 export async function runLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
   const out: T[] = new Array(tasks.length);

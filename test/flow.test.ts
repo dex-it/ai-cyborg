@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import type { MrListResult } from '../src/main/mrs';
+import { refreshMrs, type MrRefreshApi } from '../src/renderer/mr-refresh';
+import { mrMeta } from '../src/renderer/mr-model';
 import { decideStart, RefreshGate, StartGuard, TaskSessionRegistry } from '../src/renderer/task-flow';
 
 type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
@@ -112,5 +115,54 @@ describe('RefreshGate', () => {
     g.cancel();
     assert.equal(g.finish(t), false);
     assert.equal(g.loading, false);
+  });
+});
+
+describe('refreshMrs: двухфазная выборка MR', () => {
+  const mr = (n: number) => ({ key: `k${n}`, kind: 'gitlab', number: n, author: 'bob', sourceBranch: 'f', targetBranch: 'm', draft: false, pipeline: null, approvals: null });
+  const list = { mrs: [mr(1)], sources: [], tracked: [], enabled: { github: false, gitlab: true }, detailsId: 7, awaiting: ['k1'] } as unknown as MrListResult;
+  const args = { projectId: 'p', filter: 'all' as const, tracked: [], recheck: false };
+  const harness = (details: Promise<unknown>) => {
+    const events: string[] = [];
+    const api: MrRefreshApi = { listMrs: async () => list, mrDetails: () => details as never };
+    const sink = {
+      listed: (r: MrListResult, pending: Set<string>) => events.push(`listed:${[...pending]}:${mrMeta(r.mrs[0], pending.has('k1'))}`),
+      detailed: (r: MrListResult) => events.push(`detailed:${mrMeta(r.mrs[0])}`),
+    };
+    return { events, api, sink };
+  };
+
+  it('до деталей строка с «…», после - значения', async () => {
+    const gate = new RefreshGate();
+    const h = harness(Promise.resolve({ details: [{ key: 'k1', pipeline: 'успешен', approvals: 'апрувов: 1' }], tracked: [] }));
+    await refreshMrs(h.api, gate, gate.begin(false)!, args, h.sink);
+    assert.deepEqual(h.events, ['listed:k1:bob · f → m · пайплайн: … · апрувов: …', 'detailed:bob · f → m · пайплайн: успешен · апрувов: 1']);
+  });
+
+  it('новая выборка во время деталей: детали прежней не применяются', async () => {
+    const gate = new RefreshGate();
+    let release!: (v: unknown) => void;
+    const h = harness(new Promise((r) => (release = r)));
+    const first = refreshMrs(h.api, gate, gate.begin(false)!, args, h.sink);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(gate.loading, false);
+    gate.begin(false);
+    release({ details: [], tracked: [] });
+    await first;
+    assert.equal(h.events.length, 1);
+    assert.ok(h.events[0].startsWith('listed:'));
+  });
+
+  it('смена проекта до списка: ни списка, ни деталей; отказ деталей - «—» у ожидавших', async () => {
+    const gate = new RefreshGate();
+    const h = harness(Promise.resolve(null));
+    const token = gate.begin(false)!;
+    gate.cancel();
+    await refreshMrs(h.api, gate, token, args, h.sink);
+    assert.deepEqual(h.events, []);
+    const g2 = new RefreshGate();
+    const rejected = harness(Promise.reject(new Error('x')));
+    await refreshMrs(rejected.api, g2, g2.begin(false)!, args, rejected.sink);
+    assert.ok(rejected.events[1].includes('пайплайн: — · апрувов: —'));
   });
 });

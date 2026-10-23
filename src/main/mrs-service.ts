@@ -1,5 +1,6 @@
 import {
   approvalsText,
+  createLimiter,
   githubApprovals,
   githubPipeline,
   gitlabPipeline,
@@ -10,7 +11,6 @@ import {
   mrKey,
   NO_PIPELINE,
   parseMr,
-  runLimited,
   type CheckRun,
   type CombinedStatus,
   type Mr,
@@ -70,6 +70,10 @@ export class MrsService {
   /** Хосты GitLab без правил апрува: запоминаются на время работы приложения, чтобы не платить лишним вызовом. */
   private readonly noApprovalRules = new Set<string>();
   private readonly pending = new Map<number, Promise<MrDetailsResult>>();
+  /** Пул процессов деталей общий для выборок: «Обновить» во время деталей не умножает процессы CLI (ADR-0008 п.4). */
+  private readonly pool = createLimiter(MR_CONCURRENCY);
+  /** GraphQL источника в полёте: перекрывающиеся выборки ждут один процесс, а не запускают свои. */
+  private readonly glInflight = new Map<string, Promise<Map<number, Detail>>>();
   private seq = 0;
 
   constructor(
@@ -99,7 +103,7 @@ export class MrsService {
 
     // GraphQL GitLab стартует вместе со списком: он от списка не зависит.
     const glDetails = new Map<string, Promise<Map<number, Detail>>>();
-    for (const source of sources.values()) if (source.kind === 'gitlab') glDetails.set(sourceKey(source), this.gitlabDetails(source));
+    for (const source of sources.values()) if (source.kind === 'gitlab') glDetails.set(sourceKey(source), this.sharedGitlabDetails(source));
 
     const fetched = await Promise.all(
       [...sources.values()].map(async (source) => {
@@ -159,19 +163,19 @@ export class MrsService {
     if (!result.awaiting.length && !wanted.size) return result;
 
     // Пул общий для деталей GitHub и MR с сессией вне списка: процессов CLI не больше MR_CONCURRENCY плюс GraphQL источников.
-    const pooled = runLimited<{ detail: MrDetail } | { mr: Mr | null }>(
-      [
-        ...githubItems.map((x) => async () => ({ detail: { key: x.item.mr.key, ...(await this.fill(x.source, x.item)) } })),
-        ...[...wanted.values()].map(({ source, ref }) => async () => {
+    type Done = { detail: MrDetail } | { mr: Mr | null };
+    const pooled = Promise.all([
+      ...githubItems.map((x) => this.pool<Done>(async () => ({ detail: { key: x.item.mr.key, ...(await this.fill(x.source, x.item)) } }))),
+      ...[...wanted.values()].map(({ source, ref }) =>
+        this.pool<Done>(async () => {
           try {
             return { mr: await this.fetchOne(source, ref.number) };
           } catch {
             return { mr: null };
           }
         }),
-      ],
-      MR_CONCURRENCY,
-    );
+      ),
+    ]);
     const collect = async (): Promise<MrDetailsResult> => {
       const [maps, rest] = await Promise.all([Promise.all(gitlabItems.map((x) => glDetails.get(sourceKey(x.source)))), pooled]);
       const details: MrDetail[] = [];
@@ -230,6 +234,16 @@ export class MrsService {
     const pipeline = await this.githubPipelineOf(source, item.headSha);
     const reviews = await this.values('gh', 'github', ['api', '--hostname', 'github.com', '--paginate', '--jq', GH_REVIEWS_JQ, `repos/${source.path}/pulls/${item.mr.number}/reviews?per_page=100`]);
     return { pipeline, approvals: reviews ? approvalsText(githubApprovals(reviews as { login?: unknown; state?: unknown }[])) : null };
+  }
+
+  private sharedGitlabDetails(source: Source): Promise<Map<number, Detail>> {
+    const key = sourceKey(source);
+    let p = this.glInflight.get(key);
+    if (!p) {
+      p = this.gitlabDetails(source).finally(() => this.glInflight.delete(key));
+      this.glInflight.set(key, p);
+    }
+    return p;
   }
 
   /** Детали всех открытых MR источника GitLab страницами GraphQL; не отклоняется: при отказе отдаёт собранное. */

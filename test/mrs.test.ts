@@ -13,6 +13,7 @@ import {
   mrPrompt,
   mrUrl,
   parseMr,
+  createLimiter,
   runLimited,
   toMr,
   validateMrDetailsArgs,
@@ -204,6 +205,21 @@ describe('runLimited', () => {
     });
     assert.deepEqual(await runLimited(tasks, 6), Array.from({ length: 20 }, (_, i) => i));
     assert.ok(peak <= 6 && peak > 1);
+  });
+  it('createLimiter: общий предел на все вызовы, результаты возвращаются, отказ слот освобождает', async () => {
+    const limit = createLimiter(2);
+    let running = 0;
+    let peak = 0;
+    const task = (i: number) => async () => {
+      peak = Math.max(peak, ++running);
+      await new Promise((r) => setTimeout(r, 1));
+      running--;
+      if (i === 3) throw new Error('x');
+      return i;
+    };
+    const res = await Promise.allSettled(Array.from({ length: 8 }, (_, i) => limit(task(i))));
+    assert.equal(peak, 2);
+    assert.deepEqual(res.map((r) => (r.status === 'fulfilled' ? r.value : 'err')), [0, 1, 2, 'err', 4, 5, 6, 7]);
   });
   it('пустой список - пул не стартует', async () => {
     assert.deepEqual(await runLimited([], 6), []);
@@ -569,6 +585,27 @@ describe('MrsService.listMrs', () => {
     const r = await full(svc, 'p1', 'all', []);
     assert.equal(r.mrs.length, 12);
     assert.ok(load.peak > 1 && load.peak <= MR_CONCURRENCY + 1, `пик ${load.peak}`);
+  });
+
+  it('перекрывающиеся выборки во время деталей делят пул: пик процессов не растёт с числом выборок', async () => {
+    const prs = Array.from({ length: 12 }, (_, i) => ghRaw(i + 1));
+    const { svc, load } = setup({ remotes, slow: true, respond: ghResponder(prs) });
+    const lists = [await svc.listMrs('p1', 'all', []), await svc.listMrs('p1', 'all', []), await svc.listMrs('p1', 'all', [])];
+    const all = await Promise.all(lists.map((l) => svc.details(l.detailsId!)));
+    assert.ok(all.every((d) => d!.details.length === 12));
+    assert.ok(load.peak > 1 && load.peak <= MR_CONCURRENCY + 1, `пик ${load.peak}`);
+  });
+
+  it('перекрывающиеся выборки GitLab делят один graphql источника в полёте', async () => {
+    let release!: (r: CliResult) => void;
+    const held = new Promise<CliResult>((r) => (release = r));
+    const { svc, calls } = setup({ remotes: glRemotes, respond: glab(() => held as unknown as CliResult, glList(2)) });
+    const a = await svc.listMrs('p1', 'all', []);
+    const b = await svc.listMrs('p1', 'all', []);
+    release(ok(page([node(1, 'SUCCESS', 0), node(2, 'FAILED', 0)])));
+    const [da, db] = await Promise.all([svc.details(a.detailsId!), svc.details(b.detailsId!)]);
+    assert.equal(gqlCalls(calls).length, 1);
+    assert.deepEqual([da!.details.length, db!.details.length], [2, 2]);
   });
 
   it('детали - ровно у 200 самых свежих, у остальных «—»; MR с сессией получает детали и вне двухсотки', async () => {
