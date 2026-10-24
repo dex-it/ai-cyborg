@@ -40,8 +40,9 @@ export class TreeView {
   ) {}
 
   setRoots(roots: TreeRoot[]): void {
-    this.roots = roots;
-    roots.forEach((root, index) => {
+    const seen = new Set<string>();
+    this.roots = roots.filter((root) => !seen.has(root.path) && !!seen.add(root.path));
+    this.roots.forEach((root, index) => {
       if (!this.states.has(root.path)) {
         this.states.set(root.path, { expanded: new Set(), collapsed: index > 0, status: {}, branch: null });
       }

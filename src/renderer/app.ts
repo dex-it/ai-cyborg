@@ -11,6 +11,7 @@ import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
 import { TrackerPanel } from './panel';
 import { findTask, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
+import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
 import { TreeView, type TreeRoot } from './tree';
 import { applyMonacoTheme, FileViewer } from './viewer';
 
@@ -179,21 +180,8 @@ byId('project-new').addEventListener('click', () => editProject(null));
 
 // ---------- сессии ----------
 
-function rootLabel(s: Session): string {
-  return s.root === s.repo ? basename(s.repo) : `${basename(s.repo)} ⎇ ${basename(s.root)}`;
-}
-
-function treeRoots(s: Session): TreeRoot[] {
-  const own: TreeRoot = {
-    path: s.root,
-    label: rootLabel(s),
-    hint: s.root === s.repo ? 'репозиторий сессии' : `worktree репозитория ${s.repo}`,
-  };
-  const others = s.project.repos
-    .filter((r) => r !== s.repo)
-    .map((r) => ({ path: r, label: basename(r), hint: 'другой репозиторий проекта, доступен сессии через --add-dir' }));
-  return [own, ...others];
-}
+const rootLabel = (s: Session): string => sessionRootLabel({ ...s, repos: s.project.repos });
+const treeRoots = (s: Session): TreeRoot[] => sessionTreeRoots({ ...s, repos: s.project.repos });
 
 function updateSessionLabels(s: Session): void {
   const label = s.mr ? mrSessionLabel(s.id, s.mr) : s.task ? sessionLabel(s.id, s.task) : `CC${s.id} · ${rootLabel(s)}`;
