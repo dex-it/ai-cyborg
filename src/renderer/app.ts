@@ -132,6 +132,7 @@ function editProject(target: Project | null): void {
   projectDelete.hidden = !target;
   renderDraftRepos();
   sources.open(draft.trackers);
+  projectDialog.returnValue = '';
   projectDialog.showModal();
 }
 
