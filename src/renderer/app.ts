@@ -444,6 +444,11 @@ function createTerminal(id: number): Terminal {
   });
   term.onData((data) => api.input(id, data));
   term.attachCustomKeyEventHandler((event) => {
+    // Claude Code понимает ESC+CR как перевод строки; keypress гасится, иначе xterm шлёт по нему свой \r и промпт уходит.
+    if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey) {
+      if (event.type === 'keydown') api.input(id, '\x1b\r');
+      return false;
+    }
     if (event.type !== 'keydown') return true;
     if (event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
       const selection = term.getSelection();
@@ -452,11 +457,6 @@ function createTerminal(id: number): Terminal {
     }
     if (event.ctrlKey && event.shiftKey && event.code === 'KeyV') {
       void navigator.clipboard.readText().then((text) => term.paste(text));
-      return false;
-    }
-    // Claude Code понимает ESC+CR как перевод строки в промпте; xterm.js сам Shift+Enter не различает.
-    if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey) {
-      api.input(id, '\x1b\r');
       return false;
     }
     return true;
