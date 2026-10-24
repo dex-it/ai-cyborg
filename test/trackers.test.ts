@@ -512,7 +512,7 @@ describe('TrackersService: кэш проверки входа', () => {
     assert.equal(auth('gh'), 2);
   });
 
-  it('status() окна настроек проверяет заново при каждом открытии и кэш списков не трогает', async () => {
+  it('status() диалога проекта проверяет заново при каждом открытии и кэш списков не трогает', async () => {
     const { svc, auth } = make(() => ok('', GLAB_STATUS));
     await svc.status();
     await svc.status();
@@ -670,7 +670,7 @@ describe('TrackersService: проверка входа при старте и п
     assert.ok(r.sources.some((s) => s.error === 'вход glab не выполнен'));
   });
 
-  it('сохранение настроек: следующая выборка идёт по прежнему результату параллельно с новой проверкой', async () => {
+  it('сохранение проектов, изменившее источники: следующая выборка идёт по прежнему результату параллельно с новой проверкой', async () => {
     let n = 0;
     let release!: (r: CliResult) => void;
     const { svc, listCalls } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : new Promise<CliResult>((r) => (release = r))));
@@ -732,9 +732,11 @@ describe('saveProjectsState', () => {
       assert.throws(t.call, /Некорректные источники/);
       assert.deepEqual(t.events, []);
     }
-    const t = run(stateOf(off), { projects: [null], lastProjectId: null });
-    assert.throws(t.call, /Некорректные источники/);
-    assert.deepEqual(t.events, []);
+    for (const state of [{ projects: [null], lastProjectId: null }, { lastProjectId: 'x' }, { projects: 'x', lastProjectId: null }]) {
+      const t = run(stateOf(off), state);
+      assert.throws(t.call, /Некорректные источники/);
+      assert.deepEqual(t.events, []);
+    }
   });
   it('лишние ключи поля источников в файл не попадают', () => {
     const valid = validateProjectsState(stateOf({ github: true, gitlab: false, token: 'x' } as unknown as TrackerSettings));

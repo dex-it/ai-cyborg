@@ -244,7 +244,7 @@ export function sessionDirsAllowed(state: ProjectsState, cwd: unknown, addDirs: 
 export function validateProjectsState(value: unknown): ProjectsState | null {
   if (typeof value !== 'object' || value === null) return null;
   const state = value as ProjectsState;
-  if (!Array.isArray(state.projects)) return state;
+  if (!Array.isArray(state.projects)) return null;
   const projects: Project[] = [];
   for (const p of state.projects) {
     if (typeof p !== 'object' || p === null) return null;
