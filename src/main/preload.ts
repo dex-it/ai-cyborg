@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DirEntry } from './files';
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsState } from './projects';
+import type { TaskDetailsResult } from './task-details';
 import type { TaskRef, TasksResult, TrackersStatus } from './trackers';
 
 const api = {
@@ -13,6 +14,8 @@ const api = {
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),
   listTasks: (projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck: boolean): Promise<TasksResult> =>
     ipcRenderer.invoke('tasks:list', projectId, assignedToMe, tracked, recheck),
+  taskDetails: (selection: number, ref: TaskRef): Promise<TaskDetailsResult> => ipcRenderer.invoke('tasks:details', selection, ref),
+  openTask: (ref: TaskRef): Promise<{ error?: string }> => ipcRenderer.invoke('tasks:open', ref),
   listMrs: (projectId: string, filter: MrFilter, tracked: MrRef[], recheck: boolean): Promise<MrListResult> =>
     ipcRenderer.invoke('mrs:list', projectId, filter, tracked, recheck),
   mrDetails: (id: number): Promise<MrDetailsResult | null> => ipcRenderer.invoke('mrs:details', id),

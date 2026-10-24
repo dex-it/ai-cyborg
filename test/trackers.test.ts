@@ -4,6 +4,7 @@ import type { Project, ProjectsState } from '../src/main/projects';
 import {
   classifyRemote,
   parseGlabStatus,
+  normalizeColor,
   parseRemote,
   saveProjectsState,
   sessionDirsAllowed,
@@ -11,6 +12,7 @@ import {
   taskPrompt,
   TrackersService,
   validateListArgs,
+  validateOpenArgs,
   validateProjectsState,
   validateRef,
   validateSettings,
@@ -741,5 +743,70 @@ describe('saveProjectsState', () => {
   it('лишние ключи поля источников в файл не попадают', () => {
     const valid = validateProjectsState(stateOf({ github: true, gitlab: false, token: 'x' } as unknown as TrackerSettings));
     assert.deepEqual(valid?.projects[0].trackers, gh);
+  });
+});
+
+describe('метки, автор и исполнители', () => {
+  const gh = { remotes: { [repoA]: ['git@github.com:o/a.git'] } };
+  it('GitHub: цвет без # нормализуется, метки-строки получают color null, автор и исполнители из jq', async () => {
+    const { svc, calls } = service({
+      ...gh,
+      respond: (c) =>
+        c.args.some((a) => a.startsWith('repos/o/a/issues?'))
+          ? ok(ghIssue(1, { user: 'u', assignees: ['a', 'b'], labels: [{ name: 'bug', color: 'D73A4A' }, { name: 'x', color: null }, { name: 'bug', color: 'fff' }, 'plain', 7] }))
+          : undefined,
+    });
+    const r = await svc.list('p1', false, []);
+    assert.deepEqual(r.tasks[0].labels, [{ name: 'bug', color: '#d73a4a' }, { name: 'x', color: null }, { name: 'plain', color: null }]);
+    assert.equal(r.tasks[0].author, 'u');
+    assert.deepEqual(r.tasks[0].assignees, ['a', 'b']);
+    const jq = listCalls(calls)[0].args[listCalls(calls)[0].args.indexOf('--jq') + 1];
+    assert.ok(jq.includes('labels') && jq.includes('assignees') && jq.includes('user'));
+  });
+  it('GitLab: запрос списка с with_labels_details, метки объектами, workflow из имён, автор и исполнители', async () => {
+    const { svc, calls } = service({
+      remotes: { [repoA]: ['git@git.corp:g/p.git'] },
+      respond: (c) =>
+        c.args.some((a) => a.startsWith('projects/g%2Fp/issues?'))
+          ? ok(JSON.stringify([{ iid: 1, title: 'x', state: 'opened', labels: [{ name: 'bug', color: '#FF0000' }, { name: 'workflow::in review', color: 'red' }, { name: 'nocolor' }], author: { username: 'au' }, assignees: [{ username: 'as' }] }]))
+          : undefined,
+    });
+    const r = await svc.list('p1', false, []);
+    assert.ok(listCalls(calls)[0].args.some((a) => a.includes('with_labels_details=true')));
+    const t = r.tasks[0];
+    assert.deepEqual(t.labels, [{ name: 'bug', color: '#ff0000' }, { name: 'workflow::in review', color: null }, { name: 'nocolor', color: null }]);
+    assert.deepEqual(t.workflow, ['workflow::in review']);
+    assert.equal(t.author, 'au');
+    assert.deepEqual(t.assignees, ['as']);
+  });
+  it('GitLab tracked: метки строками, цвет null', async () => {
+    const ref: TaskRef = { kind: 'gitlab', host: 'git.corp', path: 'g/p', number: 8 };
+    const { svc } = service({
+      remotes: { [repoA]: ['git@git.corp:g/p.git'] },
+      respond: (c) => (c.args.at(-1) === 'projects/g%2Fp/issues/8' ? ok(JSON.stringify({ iid: 8, title: 'x', state: 'opened', labels: ['bug', 'workflow::a'] })) : ok('[]')),
+    });
+    const r = await svc.list('p1', false, [ref]);
+    assert.deepEqual(r.tracked[0].labels, [{ name: 'bug', color: null }, { name: 'workflow::a', color: null }]);
+    assert.deepEqual(r.tracked[0].workflow, ['workflow::a']);
+  });
+});
+
+describe('normalizeColor', () => {
+  it('принимает 3 и 6 hex с # и без, остальное - null', () => {
+    assert.equal(normalizeColor('d73a4a'), '#d73a4a');
+    assert.equal(normalizeColor('#FFF'), '#ffffff');
+    for (const bad of ['red', '', null, 'zzzzzz', 7, '#12345', undefined]) assert.equal(normalizeColor(bad), null);
+  });
+});
+
+describe('validateOpenArgs', () => {
+  const good = { kind: 'gitlab', host: 'git.corp', path: 'g/p', number: 3 };
+  it('принимает проверенную ссылку и отбрасывает лишние поля', () => {
+    assert.deepEqual(validateOpenArgs({ ...good, url: 'https://evil.com' }), good);
+  });
+  it('отклоняет неверный вид, хост, путь и номер', () => {
+    for (const bad of [{ ...good, kind: 'bitbucket' }, { ...good, host: 'evil.com/x' }, { ...good, path: 'g/../p' }, { ...good, number: 0 }, { ...good, number: '3' }, { kind: 'github', host: 'git.corp', path: 'o/r', number: 1 }, null, 'x']) {
+      assert.equal(validateOpenArgs(bad), null);
+    }
   });
 });

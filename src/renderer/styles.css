@@ -649,6 +649,81 @@ dialog footer .spacer {
 .task-number {
   color: var(--accent);
   font-weight: 600;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.task-number:hover {
+  text-decoration: underline;
+}
+
+.task-row {
+  cursor: pointer;
+}
+
+.task-labels,
+.tasks-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.task-labels {
+  margin-top: 4px;
+}
+
+.tasks-labels {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tasks-labels-title {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.task-label {
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.task-label.neutral {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.task-label.off {
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+.task-label.on {
+  outline: 2px solid var(--accent);
+}
+
+.task-details {
+  padding: 6px 12px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.task-description {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg-hover);
 }
 
 .task-meta {

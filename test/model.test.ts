@@ -3,11 +3,15 @@ import { describe, it } from 'node:test';
 import type { Task, TasksResult, TrackersStatus } from '../src/main/trackers';
 import type { Mr, MrListResult } from '../src/main/mrs';
 import { applyMrDetails, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
+import {
+  availableLabels, cycleLabel, descriptionText, DescriptionStore, detailsLines, filterByLabels, labelEmpty, labelInk, parseLabelFilter,
+  requireLabel, serializeLabelFilter, type LabelFilter,
+} from '../src/renderer/task-model';
 import { authLines, hasSources, sortByKey, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
 
 const task = (n: number, over: Partial<Task> = {}): Task => ({
   kind: 'github', host: 'github.com', path: 'o/r', number: n, key: `github:github.com/o/r#${n}`, title: `T${n}`, state: 'open',
-  workflow: [], url: `https://github.com/o/r/issues/${n}`, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', repos: ['/a'], ...over,
+  workflow: [], labels: [], author: 'u', assignees: [], url: `https://github.com/o/r/issues/${n}`, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', repos: ['/a'], ...over,
 });
 
 describe('sortTasks', () => {
@@ -164,5 +168,105 @@ describe('hasSources', () => {
     assert.equal(hasSources(p(false, false)), false);
     assert.equal(hasSources(p(true, false)), true);
     assert.equal(hasSources(p(false, true)), true);
+  });
+});
+
+describe('фильтр меток', () => {
+  const lab = (...names: string[]) => names.map((name) => ({ name, color: null }));
+  const t = task(1, { labels: lab('a', 'b') });
+  const f = (...pairs: [string, '+' | '-'][]): LabelFilter => new Map(pairs);
+  it('И по обязательным и НЕ по исключённым', () => {
+    for (const ok of [f(['a', '+']), f(['a', '+'], ['b', '+']), f(['a', '+'], ['c', '-']), f()]) assert.equal(filterByLabels([t], ok).length, 1);
+    for (const bad of [f(['a', '+'], ['b', '-']), f(['c', '+'])]) assert.equal(filterByLabels([t], bad).length, 0);
+  });
+  it('только исключённые оставляют и задачи без меток', () => {
+    assert.equal(filterByLabels([task(2)], f(['a', '-'])).length, 1);
+  });
+  it('requireLabel ставит + для новой и исключённой, вход не меняется', () => {
+    const input = f(['a', '-']);
+    assert.equal(requireLabel(input, 'a').get('a'), '+');
+    assert.equal(requireLabel(input, 'z').get('z'), '+');
+    assert.equal(input.get('a'), '-');
+  });
+  it('cycleLabel: + -> − -> снята', () => {
+    const one = cycleLabel(f(), 'a');
+    assert.equal(one.get('a'), '+');
+    const two = cycleLabel(one, 'a');
+    assert.equal(two.get('a'), '-');
+    assert.equal(cycleLabel(two, 'a').has('a'), false);
+  });
+  it('сохранение: круг и повреждённые значения', () => {
+    const x = f(['a', '+'], ['b c', '-']);
+    assert.deepEqual([...parseLabelFilter(serializeLabelFilter(x))], [...x]);
+    for (const bad of ['{', '[1]', '[["a","x"]]', '[["","+"]]', '{"a":"+"}', '[["a","+"],1]']) assert.equal(parseLabelFilter(bad).size, 0);
+    assert.equal(parseLabelFilter(null).size, 0);
+  });
+  it('availableLabels: одноимённые метки в одну запись, сохранённая без задач остаётся, регистр различается', () => {
+    const tasks = [
+      task(1, { labels: [{ name: 'bug', color: null }, { name: 'Bug', color: '#111111' }] }),
+      task(2, { labels: [{ name: 'bug', color: '#ff0000' }] }),
+    ];
+    const m = availableLabels(tasks, f(['gone', '+']));
+    assert.deepEqual([...m.keys()].sort(), ['Bug', 'bug', 'gone']);
+    assert.equal(m.get('bug'), '#ff0000');
+    assert.equal(m.get('gone'), null);
+  });
+  it('labelEmpty: только при непустой выборке и пустом результате', () => {
+    assert.equal(labelEmpty([t], f(['c', '+'])), true);
+    assert.equal(labelEmpty([], f(['c', '+'])), false);
+    assert.equal(labelEmpty([t], f(['a', '+'])), false);
+    assert.equal(labelEmpty([t], f()), false);
+  });
+});
+
+describe('labelInk', () => {
+  it('чёрный на светлом, белый на тёмном, null на неверном', () => {
+    assert.equal(labelInk('#ffffff'), '#000000');
+    assert.equal(labelInk('#000000'), '#ffffff');
+    assert.equal(labelInk('#1d1d80'), '#ffffff');
+    assert.equal(labelInk('#fbca04'), '#000000');
+    assert.equal(labelInk(null), null);
+    assert.equal(labelInk('red'), null);
+  });
+});
+
+describe('детали задачи', () => {
+  it('detailsLines: автор, исполнители, даты', () => {
+    const lines = detailsLines(task(1, { author: 'u', assignees: ['a', 'b'], createdAt: 'мусор' }));
+    assert.equal(lines[0], 'Автор: u');
+    assert.equal(lines[1], 'Исполнители: a, b');
+    assert.equal(lines[2], 'Создана: —');
+    assert.ok(lines[3].startsWith('Обновлена: '));
+  });
+  it('нет исполнителей - «не назначены»', () => assert.equal(detailsLines(task(1))[1], 'Исполнители: не назначены'));
+  it('пустое описание', () => {
+    for (const v of ['', '  \n', null, undefined]) assert.equal(descriptionText(v), 'Описания нет');
+    assert.equal(descriptionText('<b>x</b>'), '<b>x</b>');
+  });
+});
+
+describe('DescriptionStore', () => {
+  it('готовое переживает повторное раскрытие, сброс стирает, поздний ответ прежнего поколения отбрасывается', () => {
+    const s = new DescriptionStore();
+    const g = s.begin('k')!;
+    assert.equal(s.begin('k'), null);
+    assert.deepEqual(s.get('k'), { state: 'loading' });
+    assert.ok(s.finish('k', g, { description: 'd' }));
+    assert.equal(s.begin('k'), null);
+    s.reset();
+    assert.equal(s.get('k'), undefined);
+    const old = s.begin('k')!;
+    s.reset();
+    assert.equal(s.finish('k', old, { description: 'late' }), false);
+    assert.equal(s.get('k'), undefined);
+  });
+  it('отказ не кэшируется: после повторного раскрытия новый запрос', () => {
+    const s = new DescriptionStore();
+    const g = s.begin('k')!;
+    s.finish('k', g, { error: 'boom' });
+    assert.deepEqual(s.get('k'), { state: 'error', message: 'boom' });
+    assert.equal(s.begin('k'), null);
+    s.forgetError('k');
+    assert.notEqual(s.begin('k'), null);
   });
 });

@@ -13,11 +13,20 @@ export interface TaskRef {
   number: number;
 }
 
+export interface TaskLabel {
+  name: string;
+  /** '#rrggbb' либо null, если трекер цвета не дал или он неверный. */
+  color: string | null;
+}
+
 export interface Task extends TaskRef {
   key: string;
   title: string;
   state: 'open' | 'closed';
   workflow: string[];
+  labels: TaskLabel[];
+  author: string;
+  assignees: string[];
   url: string;
   createdAt: string;
   updatedAt: string;
@@ -39,6 +48,8 @@ export interface TasksResult {
   tracked: Task[];
   enabled: TrackerSettings;
   error?: string;
+  /** Номер выборки для tasks:details; выдаёт главный процесс. */
+  selection?: number;
 }
 
 export type AuthState =
@@ -81,8 +92,10 @@ const HOST = /^[a-z0-9][a-z0-9.-]*$/;
 const GITHUB_HOSTS = new Set(['github.com', 'www.github.com', 'ssh.github.com']);
 
 // Только чтение: ни -X, ни полей запроса (они переключают gh и glab на POST).
-const GH_JQ = '.[] | select(.pull_request == null) | {number,title,state,html_url,created_at,updated_at}';
-const GH_JQ_ONE = '{number,title,state,html_url,created_at,updated_at}';
+const GH_FIELDS =
+  '{number,title,state,html_url,created_at,updated_at,user:.user.login,assignees:[.assignees[]?.login],labels:[.labels[]? | if type=="object" then {name,color} else {name:.,color:null} end]}';
+const GH_JQ = `.[] | select(.pull_request == null) | ${GH_FIELDS}`;
+const GH_JQ_ONE = GH_FIELDS;
 
 // ---------- чистые функции ----------
 
@@ -131,6 +144,15 @@ export const sourceKey = (ref: Pick<TaskRef, 'kind' | 'host' | 'path'>): string 
 
 export const taskUrl = (ref: TaskRef): string =>
   ref.kind === 'github' ? `https://github.com/${ref.path}/issues/${ref.number}` : `https://${ref.host}/${ref.path}/-/issues/${ref.number}`;
+
+/** Цвет метки трекера в '#rrggbb' нижним регистром; не цвет - null. */
+export function normalizeColor(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(raw.trim());
+  if (!m) return null;
+  const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+  return `#${hex.toLowerCase()}`;
+}
 
 /** Начальный промпт сессии. Собирается из проверенного TaskRef: название задачи (чужой текст) в него не попадает. */
 export function taskPrompt(ref: TaskRef): string {
@@ -204,6 +226,9 @@ export function validateRef(value: unknown): TaskRef | null {
   if (typeof number !== 'number' || !Number.isInteger(number) || number < 1 || number > 2 ** 31) return null;
   return { kind, host, path, number };
 }
+
+/** Аргументы tasks:open: адрес строится из проверенной ссылки, остальные поля игнорируются. */
+export const validateOpenArgs = (value: unknown): TaskRef | null => validateRef(value);
 
 export function validateSettings(value: unknown): TrackerSettings | null {
   if (typeof value !== 'object' || value === null) return null;
@@ -354,19 +379,45 @@ export function interpret(kind: TrackerKind, res: CliResult, goneNote: string | 
   return { values: parsed.flat() };
 }
 
+/** Метка - строка либо объект с name и color; повтор имени и прочее отбрасываются. */
+function parseLabels(raw: unknown): TaskLabel[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: TaskLabel[] = [];
+  for (const item of raw) {
+    let label: TaskLabel | null = null;
+    if (typeof item === 'string') label = { name: item, color: null };
+    else if (typeof item === 'object' && item !== null && typeof (item as { name?: unknown }).name === 'string') {
+      label = { name: (item as { name: string }).name, color: normalizeColor((item as { color?: unknown }).color) };
+    }
+    if (!label || !label.name || seen.has(label.name)) continue;
+    seen.add(label.name);
+    out.push(label);
+  }
+  return out;
+}
+
 function toTask(source: Source, raw: unknown): Task | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
   const number = source.kind === 'github' ? r.number : r.iid;
   if (typeof number !== 'number' || !Number.isInteger(number) || number < 1) return null;
   const ref: TaskRef = { kind: source.kind, host: source.host, path: source.path, number };
-  const labels = Array.isArray(r.labels) ? r.labels.filter((l): l is string => typeof l === 'string') : [];
+  const labels = parseLabels(r.labels);
+  const login = (v: unknown): string => {
+    if (typeof v === 'string') return v;
+    const name = typeof v === 'object' && v !== null ? (v as { username?: unknown }).username : undefined;
+    return typeof name === 'string' ? name : '';
+  };
   return {
     ...ref,
     key: taskKey(ref),
     title: typeof r.title === 'string' ? r.title : '',
     state: typeof r.state === 'string' && r.state.startsWith('open') ? 'open' : 'closed',
-    workflow: source.kind === 'gitlab' ? labels.filter((l) => l.startsWith('workflow::')) : [],
+    workflow: source.kind === 'gitlab' ? labels.map((l) => l.name).filter((l) => l.startsWith('workflow::')) : [],
+    labels,
+    author: login(r.user ?? r.author),
+    assignees: Array.isArray(r.assignees) ? r.assignees.map(login).filter((a) => a) : [],
     url: taskUrl(ref),
     createdAt: typeof r.created_at === 'string' ? r.created_at : '',
     updatedAt: typeof r.updated_at === 'string' ? r.updated_at : '',
@@ -635,7 +686,7 @@ export class TrackersService {
       const res = await this.deps.run('gh', ['api', '--hostname', 'github.com', '--paginate', '--jq', GH_JQ, `repos/${source.path}/issues?${query}`]);
       return interpret('github', res);
     }
-    const query = `state=opened&per_page=100${assignee ? `&assignee_username=${enc(assignee)}` : ''}`;
+    const query = `state=opened&per_page=100&with_labels_details=true${assignee ? `&assignee_username=${enc(assignee)}` : ''}`;
     const res = await this.deps.run('glab', ['api', '--hostname', source.host, '--paginate', `projects/${enc(source.path)}/issues?${query}`]);
     return interpret('gitlab', res);
   }
