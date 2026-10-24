@@ -4,8 +4,9 @@ import { emptyOf, type SortKey } from './task-model';
 
 export const MR_FILTER_OPTIONS: { key: MrFilter; label: string }[] = [
   { key: 'all', label: 'Все' },
-  { key: 'assigned', label: 'Назначено мне' },
-  { key: 'review', label: 'Я ревьюер' },
+  { key: 'author', label: 'Author: я' },
+  { key: 'assigned', label: 'Assignee: я' },
+  { key: 'review', label: 'Reviewer: я' },
 ];
 
 export const MR_SORT_OPTIONS: { key: SortKey; label: string }[] = [
@@ -31,6 +32,9 @@ export const mrTooltip = (mr: Titled & Pick<Mr, 'url'>): string =>
   `${mrNumber(mr.kind, mr.number)} ${mr.title}\nСтатус: ${mrStatusText(mr)}\nПайплайн: ${mr.pipeline ?? '—'}\n${mr.url}`;
 
 export const mrIntent = (mr: Pick<Mr, 'own'>): MrIntent => (mr.own ? 'rework' : 'review');
+
+/** Своему MR дорабатывать нечего, пока нет замечаний; чужой всегда можно ревьюить. */
+export const mrActionVisible = (mr: Pick<Mr, 'own' | 'comments'>): boolean => !mr.own || mr.comments === true;
 
 export const mrActionLabel = (mr: Pick<Mr, 'own'>): string => (mrIntent(mr) === 'rework' ? 'Доработать' : 'Ревью');
 
@@ -72,7 +76,12 @@ export function applyMrDetails(result: MrListResult, d: MrDetailsResult | null):
   const byKey = new Map((d?.details ?? []).map((x) => [x.key, x]));
   return {
     ...result,
-    mrs: result.mrs.map((m) => ({ ...m, pipeline: byKey.get(m.key)?.pipeline ?? null, approvals: byKey.get(m.key)?.approvals ?? null })),
+    mrs: result.mrs.map((m) => ({
+      ...m,
+      pipeline: byKey.get(m.key)?.pipeline ?? null,
+      approvals: byKey.get(m.key)?.approvals ?? null,
+      comments: byKey.get(m.key)?.comments ?? m.comments,
+    })),
     tracked: d?.tracked ?? [],
     detailsId: null,
     awaiting: [],

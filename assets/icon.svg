@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3445"/>
+      <stop offset="1" stop-color="#151a24"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffd2a8"/>
+      <stop offset="0.45" stop-color="#ff8a3d"/>
+      <stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="right"><rect x="128" y="0" width="128" height="256"/></clipPath>
+    <clipPath id="left"><rect x="0" y="0" width="128" height="256"/></clipPath>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <path clip-path="url(#left)" d="M128 44c-46 0-74 32-74 76 0 30 12 52 30 66v26h88v-26c18-14 30-36 30-66 0-44-28-76-74-76z" fill="#e8ecf2"/>
+  <path clip-path="url(#right)" d="M128 44c-46 0-74 32-74 76 0 30 12 52 30 66v26h88v-26c18-14 30-36 30-66 0-44-28-76-74-76z" fill="#7d8aa0"/>
+  <path clip-path="url(#right)" d="M128 44c-46 0-74 32-74 76 0 30 12 52 30 66v26h88v-26c18-14 30-36 30-66 0-44-28-76-74-76z" fill="none" stroke="#3794ff" stroke-width="6"/>
+  <g stroke="#3794ff" stroke-width="5" fill="none" stroke-linecap="round">
+    <path d="M128 70h26l12 12"/>
+    <path d="M128 168h20l14-14h18"/>
+    <circle cx="183" cy="154" r="4" fill="#3794ff"/>
+    <circle cx="170" cy="85" r="4" fill="#3794ff"/>
+  </g>
+  <line x1="128" y1="44" x2="128" y2="212" stroke="#151a24" stroke-width="5"/>
+  <ellipse cx="99" cy="124" rx="11" ry="8" fill="#151a24"/>
+  <circle cx="157" cy="124" r="30" fill="url(#glow)"/>
+  <circle cx="157" cy="124" r="11" fill="#fff4e8"/>
+  <path d="M104 186l10 8-10 8" fill="none" stroke="#151a24" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M124 202h22" stroke="#151a24" stroke-width="6" stroke-linecap="round"/>
+</svg>

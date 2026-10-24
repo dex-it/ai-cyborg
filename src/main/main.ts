@@ -1,9 +1,10 @@
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import { listDir, readTextFile } from './files';
-import { gitBranch, gitRemotes, gitRoot, gitStatus } from './git';
+import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
+import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
 import { MrsService } from './mrs-service';
-import { validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
+import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
 import { createTaskHandlers, TaskDetailsService } from './task-details';
@@ -13,6 +14,7 @@ import {
   TrackerSettingsStore,
   TrackersService,
   saveProjectsState,
+  validateRef,
 } from './trackers';
 
 let win: BrowserWindow | null = null;
@@ -38,6 +40,7 @@ function createWindow(): void {
     width: 1600,
     height: 1000,
     title: 'Cyborg',
+    icon: path.join(__dirname, 'icon.png'),
     backgroundColor: windowBackground(),
     autoHideMenuBar: true,
     webPreferences: {
@@ -65,16 +68,41 @@ ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?
   if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
   return sessions.create(cwd, addDirs, prompt);
 });
+ipcMain.handle('history:list', (_event, projectId: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  return project ? listHistory(project.repos) : [];
+});
+ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
+  deleteHistory(repo, id);
+});
+ipcMain.handle('session:resume', (_event, cwd: unknown, addDirs: unknown, id: unknown) => {
+  if (!isSessionId(id) || !sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Некорректное продолжение сессии');
+  if (!historyExists(cwd as string, id)) throw new Error('Журнал сессии не найден');
+  return sessions.create(cwd as string, addDirs as string[], undefined, id);
+});
 ipcMain.handle('trackers:status', () => trackers.status());
 ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) =>
   taskHandlers.list(projectId, assignedToMe, tracked, recheck),
 );
 ipcMain.handle('tasks:details', (_event, selection: unknown, ref: unknown) => taskHandlers.details(selection, ref));
+ipcMain.handle('tasks:sessionDetails', (_event, ref: unknown) => taskHandlers.sessionDetails(ref));
 ipcMain.handle('tasks:open', (_event, arg: unknown) => taskHandlers.open(arg));
 ipcMain.handle('mrs:list', (_event, projectId: unknown, filter: unknown, tracked: unknown, recheck: unknown) => {
   const args = validateMrListArgs(projectId, filter, tracked, recheck);
   if (!args) throw new Error('Некорректные аргументы mrs:list');
   return mrs.listMrs(args.projectId, args.filter, args.tracked, args.recheck);
+});
+ipcMain.handle('mrs:open', async (_event, arg: unknown) => {
+  const ref = validateRef(arg);
+  if (!ref) throw new Error('Некорректные аргументы mrs:open');
+  try {
+    await shell.openExternal(mrUrl(ref));
+    return {};
+  } catch (error) {
+    return { error: (error as Error).message || 'браузер не открылся' };
+  }
 });
 ipcMain.handle('mrs:details', (_event, id: unknown) => {
   const valid = validateMrDetailsArgs(id);
@@ -89,6 +117,22 @@ ipcMain.handle('fs:read', (_event, file: string) => readTextFile(file));
 ipcMain.handle('git:root', (_event, dir: string) => gitRoot(dir));
 ipcMain.handle('git:branch', (_event, root: string) => gitBranch(root));
 ipcMain.handle('git:status', (_event, root: string) => gitStatus(root));
+const projectRepo = (root: unknown): root is string => typeof root === 'string' && projects.load().projects.some((p) => p.repos.includes(root));
+ipcMain.handle('git:branches', (_event, root: unknown) => {
+  if (!projectRepo(root)) throw new Error('Некорректные аргументы git:branches');
+  return gitBranches(root);
+});
+ipcMain.handle('git:switch', async (_event, root: unknown, branch: unknown) => {
+  if (!projectRepo(root) || typeof branch !== 'string') throw new Error('Некорректные аргументы git:switch');
+  if (sessions.uses(root)) return { error: 'в репозитории работает сессия Claude: веткой управляет она' };
+  try {
+    await gitSwitch(root, branch);
+    return {};
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+});
+ipcMain.handle('git:headContent', (_event, file: unknown) => (typeof file === 'string' ? gitHeadContent(file) : null));
 
 app.whenReady().then(() => {
   void trackers.warmAuth();

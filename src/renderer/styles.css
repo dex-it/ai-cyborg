@@ -98,9 +98,26 @@ button.danger {
   font-size: 15px;
 }
 
+body {
+  display: flex;
+  flex-direction: column;
+}
+
 #app {
   display: flex;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
+}
+
+#status-bar {
+  display: flex;
+  align-items: stretch;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0 4px;
+  background: var(--bg-side);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
 }
 
 /* ---------- левая колонка ---------- */
@@ -129,6 +146,32 @@ button.danger {
   border-radius: 4px;
   background: var(--bg);
   font-weight: 600;
+}
+
+.side-tab {
+  padding: 0 10px;
+  border: none;
+  border-top: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--fg-dim);
+}
+
+.side-tab.active {
+  color: var(--fg);
+  border-top-color: var(--accent);
+}
+
+#history {
+  flex: 1;
+  overflow: auto;
+  padding: 4px;
+}
+
+#history[hidden],
+#tree[hidden],
+#tree-header[hidden] {
+  display: none;
 }
 
 #splitter {
@@ -426,6 +469,10 @@ button.danger {
   color: var(--fg-dim);
 }
 
+#file-preview {
+  background: var(--bg);
+}
+
 #empty p {
   margin: 4px;
 }
@@ -459,6 +506,62 @@ button.danger {
 
 .menu-item:hover {
   background: var(--bg-hover);
+}
+
+.menu-filter {
+  width: calc(100% - 8px);
+  margin: 2px 4px 4px;
+}
+
+.branch-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.branch-item.current {
+  cursor: default;
+  color: var(--accent);
+}
+
+.row.root .meta .branch {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.row.root .meta .branch:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.history-item {
+  position: relative;
+  padding-right: 28px;
+}
+
+.history-item .close {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  padding: 0 4px;
+  font-size: 16px;
+  visibility: hidden;
+}
+
+.history-item:hover .close {
+  visibility: visible;
+}
+
+.history-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-name {
@@ -538,6 +641,18 @@ dialog h2 {
   border-bottom: none;
 }
 
+#project-repos li[draggable='true'] {
+  cursor: grab;
+}
+
+#project-repos li.dragging {
+  opacity: 0.5;
+}
+
+#project-repos li.drop-target {
+  outline: 1px solid var(--accent);
+}
+
 #project-repos li .icon-button {
   grid-row: 1 / 3;
   grid-column: 2;
@@ -578,7 +693,8 @@ dialog footer .spacer {
 }
 
 #sessions.tasks-open > .workspace-pane,
-#sessions.tasks-open > #empty {
+#sessions.tasks-open > #empty,
+#sessions.tasks-open > #file-preview {
   display: none;
 }
 
@@ -684,6 +800,9 @@ dialog footer .spacer {
 .tasks-labels {
   padding: 6px 4px;
   border-bottom: 1px solid var(--border);
+  max-height: 30%;
+  overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .tasks-labels-title {
@@ -712,6 +831,42 @@ dialog footer .spacer {
 
 .task-label.on {
   outline: 2px solid var(--accent);
+}
+
+.session-task {
+  flex-shrink: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--session) 40%, var(--border));
+  background: color-mix(in srgb, var(--session) 5%, var(--bg));
+}
+
+.session-task-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.session-task-number {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+}
+
+.session-task-number:hover {
+  text-decoration: underline;
+}
+
+.session-task-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-task .task-description {
+  margin: 0 10px 8px;
 }
 
 .task-details {

@@ -1,7 +1,7 @@
 import { MAX_TRACKED, taskPrompt, validateRef, type SourceResult, type TaskRef, type TrackerKind, type TrackerSettings } from './trackers';
 
 export type MrRef = TaskRef;
-export type MrFilter = 'all' | 'assigned' | 'review';
+export type MrFilter = 'all' | 'author' | 'assigned' | 'review';
 export type MrIntent = 'review' | 'rework';
 export type MrState = 'open' | 'merged' | 'closed';
 
@@ -21,6 +21,8 @@ export interface Mr extends MrRef {
   updatedAt: string;
   /** Автор - пользователь хоста: действие «Доработать» вместо «Ревью». */
   own: boolean;
+  /** В MR есть открытые замечания: без них «Доработать» не показывается. undefined/null - не известно. */
+  comments?: boolean | null;
   /** Репозитории проекта, чей remote указывает на трекер MR. */
   repos: string[];
 }
@@ -42,6 +44,8 @@ export interface MrDetail {
   /** null - не получен. */
   pipeline: string | null;
   approvals: string | null;
+  /** Признак замечаний приходит с деталями: GitLab - по нерешённым тредам своих MR, GitHub - по отзывам. */
+  comments?: boolean | null;
 }
 
 /** Вторая фаза выборки: пайплайн и апрувы списка и MR с сессией вне списка. */
@@ -64,7 +68,7 @@ export interface ParsedMr {
 export const MAX_DETAILED = 200;
 export const MR_CONCURRENCY = 6;
 
-const FILTERS: readonly string[] = ['all', 'assigned', 'review'];
+const FILTERS: readonly string[] = ['all', 'author', 'assigned', 'review'];
 const INTENTS: readonly string[] = ['review', 'rework'];
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
@@ -186,6 +190,8 @@ export function parseMr(source: { kind: TrackerKind; host: string; path: string;
     createdAt: str(r.created_at),
     updatedAt: str(r.updated_at),
     own: !!me && !!author && same(author, me),
+    // Без заметок замечаний нет; есть ли нерешённые треды, скажут детали.
+    comments: source.kind === 'gitlab' && r.user_notes_count === 0 ? false : null,
     repos: source.repos,
   };
   return { mr, assignees, reviewers, headSha };
@@ -193,11 +199,12 @@ export function parseMr(source: { kind: TrackerKind; host: string; path: string;
 
 export const toMr = (source: Parameters<typeof parseMr>[0], raw: unknown, me: string | undefined): Mr | null => parseMr(source, raw, me)?.mr ?? null;
 
-/** Фильтр по полной выборке: без логина «assigned» и «review» не отдают ничего. */
+/** Фильтр по полной выборке: без логина «author», «assigned» и «review» не отдают ничего. */
 export function filterMrs(items: ParsedMr[], filter: MrFilter, me: string | undefined): ParsedMr[] {
   if (filter === 'all') return items;
   if (!me) return [];
   const has = (list: string[]) => list.some((name) => same(name, me));
+  if (filter === 'author') return items.filter((item) => has([item.mr.author]));
   return items.filter((item) => has(filter === 'assigned' ? item.assignees : item.reviewers));
 }
 
@@ -243,6 +250,18 @@ export function githubApprovals(reviews: { login?: unknown; state?: unknown }[])
     if (state === 'APPROVED' || state === 'CHANGES_REQUESTED' || state === 'DISMISSED') last.set(login.toLowerCase(), state);
   }
   return [...last.values()].filter((state) => state === 'APPROVED').length;
+}
+
+/** Отзыв не автора с замечаниями или просьбой изменений. */
+/** Есть нерешённый тред; узлы discussions из GraphQL GitLab. */
+export function gitlabOpenThreads(discussions: unknown): boolean {
+  return Array.isArray(discussions) && discussions.some((d) => typeof d === 'object' && d !== null && (d as Record<string, unknown>).resolvable === true && (d as Record<string, unknown>).resolved !== true);
+}
+
+export function githubCommented(reviews: { login?: unknown; state?: unknown }[], author: string): boolean {
+  return reviews.some(
+    ({ login, state }) => typeof login === 'string' && !same(login, author) && (state === 'COMMENTED' || state === 'CHANGES_REQUESTED'),
+  );
 }
 
 /**

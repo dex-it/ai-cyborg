@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { claudeArgs } from '../src/main/claude-args';
+import { claudeArgs, ISOLATION_PROMPT } from '../src/main/claude-args';
 import {
   approvalsText,
   filterMrs,
   githubApprovals,
+  githubCommented,
+  gitlabOpenThreads,
   githubPipeline,
   gitlabPipeline,
   MAX_DETAILED,
@@ -108,16 +110,38 @@ describe('сводки', () => {
   });
 });
 
+describe('замечания MR', () => {
+  it('githubCommented: замечание или просьба изменений не автора; апрув и свои отзывы - нет', () => {
+    const r = (login: string, state: string) => ({ login, state });
+    assert.equal(githubCommented([r('bob', 'APPROVED'), r('Me', 'COMMENTED')], 'me'), false);
+    assert.equal(githubCommented([r('bob', 'COMMENTED')], 'me'), true);
+    assert.equal(githubCommented([r('bob', 'CHANGES_REQUESTED')], 'me'), true);
+  });
+  it('gitlabOpenThreads: только нерешённый тред с возможностью решения', () => {
+    assert.equal(gitlabOpenThreads([{ resolvable: false, resolved: false }, { resolvable: true, resolved: true }]), false);
+    assert.equal(gitlabOpenThreads([{ resolvable: true, resolved: true }, { resolvable: true, resolved: false }]), true);
+    assert.equal(gitlabOpenThreads(null), false);
+  });
+  it('parseMr: у GitLab без заметок замечаний нет, с заметками решают треды; у GitHub в списке не известен', () => {
+    const raw = (notes: unknown) => ({ iid: 1, title: 't', author: { username: 'me' }, user_notes_count: notes });
+    assert.equal(parseMr(gl, raw(0), 'me')!.mr.comments, false);
+    assert.equal(parseMr(gl, raw(3), 'me')!.mr.comments, null);
+    assert.equal(parseMr(gl, raw(undefined), 'me')!.mr.comments, null);
+    assert.equal(parseMr(gh, ghRaw(1), 'me')!.mr.comments, null);
+  });
+});
+
 describe('filterMrs', () => {
-  const item = (n: number, assignees: string[], reviewers: string[]): ParsedMr => {
-    const p = parseMr(gh, ghRaw(n, { assignees, reviewers }), undefined)!;
+  const item = (n: number, assignees: string[], reviewers: string[], user = 'other'): ParsedMr => {
+    const p = parseMr(gh, ghRaw(n, { assignees, reviewers, user }), undefined)!;
     return p;
   };
-  const items = [item(1, ['mmx'], []), item(2, [], ['MMX']), item(3, [], [])];
+  const items = [item(1, ['mmx'], []), item(2, [], ['MMX']), item(3, [], [], 'Mmx')];
   it('каждое значение даёт свой набор; регистр не важен', () => {
     assert.deepEqual(filterMrs(items, 'all', 'x').map((i) => i.mr.number), [1, 2, 3]);
     assert.deepEqual(filterMrs(items, 'assigned', 'MMX').map((i) => i.mr.number), [1]);
     assert.deepEqual(filterMrs(items, 'review', 'mmx').map((i) => i.mr.number), [2]);
+    assert.deepEqual(filterMrs(items, 'author', 'mmx').map((i) => i.mr.number), [3]);
   });
   it('без логина фильтр не подменяется полной выборкой', () => {
     assert.deepEqual(filterMrs(items, 'assigned', undefined), []);
@@ -143,7 +167,7 @@ describe('ключи, URL и сообщения', () => {
     );
   });
   it('claudeArgs: промпт на «/» стоит до --add-dir', () => {
-    assert.deepEqual(claudeArgs(['/b'], '/dex-auto:auto review URL'), ['/dex-auto:auto review URL', '--add-dir', '/b']);
+    assert.deepEqual(claudeArgs(['/b'], '/dex-auto:auto review URL'), ['--append-system-prompt', ISOLATION_PROMPT, '/dex-auto:auto review URL', '--add-dir', '/b']);
   });
 });
 
@@ -318,6 +342,19 @@ describe('MrsService.listMrs', () => {
     assert.equal(gqlCalls(calls).length, 1);
     assert.equal(calls.filter((c) => c.args.at(-1)!.includes('/approvals') || /merge_requests\/\d+$/.test(c.args.at(-1)!)).length, 0);
     assert.deepEqual(r.mrs.map((m) => [m.number, m.pipeline, m.approvals]), [[1, 'manual', 'апрувов: 2 из 3'], [2, 'нет пайплайна', 'апрувов: 1'], [3, 'успешен', 'апрувов: 0']]);
+  });
+
+  it('GitLab: «Доработать» своему MR - по нерешённым тредам; треды запрашиваются только по своим MR', async () => {
+    const list = ok(JSON.stringify([1, 2, 3].map((iid) => ({ iid, title: 't', author: { username: iid === 3 ? 'bob' : 'mmx003' }, user_notes_count: 2 }))));
+    const thread = (resolved: boolean) => ({ resolvable: true, resolved });
+    const threads = JSON.stringify({ data: { project: { mergeRequests: { nodes: [
+      { iid: '1', discussions: { nodes: [{ resolvable: false, resolved: false }, thread(true)] } },
+      { iid: '2', discussions: { nodes: [thread(true), thread(false)] } },
+    ] } } } });
+    const { svc, calls } = setup({ remotes: glRemotes, respond: glab((c) => ok(gqlVar(c, 'author') ? threads : page([node(1, 'SUCCESS', 0), node(2, 'SUCCESS', 0), node(3, 'SUCCESS', 0)])), list) });
+    const r = await full(svc, 'p1', 'all', []);
+    assert.deepEqual(r.mrs.map((m) => [m.number, m.comments]), [[1, false], [2, true], [3, null]]);
+    assert.deepEqual(gqlCalls(calls).map((c) => gqlVar(c, 'author')), [undefined, 'mmx003']);
   });
 
   it('пайплайн GraphQL теми же словами, что REST: регистр, null, неизвестный статус строкой', async () => {
@@ -831,7 +868,7 @@ describe('MrsService.listMrs', () => {
     const { svc } = setup({ remotes, respond: ghResponder([ghRaw(1)]) });
     const list = await svc.listMrs('p1', 'all', []);
     assert.deepEqual([list.mrs[0].pipeline, list.mrs[0].approvals, list.awaiting], [null, null, [list.mrs[0].key]]);
-    assert.deepEqual((await svc.details(list.detailsId!))!.details, [{ key: list.mrs[0].key, pipeline: 'успешен', approvals: 'апрувов: 1' }]);
+    assert.deepEqual((await svc.details(list.detailsId!))!.details, [{ key: list.mrs[0].key, pipeline: 'успешен', approvals: 'апрувов: 1', comments: false }]);
   });
 });
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Task, TasksResult, TrackersStatus } from '../src/main/trackers';
 import type { Mr, MrListResult } from '../src/main/mrs';
-import { applyMrDetails, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
+import { applyMrDetails, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
 import {
   availableLabels, cycleLabel, descriptionText, DescriptionStore, detailsLines, filterByLabels, labelEmpty, labelInk, parseLabelFilter,
   requireLabel, serializeLabelFilter, type LabelFilter,
@@ -122,6 +122,10 @@ describe('MR: заголовки и действия', () => {
   it('действие по автору: чужой - ревью, свой - доработка', () => {
     assert.deepEqual([mrIntent(mr(1)), mrActionLabel(mr(1))], ['review', 'Ревью']);
     assert.deepEqual([mrIntent(mr(1, { own: true })), mrActionLabel(mr(1, { own: true }))], ['rework', 'Доработать']);
+    assert.equal(mrActionVisible(mr(1)), true);
+    assert.equal(mrActionVisible(mr(1, { own: true, comments: false })), false);
+    assert.equal(mrActionVisible(mr(1, { own: true, comments: null })), false);
+    assert.equal(mrActionVisible(mr(1, { own: true, comments: true })), true);
   });
   it('строка: автор, ветки, черновик, пайплайн, апрувы; не полученное - «—»; название буквально текстом', () => {
     assert.equal(mrMeta(mr(1, { draft: true })), 'bob · feat → main · черновик · пайплайн: успешен · апрувов: 1');

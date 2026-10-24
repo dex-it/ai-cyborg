@@ -295,9 +295,6 @@ export class TasksView implements PanelView {
     else box.append(el('div', 'task-description', descriptionText(description.text)));
     const openError = this.openErrors.get(task.key);
     if (openError) box.append(el('div', 'tasks-error', openError));
-    const open = el('button', '', 'Открыть в браузере');
-    open.addEventListener('click', () => void this.openInBrowser(task));
-    box.append(open);
     return box;
   }
 

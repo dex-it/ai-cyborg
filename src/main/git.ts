@@ -132,6 +132,25 @@ export async function gitStatus(root: string): Promise<Record<string, string>> {
   return status;
 }
 
+const MAX_ORIGINAL_BYTES = 5 * 1024 * 1024;
+
+/** Текст файла в HEAD его репозитория; нет репозитория, файла в HEAD, двоичный или больше предела - null. */
+export async function gitHeadContent(file: string): Promise<string | null> {
+  const root = await gitRoot(path.dirname(file));
+  if (!root) return null;
+  const rel = path.relative(root, file).split(path.sep).join('/');
+  if (!rel || rel.startsWith('..')) return null;
+  try {
+    const spec = `HEAD:./${rel}`;
+    if (Number(await git(root, ['cat-file', '-s', spec])) > MAX_ORIGINAL_BYTES) return null;
+    // cat-file blob отдаёт байты как есть: ни textconv, ни smudge-фильтр репозитория не запускаются.
+    const blob = await gitRaw(root, ['cat-file', 'blob', spec]);
+    return blob.subarray(0, 8000).includes(0) ? null : blob.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 /** URL всех fetch-remote репозитория (у частичного клона после `(fetch)` стоит `[blob:none]`); не git или нет remote - пусто. Только читающая команда. */
 export async function gitRemotes(root: string): Promise<string[]> {
   try {
@@ -142,5 +161,45 @@ export async function gitRemotes(root: string): Promise<string[]> {
       .filter((url): url is string => !!url);
   } catch {
     return [];
+  }
+}
+
+export interface Branches {
+  current: string | null;
+  local: string[];
+  /** Ветки remote без локальной копии, без имени remote: `git switch` заведёт локальную с отслеживанием. */
+  remote: string[];
+}
+
+/** Свежие первыми; не git - пустые списки. */
+export async function gitBranches(root: string): Promise<Branches> {
+  try {
+    const [current, out] = await Promise.all([gitBranch(root), git(root, ['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads', 'refs/remotes'])]);
+    const local: string[] = [];
+    const remote = new Set<string>();
+    for (const ref of out.split('\n')) {
+      if (ref.startsWith('refs/heads/')) local.push(ref.slice('refs/heads/'.length));
+      else {
+        const name = /^refs\/remotes\/[^/]+\/(.+)$/.exec(ref)?.[1];
+        if (name && name !== 'HEAD') remote.add(name);
+      }
+    }
+    for (const name of local) remote.delete(name);
+    return { current: current === 'HEAD' ? null : current, local, remote: [...remote] };
+  } catch {
+    return { current: null, local: [], remote: [] };
+  }
+}
+
+/** Только ветка из gitBranches: имя не уходит в git опцией. Незакоммиченные правки git переносит сам или отказывает. */
+export async function gitSwitch(root: string, branch: string): Promise<void> {
+  const { local, remote } = await gitBranches(root);
+  if (!local.includes(branch) && !remote.includes(branch)) throw new Error(`Ветки ${branch} нет`);
+  try {
+    await git(root, ['switch', branch]);
+  } catch (error) {
+    // Первая строка message - сама команда, причина отказа git идёт следом.
+    const reason = (error as Error).message.split('\n').slice(1).find((line) => line.trim());
+    throw new Error(reason?.replace(/^(error|fatal): /, '') || 'git switch не выполнен');
   }
 }

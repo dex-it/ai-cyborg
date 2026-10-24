@@ -32,6 +32,7 @@ await build({
   target: 'chrome130',
 });
 
+cpSync('assets/icon.png', 'dist/icon.png');
 cpSync('src/renderer/index.html', 'dist/renderer/index.html');
 cpSync('src/renderer/styles.css', 'dist/renderer/styles.css');
 cpSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/renderer/xterm.css');

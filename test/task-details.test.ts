@@ -82,6 +82,21 @@ describe('TaskDetailsService', () => {
   });
 });
 
+describe('TaskDetailsService.sessionDetails', () => {
+  it('задача из любой прошлой выборки находится и после вытеснения выборок; чужая - отказ без запроса', async () => {
+    const calls: string[][] = [];
+    const svc = new TaskDetailsService(async (_cmd, args) => {
+      calls.push(args);
+      return ok('{"body":"b"}');
+    });
+    svc.remember(result(gh));
+    for (let i = 0; i < 10; i++) svc.remember(result());
+    assert.deepEqual(await svc.sessionDetails(gh), { description: 'b' });
+    assert.ok('error' in (await svc.sessionDetails(gl)));
+    assert.equal(calls.length, 1);
+  });
+});
+
 describe('createTaskHandlers', () => {
   const deps = () => {
     const opened: string[] = [];
@@ -106,6 +121,7 @@ describe('createTaskHandlers', () => {
     assert.throws(() => handlers.list(1, true, [], false), /tasks:list/);
     assert.equal(listed.length, 0);
     assert.throws(() => handlers.details('1', gh), /tasks:details/);
+    assert.throws(() => handlers.sessionDetails({ ...gh, host: 'evil.com' }), /tasks:sessionDetails/);
   });
   it('tasks:open строит адрес из проверенной ссылки и отклоняет чужой хост', async () => {
     const { handlers, opened } = deps();

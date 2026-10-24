@@ -17,6 +17,8 @@ export function validateTaskDetailsArgs(selection: unknown, ref: unknown): { sel
 export class TaskDetailsService {
   private seq = 0;
   private readonly selections = new Map<number, Map<string, TaskRef>>();
+  // Сессия задачи живёт дольше выборки: её описание берётся по любой задаче, которую главный процесс отдавал за этот запуск.
+  private readonly seen = new Map<string, TaskRef>();
 
   constructor(private readonly run: CliRunner) {}
 
@@ -26,6 +28,7 @@ export class TaskDetailsService {
       id,
       new Map(result.tasks.map((t) => [t.key, { kind: t.kind, host: t.host, path: t.path, number: t.number }])),
     );
+    for (const [key, ref] of this.selections.get(id)!) this.seen.set(key, ref);
     while (this.selections.size > SELECTIONS_KEPT) this.selections.delete(this.selections.keys().next().value!);
     return { ...result, selection: id };
   }
@@ -33,6 +36,16 @@ export class TaskDetailsService {
   async details(selection: number, ref: TaskRef): Promise<TaskDetailsResult> {
     const stored = this.selections.get(selection)?.get(taskKey(ref));
     if (!stored) return { error: 'задача не из текущей выборки: нажмите «Обновить»' };
+    return this.fetch(stored);
+  }
+
+  async sessionDetails(ref: TaskRef): Promise<TaskDetailsResult> {
+    const stored = this.seen.get(taskKey(ref));
+    if (!stored) return { error: 'задачи не было в списках этого запуска' };
+    return this.fetch(stored);
+  }
+
+  private async fetch(stored: TaskRef): Promise<TaskDetailsResult> {
     try {
       const res =
         stored.kind === 'github'
@@ -65,6 +78,11 @@ export function createTaskHandlers(
       const args = validateTaskDetailsArgs(selection, ref);
       if (!args) throw new Error('Некорректные аргументы tasks:details');
       return details.details(args.selection, args.ref);
+    },
+    sessionDetails(ref: unknown): Promise<TaskDetailsResult> {
+      const valid = validateRef(ref);
+      if (!valid) throw new Error('Некорректные аргументы tasks:sessionDetails');
+      return details.sessionDetails(valid);
     },
     async open(arg: unknown): Promise<{ error?: string }> {
       const ref = validateOpenArgs(arg);

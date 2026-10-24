@@ -2,7 +2,7 @@ import type { Mr, MrFilter, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Project } from '../main/projects';
 import { el } from './dom';
 import { readChoice, writePref } from './prefs';
-import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
+import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
 import { RefreshGate, wireRefresh, type RefreshTrigger } from './task-flow';
@@ -17,6 +17,7 @@ export interface OpenMrSession {
 export interface MrAction {
   id: string;
   label: (mr: Mr, open: OpenMrSession | undefined) => string;
+  visible?: (mr: Mr, open: OpenMrSession | undefined) => boolean;
   run: (mr: Mr, anchor: HTMLElement) => void;
 }
 
@@ -51,6 +52,7 @@ export class MrsView implements PanelView {
       {
         id: 'start',
         label: (mr, open) => (open ? 'К сессии' : mrActionLabel(mr)),
+        visible: (mr, open) => !!open || mrActionVisible(mr),
         run: (mr, anchor) => host.startMr(mr, mrIntent(mr), anchor),
       },
     ];
@@ -109,10 +111,13 @@ export class MrsView implements PanelView {
         this.render();
       },
       detailed: (result) => {
+        const before = new Map(this.result?.mrs.map((m) => [m.key, mrActionVisible(m)]));
         this.result = result;
         this.pending.clear();
         this.host.applyStatuses(result);
-        this.metas.fill(result);
+        // Признак замечаний GitHub приходит с деталями: строки строятся заново, только если от него зависит кнопка.
+        if (result.mrs.some((m) => before.get(m.key) !== mrActionVisible(m))) this.render();
+        else this.metas.fill(result);
       },
     });
   }
@@ -154,18 +159,28 @@ export class MrsView implements PanelView {
     this.body.replaceChildren(...nodes);
   }
 
+  private async openInBrowser(mr: Mr, main: HTMLElement): Promise<void> {
+    const res = await api.openMr({ kind: mr.kind, host: mr.host, path: mr.path, number: mr.number });
+    main.querySelector('.tasks-error')?.remove();
+    if (res.error) main.append(el('div', 'tasks-error', `Браузер не открылся: ${res.error}`));
+  }
+
   private row(mr: Mr): HTMLElement {
     const open = this.host.sessionOf(mr.key);
     const row = el('div', 'task-row');
     const main = el('div', 'task-main');
     const title = el('div', 'task-title');
-    title.append(el('span', 'task-number', mrNumber(mr.kind, mr.number)), el('span', '', ` ${mr.title}`));
+    const number = el('button', 'task-number', mrNumber(mr.kind, mr.number));
+    number.title = 'Открыть в браузере';
+    number.addEventListener('click', () => void this.openInBrowser(mr, main));
+    title.append(number, el('span', '', ` ${mr.title}`));
     title.title = mr.title;
     const meta = this.metas.register(mr.key, el('div', 'task-meta', mrMeta(mr, this.pending.has(mr.key))));
     meta.title = `${sourceLabel(mr)}\n${mr.url}`;
     main.append(title, meta);
     const actions = el('div', 'task-actions');
     for (const action of this.actions) {
+      if (action.visible && !action.visible(mr, open)) continue;
       const button = el('button', '', action.label(mr, open)) as HTMLButtonElement;
       button.dataset.action = action.id;
       button.addEventListener('click', (event) => {

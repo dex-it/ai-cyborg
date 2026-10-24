@@ -37,6 +37,8 @@ export class TreeView {
   constructor(
     private readonly onOpenFile: (path: string, root: TreeRoot) => void,
     private readonly onChange: () => void,
+    /** Нет - веткой управляет сессия, сменить её из дерева нельзя. */
+    private readonly onBranch?: (root: TreeRoot, anchor: HTMLElement) => void,
   ) {}
 
   setRoots(roots: TreeRoot[]): void {
@@ -77,8 +79,23 @@ export class TreeView {
     makeDraggable(row, root.path);
     row.append(el('span', 'twisty', state.collapsed ? '▸' : '▾'), el('span', 'name', root.label));
     const changes = Object.keys(state.status).length;
-    const meta = [state.branch ? `⎇ ${state.branch}` : 'не git', changes ? `±${changes}` : ''].filter(Boolean).join('  ');
-    row.append(el('span', 'meta', meta));
+    const meta = el('span', 'meta');
+    if (!state.branch) meta.append(el('span', '', 'не git'));
+    else if (this.onBranch) {
+      const branch = el('button', 'branch', `⎇ ${state.branch}`);
+      branch.title = 'Сменить ветку';
+      branch.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.onBranch!(root, branch);
+      });
+      meta.append(branch);
+    } else {
+      const branch = el('span', '', `⎇ ${state.branch}`);
+      branch.title = 'Веткой управляет сессия Claude';
+      meta.append(branch);
+    }
+    if (changes) meta.append(el('span', '', `  ±${changes}`));
+    row.append(meta);
     row.addEventListener('click', () => {
       state.collapsed = !state.collapsed;
       this.redraw();

@@ -2,6 +2,8 @@ import {
   approvalsText,
   createLimiter,
   githubApprovals,
+  githubCommented,
+  gitlabOpenThreads,
   githubPipeline,
   gitlabPipeline,
   isSha,
@@ -28,6 +30,9 @@ const GL_MR_PAGE = 'mergeRequests(state: opened, first: 100, after: $endCursor){
 const GL_MR_QUERY = `query($fullPath: ID!, $endCursor: String){ project(fullPath: $fullPath){ ${GL_MR_PAGE}approvalsRequired approvedBy{ nodes{ username } } } } } }`;
 /** Без правил апрува: у редакции GitLab без них поля approvalsRequired нет. */
 const GL_MR_QUERY_LITE = `query($fullPath: ID!, $endCursor: String){ project(fullPath: $fullPath){ ${GL_MR_PAGE}approvedBy{ nodes{ username } } } } } }`;
+// Треды нужны только своим MR (кнопка «Доработать»): в общем запросе они впятеро замедляют детали всех MR.
+const GL_OWN_THREADS_QUERY =
+  'query($fullPath: ID!, $author: String!){ project(fullPath: $fullPath){ mergeRequests(state: opened, authorUsername: $author, first: 100){ nodes{ iid discussions(first: 100){ nodes{ resolvable resolved } } } } } }';
 const DETAILS_KEPT = 8;
 const GH_MR_JQ =
   '.[] | {number,title,draft,created_at,updated_at,user:.user.login,head_ref:.head.ref,head_label:.head.label,head_repo:.head.repo.full_name,head_sha:.head.sha,base_ref:.base.ref,assignees:[.assignees[].login],reviewers:[.requested_reviewers[].login]}';
@@ -38,7 +43,7 @@ const GH_STATUS_JQ = '{state,total_count}';
 const GH_REVIEWS_JQ = '.[] | {login:.user.login,state}';
 
 type Values = unknown[] | null;
-type Detail = Pick<MrDetail, 'pipeline' | 'approvals'>;
+type Detail = Pick<MrDetail, 'pipeline' | 'approvals' | 'comments'>;
 type GitlabPage = { details: Map<number, Detail>; next: string | null };
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -178,6 +183,12 @@ export class MrsService {
     for (const x of github) if (trackedKeys.has(x.item.mr.key)) detailed.add(x.item);
     const githubItems = github.filter((x) => detailed.has(x.item));
     const gitlabItems = items.filter((x) => x.source.kind === 'gitlab');
+    const glThreads = new Map<string, Promise<Map<number, boolean>>>();
+    for (const x of gitlabItems) {
+      const key = sourceKey(x.source);
+      const me = gitlabUsers.get(x.source.host);
+      if (x.item.mr.own && me && !glThreads.has(key)) glThreads.set(key, this.gitlabOwnThreads(x.source, me));
+    }
 
     const have = new Set(result.mrs.map((m) => m.key));
     const wanted = new Map<string, { source: Source; ref: MrRef }>();
@@ -208,7 +219,11 @@ export class MrsService {
       ),
     ]);
     const collect = async (): Promise<MrDetailsResult> => {
-      const [maps, rest] = await Promise.all([Promise.all(gitlabItems.map((x) => glDetails.get(sourceKey(x.source)))), pooled]);
+      const [maps, threads, rest] = await Promise.all([
+        Promise.all(gitlabItems.map((x) => glDetails.get(sourceKey(x.source)))),
+        Promise.all(gitlabItems.map((x) => glThreads.get(sourceKey(x.source)))),
+        pooled,
+      ]);
       const details: MrDetail[] = [];
       const singles: Mr[] = [];
       for (const r of rest) {
@@ -217,7 +232,8 @@ export class MrsService {
       }
       gitlabItems.forEach((x, i) => {
         const d = maps[i]?.get(x.item.mr.number);
-        details.push({ key: x.item.mr.key, pipeline: d?.pipeline ?? null, approvals: d?.approvals ?? null });
+        const comments = x.item.mr.own ? (threads[i]?.get(x.item.mr.number) ?? null) : null;
+        details.push({ key: x.item.mr.key, pipeline: d?.pipeline ?? null, approvals: d?.approvals ?? null, comments });
       });
       return { details, tracked: singles };
     };
@@ -264,7 +280,12 @@ export class MrsService {
   private async fill(source: Source, item: ParsedMr): Promise<Detail> {
     const pipeline = await this.githubPipelineOf(source, item.headSha);
     const reviews = await this.values('gh', 'github', ['api', '--hostname', 'github.com', '--paginate', '--jq', GH_REVIEWS_JQ, `repos/${source.path}/pulls/${item.mr.number}/reviews?per_page=100`]);
-    return { pipeline, approvals: reviews ? approvalsText(githubApprovals(reviews as { login?: unknown; state?: unknown }[])) : null };
+    const list = reviews as { login?: unknown; state?: unknown }[] | null;
+    return {
+      pipeline,
+      approvals: list ? approvalsText(githubApprovals(list)) : null,
+      comments: list ? githubCommented(list, item.mr.author) : null,
+    };
   }
 
   /**
@@ -298,6 +319,24 @@ export class MrsService {
       }
     } catch {
       // отказ задевает только детали: у MR без записи будет «—»
+    }
+    return out;
+  }
+
+  /** Нерешённые треды своих открытых MR по iid; отказ - пустая карта, кнопка остаётся скрытой. */
+  private async gitlabOwnThreads(source: Source, me: string): Promise<Map<number, boolean>> {
+    const out = new Map<number, boolean>();
+    try {
+      const res = await this.run('glab', ['api', '--hostname', source.host, 'graphql', '-f', `query=${GL_OWN_THREADS_QUERY}`, '-f', `fullPath=${source.path}`, '-f', `author=${me}`]);
+      const body: unknown = JSON.parse(res.stdout);
+      const project = isRecord(body) && isRecord(body.data) && isRecord(body.data.project) ? body.data.project : null;
+      const nodes = project && isRecord(project.mergeRequests) ? project.mergeRequests.nodes : null;
+      for (const node of Array.isArray(nodes) ? nodes : []) {
+        const iid = isRecord(node) ? Number(node.iid) : NaN;
+        if (Number.isSafeInteger(iid) && iid > 0) out.set(iid, gitlabOpenThreads(isRecord(node.discussions) ? node.discussions.nodes : null));
+      }
+    } catch {
+      // без тредов «Доработать» у своего MR не показывается
     }
     return out;
   }

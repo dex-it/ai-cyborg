@@ -19,6 +19,7 @@
           <div id="tree-meta"></div>
         </header>
         <div id="tree"></div>
+        <div id="history" hidden></div>
       </aside>
       <div id="splitter"></div>
       <main id="workspace">
@@ -30,10 +31,16 @@
         </nav>
         <div id="sessions">
           <div id="empty"></div>
+          <div id="file-preview" class="pane"></div>
           <div id="tasks-panel" hidden></div>
         </div>
       </main>
     </div>
+
+    <footer id="status-bar">
+      <button id="side-files" class="side-tab active" title="Дерево файлов">Файлы</button>
+      <button id="side-history" class="side-tab" title="Прошлые сессии Claude Code проекта">Сессии</button>
+    </footer>
 
     <div id="repo-menu" class="menu" hidden></div>
     <div id="project-menu" class="menu" hidden></div>

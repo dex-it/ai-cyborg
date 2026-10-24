@@ -16,6 +16,8 @@ interface Session {
   eventsFile: string;
   offset: number;
   cwd: string;
+  /** Репозитории запуска: ветками в них управляет сессия. */
+  dirs: string[];
   watcher: fs.FSWatcher;
 }
 
@@ -82,12 +84,12 @@ export class SessionManager {
     fs.writeFileSync(this.settingsFile, JSON.stringify({ hooks }, null, 2));
   }
 
-  create(cwd: string, addDirs: string[], prompt?: string): number {
+  create(cwd: string, addDirs: string[], prompt?: string, resume?: string): number {
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     createEventsFile(eventsFile);
     const shell = process.env.SHELL || '/bin/bash';
-    const args = claudeArgs(addDirs, prompt);
+    const args = claudeArgs(addDirs, prompt, resume);
     // Логин-шелл даёт PATH пользователя: из меню приложений Electron стартует без ~/.local/bin.
     const proc = this.spawn(shell, ['-lc', 'exec claude --settings "$CYBORG_SETTINGS" "$@"', 'cyborg', ...args], {
       name: 'xterm-256color',
@@ -107,6 +109,7 @@ export class SessionManager {
       eventsFile,
       offset: 0,
       cwd,
+      dirs: [cwd, ...addDirs],
       watcher: fs.watch(eventsFile, () => this.readEvents(session)),
     };
     this.sessions.set(id, session);
@@ -118,6 +121,10 @@ export class SessionManager {
       this.emit('session:exit', { id, exitCode });
     });
     return id;
+  }
+
+  uses(dir: string): boolean {
+    return [...this.sessions.values()].some((s) => s.dirs.includes(dir));
   }
 
   write(id: number, data: string): void {

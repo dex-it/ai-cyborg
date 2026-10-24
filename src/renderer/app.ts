@@ -1,11 +1,15 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
+import type { HistoryEntry } from '../main/history';
 import type { Project, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
+import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
+import { moveItem } from './reorder';
 import { initSourcesSection } from './sources';
+import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
 import { TrackerPanel } from './panel';
@@ -60,6 +64,14 @@ const newSessionButton = byId<HTMLButtonElement>('new-session');
 const sessionsEl = byId('sessions');
 const empty = byId('empty');
 const repoMenu = byId('repo-menu');
+const filePreview = byId('file-preview');
+// Без активной сессии дерево показывает репозитории проекта; раскрытие держится за проектом.
+const projectTrees = new Map<string, TreeView>();
+let preview: FileViewer | null = null;
+const treeHeader = byId('tree-header');
+const historyEl = byId('history');
+const sideFiles = byId<HTMLButtonElement>('side-files');
+const sideHistory = byId<HTMLButtonElement>('side-history');
 const projectMenu = byId('project-menu');
 const projectMenuButton = byId<HTMLButtonElement>('project-menu-open');
 const taskSessions = new TaskSessionRegistry<Session>();
@@ -103,6 +115,7 @@ function selectProject(next: Project | null): void {
   else showNoSession();
   panel.setAvailable(hasSources(next));
   panel.onProjectChanged();
+  if (!historyEl.hidden) void loadHistory();
 }
 
 /** Отказ записи не откатывает состояние в памяти: оператор не теряет ввод, но знает, что на диск он не лёг. */
@@ -136,13 +149,38 @@ function editProject(target: Project | null): void {
   projectDialog.showModal();
 }
 
+// Свой тип данных: строка репозитория не принимается зонами броска пути (acceptsDrop).
+const REPO_INDEX_MIME = 'application/x-cyborg-repo-index';
+
 function renderDraftRepos(): void {
   if (!draft) return;
   const current = draft;
   projectRepos.replaceChildren(
-    ...current.repos.map((repo) => {
+    ...current.repos.map((repo, index) => {
       const item = el('li');
       item.append(el('span', 'repo-name', basename(repo)), el('span', 'repo-path', repo));
+      item.draggable = current.repos.length > 1;
+      item.title = item.draggable ? 'Перетащите, чтобы изменить порядок' : '';
+      item.addEventListener('dragstart', (event) => {
+        event.dataTransfer?.setData(REPO_INDEX_MIME, String(index));
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+        item.classList.add('dragging');
+      });
+      item.addEventListener('dragend', () => item.classList.remove('dragging'));
+      item.addEventListener('dragover', (event) => {
+        if (!event.dataTransfer?.types.includes(REPO_INDEX_MIME)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        item.classList.add('drop-target');
+      });
+      item.addEventListener('dragleave', () => item.classList.remove('drop-target'));
+      item.addEventListener('drop', (event) => {
+        const from = Number(event.dataTransfer?.getData(REPO_INDEX_MIME));
+        if (!event.dataTransfer?.types.includes(REPO_INDEX_MIME) || !Number.isInteger(from)) return;
+        event.preventDefault();
+        current.repos = moveItem(current.repos, from, index);
+        renderDraftRepos();
+      });
       const remove = el('button', 'icon-button', '×');
       remove.title = 'Убрать из проекта';
       remove.addEventListener('click', () => {
@@ -252,10 +290,14 @@ function showNoSession(): void {
     s.stripTab.classList.remove('active');
   }
   sidebar.style.removeProperty('--session');
-  treeTitle.textContent = project ? 'Нет активной сессии' : 'Нет проекта';
+  treeTitle.textContent = project ? project.name : 'Нет проекта';
   treeTitle.title = '';
-  treeMeta.textContent = '';
+  treeMeta.textContent = project ? 'нет активной сессии' : '';
   treeEl.replaceChildren();
+  closePreview();
+  const tree = projectTree();
+  tree?.setRoots(project!.repos.map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' })));
+  void renderProjectTree(false);
   empty.replaceChildren(
     ...(projectHint() ?? ['Сессий нет.', '«+ CC» или Ctrl+Shift+N — запустить Claude Code в репозитории проекта.']).map((text) =>
       el('p', '', text),
@@ -264,8 +306,62 @@ function showNoSession(): void {
   empty.hidden = false;
 }
 
+function projectTree(): TreeView | null {
+  const owner = project;
+  if (!owner?.repos.length) return null;
+  let tree = projectTrees.get(owner.id);
+  if (!tree) {
+    tree = new TreeView(
+      (path, root) => void showPreview(path, root),
+      () => void renderProjectTree(false),
+      (root, anchor) => void showBranchMenu(root, anchor),
+    );
+    projectTrees.set(owner.id, tree);
+  }
+  return tree;
+}
+
+async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
+  const tree = active ? null : projectTree();
+  if (!tree) return;
+  const token = ++treeToken;
+  const fragment = await tree.render(onlyIfChanged);
+  if (!fragment || token !== treeToken || active || projectTree() !== tree) return;
+  const scroll = treeEl.scrollTop;
+  treeEl.replaceChildren(fragment);
+  treeEl.scrollTop = scroll;
+}
+
+async function showPreview(path: string, root: TreeRoot): Promise<void> {
+  closePreview();
+  const rel = path.startsWith(`${root.path}/`) ? path.slice(root.path.length + 1) : path;
+  const header = el('div', 'file-header');
+  header.append(el('span', 'file-root', root.label), el('span', '', ` / ${rel}`));
+  header.title = path;
+  const close = el('button', 'close', '×');
+  close.title = 'Закрыть';
+  close.addEventListener('click', () => closePreview());
+  header.prepend(close);
+  const body = el('div', 'file-body');
+  filePreview.replaceChildren(header, body);
+  filePreview.classList.add('active');
+  empty.hidden = true;
+  preview = new FileViewer(path, body);
+  await preview.load();
+}
+
+function closePreview(): void {
+  preview?.dispose();
+  preview = null;
+  filePreview.replaceChildren();
+  filePreview.classList.remove('active');
+  if (!active) empty.hidden = false;
+}
+
 function activateSession(s: Session, keepPanel = false): void {
   if (!keepPanel) panel.close();
+  const same = s === active;
+  closePreview();
   active = s;
   lastSessionOf.set(s.project.id, s);
   for (const other of sessions) {
@@ -276,7 +372,8 @@ function activateSession(s: Session, keepPanel = false): void {
   sidebar.style.setProperty('--session', s.color);
   updateSessionLabels(s);
   s.tree.setRoots(treeRoots(s));
-  treeEl.replaceChildren();
+  // Своё дерево заменится готовым целиком; очистка нужна только против чужого, иначе дерево мигает до ответа git status.
+  if (!same) treeEl.replaceChildren();
   void renderTree(s, false);
   showInner(s, s.activeFile);
 }
@@ -324,6 +421,15 @@ function makeTab(className: string, label: string, onClose?: () => void): HTMLEl
       onClose();
     });
     tab.append(close);
+    // Без preventDefault средняя кнопка включает автопрокрутку Chromium.
+    tab.addEventListener('mousedown', (event) => {
+      if (event.button === 1) event.preventDefault();
+    });
+    tab.addEventListener('auxclick', (event) => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      onClose();
+    });
   }
   return tab;
 }
@@ -377,13 +483,16 @@ async function newSession(repo: string, start?: StartFrom): Promise<void> {
   }
 }
 
-async function createSessionView(owner: Project, repo: string, start?: StartFrom): Promise<void> {
+async function createSessionView(owner: Project, repo: string, start?: StartFrom, resume?: string): Promise<void> {
+  const addDirs = owner.repos.filter((r) => r !== repo);
   // В канал идут только ссылка и намерение: название, ветки и автор в первое сообщение не попадают.
-  const id = await api.createSession(
-    repo,
-    owner.repos.filter((r) => r !== repo),
-    start && ('task' in start ? { task: refOf(start.task) } : { mr: refOf(start.mr), intent: start.intent }),
-  );
+  const id = resume
+    ? await api.resumeSession(repo, addDirs, resume)
+    : await api.createSession(
+        repo,
+        addDirs,
+        start && ('task' in start ? { task: refOf(start.task) } : { mr: refOf(start.mr), intent: start.intent }),
+      );
   const root = (await api.gitRoot(repo)) ?? repo;
   const color = sessionColor(colorIndex++);
   const term = createTerminal(id);
@@ -398,6 +507,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const host = el('div', 'term-host');
   termPane.append(host);
   innerPanes.append(termPane);
+  if (start && 'task' in start) container.append(taskHeader(start.task, () => requestAnimationFrame(() => fitSession(session))));
   container.append(innerTabs, innerPanes);
   sessionsEl.append(container);
   term.open(host);
@@ -571,7 +681,12 @@ api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
 
 // Правки вне хуков (руками, другим процессом) подхватываются опросом git status.
 setInterval(() => {
-  if (active && !document.hidden) void renderTree(active, true);
+  if (document.hidden) return;
+  if (active) void renderTree(active, true);
+  else {
+    void renderProjectTree(true);
+    if (preview) void preview.load();
+  }
 }, 3000);
 
 // ---------- запуск сессии ----------
@@ -591,8 +706,58 @@ function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPic
   );
   const rect = anchor.getBoundingClientRect();
   repoMenu.style.top = `${rect.bottom + 2}px`;
+  repoMenu.style.left = '';
   repoMenu.style.right = `${window.innerWidth - rect.right}px`;
   repoMenu.hidden = false;
+}
+
+async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void> {
+  const { current, local, remote } = await api.gitBranches(root.path);
+  const filter = document.createElement('input');
+  filter.className = 'menu-filter';
+  filter.placeholder = 'Найти ветку';
+  const error = el('div', 'tasks-error');
+  error.hidden = true;
+  const list = el('div', 'branch-list');
+  const all = [...local.map((name) => ({ name, remote: false })), ...remote.map((name) => ({ name, remote: true }))];
+  let shown = all;
+  const pick = async (name: string): Promise<void> => {
+    if (name === current) return;
+    const res = await api.gitSwitch(root.path, name);
+    if (res.error) {
+      error.textContent = `Ветка не сменилась: ${res.error}`;
+      error.hidden = false;
+      return;
+    }
+    repoMenu.hidden = true;
+    void renderProjectTree(false);
+  };
+  const draw = (): void => {
+    const query = filter.value.trim().toLowerCase();
+    shown = all.filter((b) => b.name.toLowerCase().includes(query));
+    list.replaceChildren(
+      ...shown.slice(0, 200).map(({ name, remote: fromRemote }) => {
+        const item = el('div', `menu-item branch-item${name === current ? ' current' : ''}`);
+        item.append(el('span', '', `${name === current ? '✓ ' : ''}${name}`));
+        if (fromRemote) item.append(el('span', 'repo-path', 'только на сервере'));
+        item.addEventListener('click', () => void pick(name));
+        return item;
+      }),
+    );
+    if (!shown.length) list.append(el('div', 'menu-title', 'Нет веток'));
+  };
+  filter.addEventListener('input', draw);
+  filter.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && shown[0]) void pick(shown[0].name);
+  });
+  draw();
+  repoMenu.replaceChildren(el('div', 'menu-title', `Ветка ${root.label}`), filter, error, list);
+  const rect = anchor.getBoundingClientRect();
+  repoMenu.style.top = `${rect.bottom + 2}px`;
+  repoMenu.style.right = '';
+  repoMenu.style.left = `${rect.left}px`;
+  repoMenu.hidden = false;
+  filter.focus();
 }
 
 function requestSession(): void {
@@ -603,6 +768,58 @@ function requestSession(): void {
   }
   if (!repos.length) return;
   showRepoMenu(repos, newSessionButton, 'Где запустить Claude Code', (repo) => void newSession(repo));
+}
+
+// ---------- прошлые сессии ----------
+
+function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
+  if (typeof entries === 'string') {
+    historyEl.replaceChildren(el('div', 'menu-title', entries));
+    return;
+  }
+  historyEl.replaceChildren(
+    ...entries.map((entry) => {
+      const item = el('div', 'menu-item history-item');
+      item.title = `Продолжить: ${entry.title}`;
+      const remove = el('button', 'close', '×');
+      remove.title = 'Удалить сессию';
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
+        api
+          .deleteHistory(owner.id, entry.repo, entry.id)
+          .then(() => item.remove())
+          .catch((err) => alert(String(err)));
+      });
+      item.append(
+        el('span', 'history-title', entry.title),
+        el('span', 'repo-path', `${basename(entry.repo)} · ${ago(entry.updated, Date.now())}`),
+        remove,
+      );
+      item.addEventListener('click', () => void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err))));
+      return item;
+    }),
+  );
+}
+
+async function loadHistory(): Promise<void> {
+  const owner = project;
+  if (!owner) {
+    historyEl.replaceChildren(el('div', 'menu-title', 'Нет проекта'));
+    return;
+  }
+  if (!historyEl.childElementCount) renderHistory(owner, 'Загрузка…');
+  const entries = await api.listHistory(owner.id).catch((err) => String(err));
+  if (project !== owner) return;
+  renderHistory(owner, typeof entries === 'string' || entries.length ? entries : 'Прошлых сессий нет');
+}
+
+function showSideView(history: boolean): void {
+  sideFiles.classList.toggle('active', !history);
+  sideHistory.classList.toggle('active', history);
+  treeHeader.hidden = treeEl.hidden = history;
+  historyEl.hidden = !history;
+  if (history) void loadHistory();
 }
 
 // ---------- задачи трекеров ----------
@@ -692,6 +909,8 @@ newSessionButton.addEventListener('click', (event) => {
   if (repoMenu.hidden) requestSession();
   else repoMenu.hidden = true;
 });
+sideFiles.addEventListener('click', () => showSideView(false));
+sideHistory.addEventListener('click', () => showSideView(true));
 document.addEventListener('click', (event) => {
   if (!repoMenu.contains(event.target as Node)) repoMenu.hidden = true;
   if (!projectMenu.contains(event.target as Node)) projectMenu.hidden = true;
