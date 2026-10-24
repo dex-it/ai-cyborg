@@ -13,7 +13,8 @@ import { findTask, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
 import { TreeView, type TreeRoot } from './tree';
-import { applyMonacoTheme, FileViewer } from './viewer';
+import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
+import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize } from './font-size';
 
 interface FileTab {
   viewer: FileViewer;
@@ -69,6 +70,7 @@ const sessions: Session[] = [];
 const lastSessionOf = new Map<string, Session>();
 let active: Session | null = null;
 let colorIndex = 0;
+let fontSize = loadFontSize();
 let treeToken = 0;
 // Вывод pty может прийти раньше, чем сессия создана в интерфейсе.
 const pendingData = new Map<number, string[]>();
@@ -290,7 +292,7 @@ function makeTab(className: string, label: string, onClose?: () => void): HTMLEl
 function createTerminal(id: number): Terminal {
   const term = new Terminal({
     fontFamily: "'JetBrains Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
-    fontSize: 13,
+    fontSize,
     cursorBlink: true,
     scrollback: 10000,
     theme: terminalTheme(),
@@ -665,6 +667,11 @@ window.addEventListener(
   'keydown',
   (event) => {
     if (event.key === 'Escape') repoMenu.hidden = true;
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key === '0') {
+      event.preventDefault();
+      event.stopPropagation();
+      setFontSize(DEFAULT_FONT_SIZE);
+    }
     if (event.ctrlKey && event.shiftKey && event.code === 'KeyN') {
       event.preventDefault();
       event.stopPropagation();
@@ -675,6 +682,27 @@ window.addEventListener(
 );
 
 // ---------- окно ----------
+
+function setFontSize(size: number): void {
+  if (size === fontSize) return;
+  fontSize = size;
+  saveFontSize(size);
+  for (const s of sessions) s.term.options.fontSize = size;
+  applyMonacoFontSize(size);
+  if (active) fitSession(active);
+}
+
+// В capture до xterm: иначе Ctrl+колесо прокрутит историю терминала.
+window.addEventListener(
+  'wheel',
+  (event) => {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setFontSize(stepFontSize(fontSize, event.deltaY));
+  },
+  { capture: true, passive: false },
+);
 
 onThemeChange(() => {
   for (const s of sessions) s.term.options.theme = terminalTheme();

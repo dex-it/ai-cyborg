@@ -1,7 +1,9 @@
 import type * as Monaco from 'monaco-editor';
 import { basename, el } from './dom';
+import { loadFontSize } from './font-size';
 import { monacoTheme } from './theme';
 
+let fontSize = loadFontSize();
 let monacoPromise: Promise<typeof Monaco> | null = null;
 
 function loadMonaco(): Promise<typeof Monaco> {
@@ -14,6 +16,11 @@ function loadMonaco(): Promise<typeof Monaco> {
 
 export function applyMonacoTheme(): void {
   window.monaco?.editor.setTheme(monacoTheme());
+}
+
+export function applyMonacoFontSize(size: number): void {
+  fontSize = size;
+  for (const editor of window.monaco?.editor.getEditors() ?? []) editor.updateOptions({ fontSize });
 }
 
 function detectLanguage(monaco: typeof Monaco, path: string): string {
@@ -50,7 +57,7 @@ export class FileViewer {
         readOnly: true,
         theme: monacoTheme(),
         automaticLayout: true,
-        fontSize: 13,
+        fontSize,
         scrollBeyondLastLine: false,
       });
     } else if (this.editor.getValue() !== result.content) {
