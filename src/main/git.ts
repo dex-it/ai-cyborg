@@ -191,12 +191,28 @@ export async function gitBranches(root: string): Promise<Branches> {
   }
 }
 
+// Выписывание файлов запускает smudge-фильтры: их драйверы из недоверенного конфига репозитория не исполняются вовсе.
+async function hasRepoFilters(root: string): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = (await gitRaw(root, ['config', '--show-scope', '--null', '--name-only', '--get-regexp', '^filter\\.'], { LC_ALL: 'C' })).toString('latin1');
+  } catch (e) {
+    if ((e as { code?: unknown }).code !== 1) throw e;
+    return false;
+  }
+  const cfg = raw.split('\0');
+  for (let i = 0; i + 1 < cfg.length; i += 2) if (REPO_SCOPES.has(cfg[i])) return true;
+  return false;
+}
+
 /** Только ветка из gitBranches: имя не уходит в git опцией. Незакоммиченные правки git переносит сам или отказывает. */
 export async function gitSwitch(root: string, branch: string): Promise<void> {
   const { local, remote } = await gitBranches(root);
-  if (!local.includes(branch) && !remote.includes(branch)) throw new Error(`Ветки ${branch} нет`);
+  if (branch.startsWith('-') || (!local.includes(branch) && !remote.includes(branch))) throw new Error(`Ветки ${branch} нет`);
+  if (await hasRepoFilters(root)) throw new Error('в конфиге репозитория заданы фильтры filter.*, их git запустил бы при смене ветки: переключите её в терминале');
   try {
-    await git(root, ['switch', branch]);
+    // Подмодули со своим непроверенным конфигом switch не трогает, даже если репозиторий задал submodule.recurse.
+    await git(root, ['-c', 'submodule.recurse=false', 'switch', branch]);
   } catch (error) {
     // Первая строка message - сама команда, причина отказа git идёт следом.
     const reason = (error as Error).message.split('\n').slice(1).find((line) => line.trim());

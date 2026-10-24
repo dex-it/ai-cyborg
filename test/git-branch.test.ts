@@ -36,6 +36,12 @@ describe('gitBranches и gitSwitch', () => {
       fs.writeFileSync(path.join(dir, 'a.txt'), 'правка\n');
       await assert.rejects(gitSwitch(dir, 'feature'), (e: Error) => !e.message.startsWith('Command failed') && !!e.message);
       assert.equal(await gitBranch(dir), 'remote-only');
+
+      git(dir, 'checkout', '-q', '--', 'a.txt');
+      git(dir, 'config', 'filter.evil.smudge', 'touch pwned');
+      await assert.rejects(gitSwitch(dir, 'main'), /filter\.\*/);
+      assert.equal(await gitBranch(dir), 'remote-only');
+      assert.ok(!fs.existsSync(path.join(dir, 'pwned')));
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
