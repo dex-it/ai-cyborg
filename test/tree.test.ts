@@ -8,7 +8,7 @@ class FakeNode {
   style: Record<string, string> = {};
   children: FakeNode[] = [];
   parentElement: FakeNode | null = null;
-  private listeners: (() => void)[] = [];
+  private listeners: { type: string; fn: () => void }[] = [];
   classList = {
     add: (c: string) => { this.className = `${this.className} ${c}`.trim(); },
     remove: (c: string) => { this.className = this.className.split(' ').filter((x) => x !== c).join(' '); },
@@ -19,11 +19,11 @@ class FakeNode {
       this.children.push(n);
     }
   }
-  addEventListener(_type: string, fn: () => void): void {
-    this.listeners.push(fn);
+  addEventListener(type: string, fn: () => void): void {
+    this.listeners.push({ type, fn });
   }
   click(): void {
-    for (const fn of this.listeners) fn();
+    for (const l of this.listeners) if (l.type === 'click') l.fn();
   }
   querySelectorAll(): FakeNode[] {
     return [];
