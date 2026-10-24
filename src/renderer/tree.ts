@@ -1,4 +1,5 @@
 import { basename, el, parentRel } from './dom';
+import { makeDraggable } from './drop-path';
 
 export interface TreeRoot {
   path: string;
@@ -72,6 +73,7 @@ export class TreeView {
   private rootRow(root: TreeRoot, state: RootState, primary: boolean): HTMLElement {
     const row = el('div', `row root${primary ? ' primary' : ''}`);
     row.title = `${root.path}\n${root.hint}`;
+    makeDraggable(row, root.path);
     row.append(el('span', 'twisty', state.collapsed ? '▸' : '▾'), el('span', 'name', root.label));
     const changes = Object.keys(state.status).length;
     const meta = [state.branch ? `⎇ ${state.branch}` : 'не git', changes ? `±${changes}` : ''].filter(Boolean).join('  ');
@@ -110,6 +112,7 @@ export class TreeView {
       const row = el('div', `row ${entry.isDir ? 'dir' : 'file'}`);
       row.style.paddingLeft = `${4 + depth * 12}px`;
       row.title = childAbs;
+      makeDraggable(row, childAbs);
       row.append(el('span', 'twisty', entry.isDir ? (expanded ? '▾' : '▸') : ''));
       const name = el('span', 'name', entry.name);
       row.append(name);

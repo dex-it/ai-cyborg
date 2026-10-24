@@ -4,6 +4,7 @@ import type { Project, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
+import { acceptsDrop, dropIntoSession } from './drop-path';
 import { initSettings } from './settings';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
@@ -405,6 +406,8 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   };
   stripTab.addEventListener('click', () => activateSession(session));
   claudeTab.addEventListener('click', () => showInner(session, null));
+  bindPathDrop(session, termPane);
+  bindPathDrop(session, claudeTab);
   sessions.push(session);
   taskSessions.add(session);
   updateSessionLabels(session);
@@ -413,6 +416,30 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   if (project === owner) activateSession(session);
   else stripTab.hidden = true;
 }
+
+/** Зона броска пути: терминал и вкладка Claude. Файл ОС и строка дерева вставляются через term.paste, как Ctrl+Shift+V. */
+function bindPathDrop(s: Session, target: HTMLElement): void {
+  target.addEventListener('dragover', (event) => {
+    if (s.exited || !event.dataTransfer || !acceptsDrop(event.dataTransfer.types)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  });
+  target.addEventListener('drop', (event) => {
+    if (!event.dataTransfer || !acceptsDrop(event.dataTransfer.types)) return;
+    event.preventDefault();
+    dropIntoSession(s, event.dataTransfer, api.pathForFile, () => showInner(s, null));
+  });
+}
+
+// Без отмены dragover/drop Electron уводит окно на file:// при броске файла ОС мимо зон.
+document.addEventListener('dragover', (event) => {
+  if (!event.dataTransfer || !acceptsDrop(event.dataTransfer.types) || event.defaultPrevented) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'none';
+});
+document.addEventListener('drop', (event) => {
+  if (event.dataTransfer && acceptsDrop(event.dataTransfer.types)) event.preventDefault();
+});
 
 function closeSession(s: Session, force: boolean): void {
   if (!s.exited && !force && !confirm('Сессия Claude Code ещё работает. Завершить её?')) return;

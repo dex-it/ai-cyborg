@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DirEntry } from './files';
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsState } from './projects';
@@ -26,6 +26,7 @@ const api = {
   gitRoot: (dir: string): Promise<string | null> => ipcRenderer.invoke('git:root', dir),
   gitBranch: (root: string): Promise<string | null> => ipcRenderer.invoke('git:branch', root),
   gitStatus: (root: string): Promise<Record<string, string>> => ipcRenderer.invoke('git:status', root),
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
   on: <T>(channel: string, listener: (payload: T) => void): (() => void) => {
     const handler = (_event: unknown, payload: T) => listener(payload);
     ipcRenderer.on(channel, handler);
