@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { writeJsonAtomic } from './jsonfile';
-import type { ProjectsState } from './projects';
+import type { Project, ProjectsState } from './projects';
 
 export type TrackerKind = 'github' | 'gitlab';
 
@@ -132,7 +132,7 @@ export function classifyRemote(url: string, gitlabHosts: ReadonlySet<string>): {
 
 export const taskKey = (ref: TaskRef): string => `${ref.kind}:${ref.host}/${ref.path.toLowerCase()}#${ref.number}`;
 
-const sourceKey = (ref: Pick<TaskRef, 'kind' | 'host' | 'path'>): string => `${ref.kind}:${ref.host}/${ref.path.toLowerCase()}`;
+export const sourceKey = (ref: Pick<TaskRef, 'kind' | 'host' | 'path'>): string => `${ref.kind}:${ref.host}/${ref.path.toLowerCase()}`;
 
 export const taskUrl = (ref: TaskRef): string =>
   ref.kind === 'github' ? `https://github.com/${ref.path}/issues/${ref.number}` : `https://${ref.host}/${ref.path}/-/issues/${ref.number}`;
@@ -220,10 +220,12 @@ export interface ListArgs {
   projectId: string;
   assignedToMe: boolean;
   tracked: TaskRef[];
+  /** «Обновить»: перед выборкой вход проверяется заново. */
+  recheck: boolean;
 }
 
-export function validateListArgs(projectId: unknown, assignedToMe: unknown, tracked: unknown): ListArgs | null {
-  if (typeof projectId !== 'string' || typeof assignedToMe !== 'boolean') return null;
+export function validateListArgs(projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown): ListArgs | null {
+  if (typeof projectId !== 'string' || typeof assignedToMe !== 'boolean' || typeof recheck !== 'boolean') return null;
   if (!Array.isArray(tracked) || tracked.length > MAX_TRACKED) return null;
   const refs: TaskRef[] = [];
   for (const item of tracked) {
@@ -231,7 +233,7 @@ export function validateListArgs(projectId: unknown, assignedToMe: unknown, trac
     if (!ref) return null;
     refs.push(ref);
   }
-  return { projectId, assignedToMe, tracked: refs };
+  return { projectId, assignedToMe, tracked: refs, recheck };
 }
 
 /** Сессия с задачей стартует только в репозиториях проектов. */
@@ -242,6 +244,14 @@ export function sessionDirsAllowed(state: ProjectsState, cwd: unknown, addDirs: 
 }
 
 // ---------- настройки ----------
+
+/** Сохранение настроек из канала trackers:save: включённые трекеры другие, поэтому вход проверяется заново. */
+export function saveTrackerSettings(settings: unknown, store: { save(s: TrackerSettings): void }, trackers: { resetAuth(): void }): void {
+  const valid = validateSettings(settings);
+  if (!valid) throw new Error('Некорректные настройки трекеров');
+  store.save(valid);
+  trackers.resetAuth();
+}
 
 export class TrackerSettingsStore {
   constructor(private readonly file: string) {}
@@ -283,18 +293,19 @@ export function createCliRunner(cwd: string): CliRunner {
 
 // ---------- сервис ----------
 
-interface Source {
+export interface Source {
   kind: TrackerKind;
   host: string;
   path: string;
   repos: string[];
 }
 
-type Fetched = { values: unknown[] } | { error?: string; note?: string };
+export type Fetched = { values: unknown[] } | { error?: string; note?: string };
 
 const cliName = (kind: TrackerKind): 'gh' | 'glab' => (kind === 'github' ? 'gh' : 'glab');
 
-function interpret(kind: TrackerKind, res: CliResult): Fetched {
+/** goneNote: пометка для HTTP 410; null - 410 такой же отказ, как прочие. */
+export function interpret(kind: TrackerKind, res: CliResult, goneNote: string | null = 'задачи в репозитории отключены'): Fetched {
   const cli = cliName(kind);
   if (res.missing) return { error: `${cli} не установлен` };
   if (res.failure === 'timeout') return { error: 'трекер не ответил за 120 с' };
@@ -303,7 +314,7 @@ function interpret(kind: TrackerKind, res: CliResult): Fetched {
   // glab api выходит с кодом 0 и при HTTP-ошибке: отказ виден по stderr.
   const http = /HTTP (\d{3})/.exec(res.stderr);
   const httpStatus = http ? Number(http[1]) : 0;
-  if (httpStatus === 410) return { note: 'задачи в репозитории отключены' };
+  if (httpStatus === 410 && goneNote !== null) return { note: goneNote };
   if (res.code !== 0 || httpStatus >= 400) return { error: firstLine(res.stderr) || `${cli} завершился с кодом ${res.code}` };
   let parsed: unknown[];
   try {
@@ -339,7 +350,7 @@ function toTask(source: Source, raw: unknown): Task | null {
   };
 }
 
-const enc = encodeURIComponent;
+export const enc = encodeURIComponent;
 
 function hostDownReason(host: string, auth: AuthState): string {
   if (auth.state === 'logged-out') return `вход в ${host} не выполнен: glab auth login --hostname ${host}`;
@@ -347,8 +358,80 @@ function hostDownReason(host: string, auth: AuthState): string {
   return `вход в ${host} не подтверждён`;
 }
 
+export interface ResolvedSources {
+  project: Project | undefined;
+  enabled: TrackerSettings;
+  sources: Map<string, Source>;
+  blocked: Map<string, SourceResult>;
+  /** Отказы, не привязанные к репозиторию (glab не установлен или не залогинен). */
+  preErrors: SourceResult[];
+  gitlabUsers: Map<string, string>;
+  /** Логин gh; проверка входа общая с кэшем сервиса. */
+  loginOf: () => Promise<string | { error: string }>;
+  /**
+   * Выборка шла по прежнему результату проверки входа: после новой проверки отдаёт источники, перестроенные
+   * по ней, если хосты с входом, пользователи или состояние gh изменились, иначе null.
+   */
+  revise: () => Promise<ResolvedSources | null>;
+}
+
+/** Кэш проверки входа: промис в полёте общий, сброс отсекает его результат от кэша, прежний результат переживает сброс. */
+class AuthCache<T> {
+  private p?: Promise<T>;
+  private done = false;
+  private last?: T;
+
+  constructor(private readonly check: () => Promise<T>) {}
+
+  reset(): void {
+    this.p = undefined;
+    this.done = false;
+  }
+
+  /** `prior` - результат прежней проверки, пока текущая не завершилась; без него выборка ждёт `current`. */
+  get(): { current: Promise<T>; prior?: T } {
+    if (!this.p) {
+      const p: Promise<T> = this.check().then((v) => {
+        if (this.p === p) {
+          this.last = v;
+          this.done = true;
+        }
+        return v;
+      });
+      this.p = p;
+    }
+    return { current: this.p, prior: this.done ? undefined : this.last };
+  }
+}
+
+/** Что в результате проверки входа меняет выборку: хосты с входом и их пользователи, состояние остальных; текст ошибки не в счёт. */
+const authKey = (a: AuthState | { hosts: HostAuth[] }): string =>
+  'hosts' in a
+    ? JSON.stringify(a.hosts.map((h) => [h.host, h.auth.state, h.auth.state === 'logged-in' ? h.auth.user : '']))
+    : JSON.stringify([a.state, a.state === 'logged-in' ? a.user : '']);
+
+const sameAuth = (a: AuthState | { hosts: HostAuth[] }, b: AuthState | { hosts: HostAuth[] } | undefined): boolean => b !== undefined && authKey(a) === authKey(b);
+
 export class TrackersService {
+  private readonly gitlabCache = new AuthCache(() => this.gitlabAuth());
+  private readonly githubCache = new AuthCache(() => this.githubAuth());
+
   constructor(private readonly deps: TrackerDeps) {}
+
+  /** Следующая выборка проверит вход заново; проверка, начатая до сброса, в кэш не попадает. */
+  resetAuth(): void {
+    this.gitlabCache.reset();
+    this.githubCache.reset();
+  }
+
+  /** Проверка входа при старте приложения: один раз, результат ложится в кэш выборок (без опроса по таймеру). */
+  warmAuth(): Promise<void> {
+    const enabled = this.deps.settings();
+    const pending: Promise<unknown>[] = [];
+    if (enabled.gitlab) pending.push(this.gitlabCache.get().current);
+    if (enabled.github) pending.push(this.githubCache.get().current);
+    return Promise.all(pending).then(() => undefined);
+  }
 
   async status(): Promise<TrackersStatus> {
     const [github, gitlab] = await Promise.all([this.githubAuth(), this.gitlabAuth()]);
@@ -372,32 +455,44 @@ export class TrackersService {
     return hosts.length ? { hosts } : { state: 'logged-out' };
   }
 
-  async list(projectId: string, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> {
+  /** Источники проекта: remote его репозиториев, признанные трекерами; общий разбор для задач и MR. */
+  async resolveSources(projectId: string, recheck = false): Promise<ResolvedSources> {
+    if (recheck) this.resetAuth();
     const enabled = this.deps.settings();
-    const result: TasksResult = { tasks: [], sources: [], tracked: [], enabled };
     const project = this.deps.projects().projects.find((p) => p.id === projectId);
-    if (!project) return { ...result, error: 'Проект не найден' };
-    if (!enabled.github && !enabled.gitlab) return result;
+    const resolved: ResolvedSources = {
+      project,
+      enabled,
+      sources: new Map(),
+      blocked: new Map(),
+      preErrors: [],
+      gitlabUsers: new Map(),
+      loginOf: () => Promise.resolve({ error: 'gh не залогинен' }),
+      revise: () => Promise.resolve(null),
+    };
+    if (!project || (!enabled.github && !enabled.gitlab)) return resolved;
 
-    const gitlabUsers = new Map<string, string>();
+    const { gitlabUsers, sources, blocked } = resolved;
     // Хосты glab, на которых вход не подтверждён: remote такого хоста - источник с причиной, а не отсутствие remote.
     const gitlabDown = new Map<string, string>();
-    if (enabled.gitlab) {
-      const status = await this.gitlabAuth();
+    const gl = enabled.gitlab ? this.gitlabCache.get() : null;
+    // Вход и remote читаются параллельно: они не зависят друг от друга. После сброса кэша идём по прежнему результату входа.
+    const [status, remotes] = await Promise.all([
+      gl ? Promise.resolve(gl.prior ?? gl.current) : Promise.resolve(null),
+      Promise.all(project.repos.map(async (repo) => ({ repo, urls: await this.deps.remotes(repo) }))),
+    ]);
+    if (status) {
       if ('hosts' in status) {
         for (const { host, auth } of status.hosts) {
           if (auth.state === 'logged-in') gitlabUsers.set(host, auth.user);
           else gitlabDown.set(host, hostDownReason(host, auth));
         }
       } else {
-        result.sources.push({ kind: 'gitlab', host: '', path: '', error: status.state === 'missing' ? 'glab не установлен' : 'вход glab не выполнен' });
+        resolved.preErrors.push({ kind: 'gitlab', host: '', path: '', error: status.state === 'missing' ? 'glab не установлен' : 'вход glab не выполнен' });
       }
     }
 
-    const sources = new Map<string, Source>();
-    const blocked = new Map<string, SourceResult>();
     const knownHosts = new Set([...gitlabUsers.keys(), ...gitlabDown.keys()]);
-    const remotes = await Promise.all(project.repos.map(async (repo) => ({ repo, urls: await this.deps.remotes(repo) })));
     for (const { repo, urls } of remotes) {
       for (const url of urls) {
         const found = classifyRemote(url, knownHosts);
@@ -413,11 +508,40 @@ export class TrackersService {
       }
     }
 
-    let githubLogin: Promise<string | { error: string }> | undefined;
-    const loginOf = (): Promise<string | { error: string }> =>
-      (githubLogin ??= this.githubAuth().then((a) =>
+    let gh: { current: Promise<AuthState>; prior?: AuthState } | undefined;
+    resolved.loginOf = () => {
+      gh ??= this.githubCache.get();
+      return Promise.resolve(gh.prior ?? gh.current).then((a) =>
         a.state === 'logged-in' ? a.user : { error: a.state === 'logged-out' ? 'gh не залогинен' : a.state === 'missing' ? 'gh не установлен' : a.state === 'error' ? a.message : '' },
-      ));
+      );
+    };
+    resolved.revise = async () => {
+      const [glNext, ghNext] = await Promise.all([gl?.prior !== undefined ? gl.current : undefined, gh?.prior !== undefined ? gh.current : undefined]);
+      const changed = (gl?.prior !== undefined && !sameAuth(gl.prior, glNext)) || (gh?.prior !== undefined && !sameAuth(gh.prior, ghNext));
+      return changed ? this.resolveSources(projectId) : null;
+    };
+    return resolved;
+  }
+
+  /** Выборка по источникам; шла по прежнему результату входа и новая проверка его изменила - выполняется заново по ней. */
+  async fetchRevised<T>(projectId: string, recheck: boolean, run: (r: ResolvedSources) => Promise<T>, discard?: (out: T) => void): Promise<T> {
+    const first = await this.resolveSources(projectId, recheck);
+    const out = await run(first);
+    const next = await first.revise();
+    if (!next) return out;
+    discard?.(out);
+    return run(next);
+  }
+
+  async list(projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck = false): Promise<TasksResult> {
+    return this.fetchRevised(projectId, recheck, (r) => this.listFrom(r, assignedToMe, tracked));
+  }
+
+  private async listFrom(resolved: ResolvedSources, assignedToMe: boolean, tracked: TaskRef[]): Promise<TasksResult> {
+    const { project, enabled, sources, blocked, preErrors, gitlabUsers, loginOf } = resolved;
+    const result: TasksResult = { tasks: [], sources: [...preErrors], tracked: [], enabled };
+    if (!project) return { ...result, error: 'Проект не найден' };
+    if (!enabled.github && !enabled.gitlab) return result;
 
     const fetched = await Promise.all(
       [...sources.values()].map(async (source) => {

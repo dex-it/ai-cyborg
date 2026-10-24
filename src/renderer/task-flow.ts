@@ -1,13 +1,18 @@
 /** Правила работы панели задач без DOM: подставляемый вход и состояние, проверяемые в npm test. */
 
+import type { TaskRef } from '../main/trackers';
+
 interface TaskSessionLike {
   project: { id: string };
   task?: { key: string };
+  mr?: { key: string };
 }
+
+const sessionKey = (s: TaskSessionLike): string | undefined => s.task?.key ?? s.mr?.key;
 
 const compound = (projectId: string, taskKey: string): string => `${projectId}\u0000${taskKey}`;
 
-/** Сессии, начатые из задач, в разрезе проекта: общий remote у двух проектов не смешивает их сессии. */
+/** Сессии, начатые из задач и MR, в разрезе проекта: общий remote у двух проектов не смешивает их сессии. */
 export class TaskSessionRegistry<S extends TaskSessionLike> {
   private readonly map = new Map<string, S>();
 
@@ -16,13 +21,15 @@ export class TaskSessionRegistry<S extends TaskSessionLike> {
   }
 
   add(session: S): void {
-    if (session.task) this.map.set(compound(session.project.id, session.task.key), session);
+    const key = sessionKey(session);
+    if (key) this.map.set(compound(session.project.id, key), session);
   }
 
   /** Удаляет запись, только если она указывает на эту сессию. */
   remove(session: S): void {
-    if (!session.task) return;
-    const key = compound(session.project.id, session.task.key);
+    const sk = sessionKey(session);
+    if (!sk) return;
+    const key = compound(session.project.id, sk);
     if (this.map.get(key) === session) this.map.delete(key);
   }
 }
@@ -55,6 +62,41 @@ export function decideStart(hasOpenSession: boolean, taskRepos: string[], projec
 }
 
 /** Одиночный полёт обновления и токен ответа: без force второй запрос не начинается, ответ не текущего токена отбрасывается. */
+/** Что запустило выборку; кэш входа в трекерах сбрасывает только «Обновить» (FR-1006). */
+export type RefreshTrigger = 'open' | 'tab' | 'filter' | 'project' | 'reload';
+
+export const recheckFor = (trigger: RefreshTrigger): boolean => trigger === 'reload';
+
+/** Вызов канала списка задач: флаг новой проверки входа берётся из триггера. */
+export function fetchTasks<R>(
+  api: { listTasks(projectId: string, assigned: boolean, tracked: TaskRef[], recheck: boolean): Promise<R> },
+  projectId: string,
+  assigned: boolean,
+  tracked: TaskRef[],
+  trigger: RefreshTrigger,
+): Promise<R> {
+  return api.listTasks(projectId, assigned, tracked, recheckFor(trigger));
+}
+
+export interface Listenable {
+  addEventListener(type: string, listener: () => void): void;
+}
+
+type Refresh = (force: boolean, trigger: RefreshTrigger) => Promise<void>;
+
+/** Проводка шапки вида: смена фильтра и «Обновить» запускают выборку со своим триггером. */
+export function wireRefresh(controls: { filter: Listenable; reload: Listenable }, refresh: Refresh): void {
+  controls.filter.addEventListener('change', () => void refresh(false, 'filter'));
+  controls.reload.addEventListener('click', () => void refresh(false, 'reload'));
+}
+
+export type PanelEvent = 'open' | 'tab' | 'project';
+
+/** Выборка по событию панели: смена проекта идёт в обход флага загрузки; кэш входа ни одно из них не сбрасывает. */
+export function refreshOnPanelEvent(refresh: Refresh, event: PanelEvent): Promise<void> {
+  return refresh(event === 'project', event);
+}
+
 export class RefreshGate {
   private token = 0;
   private busy = false;
@@ -74,6 +116,11 @@ export class RefreshGate {
   cancel(): void {
     this.token++;
     this.busy = false;
+  }
+
+  /** true - выборка токена остаётся текущей: ни новой выборки, ни смены проекта после неё. */
+  isCurrent(token: number): boolean {
+    return token === this.token;
   }
 
   /** true - ответ актуален и загрузка закончена; false - ответ устарел. */

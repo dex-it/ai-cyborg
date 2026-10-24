@@ -5,6 +5,7 @@ import {
   classifyRemote,
   parseGlabStatus,
   parseRemote,
+  saveTrackerSettings,
   sessionDirsAllowed,
   splitJsonValues,
   taskPrompt,
@@ -116,12 +117,13 @@ describe('валидация аргументов каналов', () => {
     assert.equal(validateSettings({ github: true }), null);
   });
   it('validateListArgs: типы, лимит 200, плохой ref отклоняет вызов', () => {
-    assert.ok(validateListArgs('p', true, [ref]));
-    assert.equal(validateListArgs('p', 'true', []), null);
-    assert.equal(validateListArgs(1, true, []), null);
-    assert.equal(validateListArgs('p', true, Array(201).fill(ref)), null);
-    assert.ok(validateListArgs('p', true, Array(200).fill(ref)));
-    assert.equal(validateListArgs('p', true, [{ ...ref, path: '../x' }]), null);
+    assert.ok(validateListArgs('p', true, [ref], false));
+    assert.equal(validateListArgs('p', 'true', [], false), null);
+    for (const bad of [undefined, 'x', 1, null]) assert.equal(validateListArgs('p', true, [], bad), null);
+    assert.equal(validateListArgs(1, true, [], false), null);
+    assert.equal(validateListArgs('p', true, Array(201).fill(ref), false), null);
+    assert.ok(validateListArgs('p', true, Array(200).fill(ref), false));
+    assert.equal(validateListArgs('p', true, [{ ...ref, path: '../x' }], false), null);
   });
   it('sessionDirsAllowed: каталоги только из репозиториев проектов', () => {
     const state = { projects: [{ id: 'p', name: 'p', description: '', repos: ['/a', '/b'] }], lastProjectId: null };
@@ -433,5 +435,229 @@ describe('TrackersService.status', () => {
     });
     assert.deepEqual((await make(ok('u'), missing).status()).gitlab, { state: 'missing' });
     assert.deepEqual((await make(ok('u'), ok('', '')).status()).gitlab, { state: 'logged-out' });
+  });
+});
+
+describe('TrackersService: кэш проверки входа', () => {
+  const make = (glab: () => Promise<CliResult> | CliResult, gh: () => CliResult = () => ok('me\n')) => {
+    const calls: Call[] = [];
+    const svc = new TrackersService({
+      run: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === 'glab' && args[0] === 'auth') return glab();
+        if (cmd === 'gh' && args.includes('user')) return gh();
+        return ok('');
+      },
+      remotes: async () => ['git@github.com:o/a.git', 'git@git.corp:g/p.git'],
+      projects: () => ({ projects: [project], lastProjectId: null }),
+      settings: () => ({ github: true, gitlab: true }),
+    });
+    const auth = (cmd: string) => calls.filter((c) => c.cmd === cmd && (c.args[0] === 'auth' || c.args.includes('user'))).length;
+    return { svc, auth };
+  };
+
+  it('второе обновление не зовёт auth status и api user; «Обновить» (recheck) зовёт снова', async () => {
+    const { svc, auth } = make(() => ok('', GLAB_STATUS));
+    await svc.list('p1', true, []);
+    await svc.list('p1', true, []);
+    assert.deepEqual([auth('glab'), auth('gh')], [1, 1]);
+    await svc.list('p1', true, [], true);
+    assert.deepEqual([auth('glab'), auth('gh')], [2, 2]);
+  });
+
+  it('одновременные выборки при пустом кэше ждут одну проверку в полёте', async () => {
+    const { svc, auth } = make(() => ok('', GLAB_STATUS));
+    await Promise.all([svc.list('p1', true, []), svc.list('p1', true, []), svc.resolveSources('p1')]);
+    assert.deepEqual([auth('glab'), auth('gh')], [1, 1]);
+  });
+
+  it('проверка, начатая до сброса, в кэш не попадает', async () => {
+    let release!: (r: CliResult) => void;
+    let first = true;
+    const { svc, auth } = make(() => {
+      if (!first) return ok('', GLAB_STATUS);
+      first = false;
+      return new Promise<CliResult>((r) => (release = r));
+    });
+    const inFlight = svc.resolveSources('p1');
+    await new Promise((r) => setImmediate(r));
+    svc.resetAuth();
+    const fresh = await svc.resolveSources('p1');
+    assert.equal(fresh.gitlabUsers.get('git.corp'), 'mmx003');
+    release(ok('', 'git.corp\n  x git.corp: api call failed\n'));
+    assert.equal((await inFlight).gitlabUsers.size, 0);
+    await svc.resolveSources('p1');
+    assert.equal(auth('glab'), 2);
+  });
+
+  it('исход «не залогинен» переиспользуется до сброса', async () => {
+    let out = fail(4, 'x');
+    const { svc, auth } = make(() => ok('', ''), () => out);
+    const a = await svc.list('p1', true, []);
+    out = ok('me\n');
+    const b = await svc.list('p1', true, []);
+    assert.deepEqual(b.sources, a.sources);
+    assert.deepEqual([auth('glab'), auth('gh')], [1, 1]);
+    assert.match(a.sources.map((s) => s.error).join(), /gh не залогинен/);
+    svc.resetAuth();
+    await svc.list('p1', true, []);
+    assert.equal(auth('gh'), 2);
+  });
+
+  it('status() окна настроек проверяет заново при каждом открытии и кэш списков не трогает', async () => {
+    const { svc, auth } = make(() => ok('', GLAB_STATUS));
+    await svc.status();
+    await svc.status();
+    assert.deepEqual([auth('glab'), auth('gh')], [2, 2]);
+    await svc.list('p1', true, []);
+    assert.deepEqual([auth('glab'), auth('gh')], [3, 3]);
+    await svc.status();
+    await svc.list('p1', true, []);
+    assert.deepEqual([auth('glab'), auth('gh')], [4, 4]);
+  });
+});
+
+describe('TrackersService: проверка входа при старте и после сброса', () => {
+  const statusOf = (user: string) => `git.corp\n  ✓ Logged in to git.corp as ${user} (/x)\n`;
+  const tick = () => new Promise((r) => setImmediate(r));
+  const make = (glabAuth: () => Promise<CliResult> | CliResult, ghUser: () => Promise<CliResult> | CliResult = () => ok('me\n')) => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const svc = new TrackersService({
+      run: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === 'glab' && args[0] === 'auth') return glabAuth();
+        if (cmd === 'gh' && args.includes('user')) return ghUser();
+        return ok('[]');
+      },
+      remotes: async () => ['git@github.com:o/a.git', 'git@git.corp:g/p.git'],
+      projects: () => ({ projects: [project], lastProjectId: null }),
+      settings: () => ({ github: true, gitlab: true }),
+    });
+    const isAuth = (c: { cmd: string; args: string[] }) => (c.cmd === 'glab' && c.args[0] === 'auth') || (c.cmd === 'gh' && c.args.includes('user'));
+    const listCalls = () => calls.filter((c) => !isAuth(c));
+    return { svc, calls, listCalls, authCalls: () => calls.filter(isAuth).length };
+  };
+
+  it('warmAuth: проверка запущена до первого списка, открытие после неё не зовёт auth status и api user', async () => {
+    const { svc, calls, listCalls, authCalls } = make(() => ok('', statusOf('mmx')));
+    svc.warmAuth();
+    await tick();
+    assert.equal(authCalls(), 2);
+    assert.equal(listCalls().length, 0);
+    await svc.list('p1', true, []);
+    assert.equal(authCalls(), 2);
+    assert.ok(calls.findIndex((c) => !(c.cmd === 'glab' && c.args[0] === 'auth') && !c.args.includes('user')) >= 2);
+    await svc.list('p1', true, []);
+    assert.equal(authCalls(), 2);
+  });
+
+  it('warmAuth: выключенный трекер не проверяется; повтора по таймеру нет', async () => {
+    const calls: string[] = [];
+    const svc = new TrackersService({
+      run: async (cmd) => (calls.push(cmd), ok('')),
+      remotes: async () => [],
+      projects: () => ({ projects: [project], lastProjectId: null }),
+      settings: () => ({ github: false, gitlab: true }),
+    });
+    svc.warmAuth();
+    await tick();
+    assert.deepEqual(calls, ['glab']);
+  });
+
+  it('без прежнего результата выборка ждёт проверку', async () => {
+    let release!: (r: CliResult) => void;
+    const { svc, listCalls } = make(() => new Promise<CliResult>((r) => (release = r)));
+    const p = svc.list('p1', false, []);
+    await tick();
+    assert.equal(listCalls().length, 0);
+    release(ok('', statusOf('mmx')));
+    await p;
+    assert.ok(listCalls().length > 0);
+  });
+
+  it('«Обновить» с прежним результатом: список стартует до завершения новой auth status; результат не изменился - выборка одна', async () => {
+    let n = 0;
+    let release!: (r: CliResult) => void;
+    const { svc, listCalls } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : new Promise<CliResult>((r) => (release = r))));
+    await svc.list('p1', true, []);
+    const before = listCalls().length;
+    const p = svc.list('p1', true, [], true);
+    await tick();
+    assert.ok(listCalls().length > before, 'список не стартовал до новой проверки');
+    release(ok('', statusOf('mmx')));
+    await p;
+    assert.equal(listCalls().length - before, before);
+  });
+
+  it('новая проверка изменила пользователя GitLab: выборка перестроена по ней', async () => {
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf(++n === 1 ? 'old' : 'new')));
+    await svc.list('p1', true, []);
+    await svc.list('p1', true, [], true);
+    const assignees = listCalls().map((c) => c.args.at(-1)!).filter((u) => u.includes('assignee_username'));
+    assert.deepEqual(assignees.map((u) => u.match(/assignee_username=(\w+)/)![1]), ['old', 'old', 'new']);
+  });
+
+  it('новая проверка изменила логин gh: выборка перестроена по нему', async () => {
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf('mmx')), () => ok(++n === 1 ? 'a\n' : 'b\n'));
+    await svc.list('p1', true, []);
+    await svc.list('p1', true, [], true);
+    const assignees = listCalls().map((c) => c.args.at(-1)!).filter((u) => u.includes('repos/o/a/issues')).map((u) => u.match(/assignee=(\w+)/)![1]);
+    assert.deepEqual(assignees, ['a', 'a', 'b']);
+  });
+
+  it('«Обновить»: у хоста без входа меняется только текст ошибки - выборка не перестраивается', async () => {
+    const down = (what: string) => `gitlab.com\n  x gitlab.com: api call failed: ${what}\n`;
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf('mmx') + down(++n === 1 ? 'dial tcp: i/o timeout' : 'dial tcp: no route')));
+    await svc.list('p1', true, []);
+    const once = listCalls().length;
+    await svc.list('p1', true, [], true);
+    assert.equal(listCalls().length, once * 2);
+  });
+
+  it('«Обновить»: хост без входа сменил состояние с ошибки на «не вошёл» - выборка перестроена', async () => {
+    let n = 0;
+    const { svc, listCalls } = make(() => ok('', statusOf('mmx') + (++n === 1 ? 'gitlab.com\n  x gitlab.com: api call failed: dial tcp: i/o timeout\n' : 'gitlab.com\n  x No token provided\n')));
+    await svc.list('p1', true, []);
+    const once = listCalls().length;
+    await svc.list('p1', true, [], true);
+    assert.equal(listCalls().length, once * 3);
+  });
+
+  it('вход пропал после «Обновить»: тексты отказа прежние, источник заблокирован', async () => {
+    let n = 0;
+    const { svc } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : ok('', '')));
+    await svc.list('p1', false, []);
+    const r = await svc.list('p1', false, [], true);
+    assert.ok(r.sources.some((s) => s.error === 'вход glab не выполнен'));
+  });
+
+  it('сохранение настроек: следующая выборка идёт по прежнему результату параллельно с новой проверкой', async () => {
+    let n = 0;
+    let release!: (r: CliResult) => void;
+    const { svc, listCalls } = make(() => (++n === 1 ? ok('', statusOf('mmx')) : new Promise<CliResult>((r) => (release = r))));
+    await svc.list('p1', false, []);
+    const before = listCalls().length;
+    svc.resetAuth();
+    const p = svc.list('p1', false, []);
+    await tick();
+    assert.ok(listCalls().length > before);
+    release(ok('', statusOf('mmx')));
+    await p;
+  });
+});
+
+describe('saveTrackerSettings', () => {
+  it('сохранение настроек сбрасывает кэш входа; некорректные настройки не сохраняются и кэш не трогают', () => {
+    const events: string[] = [];
+    const store = { save: () => void events.push('save') };
+    const trackers = { resetAuth: () => void events.push('reset') };
+    saveTrackerSettings({ github: true, gitlab: false }, store, trackers);
+    assert.deepEqual(events, ['save', 'reset']);
+    events.length = 0;
+    assert.throws(() => saveTrackerSettings({ github: 'x' }, store, trackers), /Некорректные настройки/);
+    assert.deepEqual(events, []);
   });
 });
