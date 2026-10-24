@@ -648,7 +648,6 @@ dialog footer .spacer {
 
 .task-number {
   color: var(--accent);
-  font-weight: 600;
   background: none;
   border: none;
   padding: 0;
@@ -657,12 +656,17 @@ dialog footer .spacer {
   font-weight: 600;
 }
 
-.task-number:hover {
+.task-number:hover:not(:disabled) {
+  background: none;
   text-decoration: underline;
 }
 
 .task-row {
   cursor: pointer;
+}
+
+.task-row:focus-visible {
+  outline: 1px solid var(--accent);
 }
 
 .task-labels,

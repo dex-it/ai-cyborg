@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { TaskDetailsService, validateTaskDetailsArgs } from '../src/main/task-details';
-import { taskKey, type CliResult, type Task, type TaskRef, type TasksResult } from '../src/main/trackers';
+import { createTaskHandlers, TaskDetailsService, validateTaskDetailsArgs } from '../src/main/task-details';
+import { taskKey, taskUrl, type CliResult, type Task, type TaskRef, type TasksResult } from '../src/main/trackers';
 
 const ok = (stdout: string, stderr = ''): CliResult => ({ code: 0, stdout, stderr, missing: false });
 const gh: TaskRef = { kind: 'github', host: 'github.com', path: 'o/r', number: 5 };
@@ -79,5 +79,43 @@ describe('TaskDetailsService', () => {
     const b = make(() => ({ code: 0, stdout: '', stderr: 'HTTP 410', missing: false }));
     const s2 = b.svc.remember(result(gl)).selection!;
     assert.deepEqual(await b.svc.details(s2, gl), { error: 'HTTP 410' });
+  });
+});
+
+describe('createTaskHandlers', () => {
+  const deps = () => {
+    const opened: string[] = [];
+    const listed: unknown[][] = [];
+    const svc = new TaskDetailsService(async () => ok('{"body":"b"}'));
+    const handlers = createTaskHandlers(
+      { list: async (...a) => { listed.push(a); return result(gh); } },
+      svc,
+      async (url) => { opened.push(url); },
+    );
+    return { handlers, opened, listed };
+  };
+  it('tasks:list отдаёт результат с номером выборки, по которому details находит задачу', async () => {
+    const { handlers } = deps();
+    const res = await handlers.list('p', true, [], false);
+    assert.equal(typeof res.selection, 'number');
+    assert.deepEqual(await handlers.details(res.selection, gh), { description: 'b' });
+    assert.ok('error' in (await handlers.details(res.selection, gl)));
+  });
+  it('tasks:list и tasks:details отклоняют неверные аргументы до запроса', async () => {
+    const { handlers, listed } = deps();
+    assert.throws(() => handlers.list(1, true, [], false), /tasks:list/);
+    assert.equal(listed.length, 0);
+    assert.throws(() => handlers.details('1', gh), /tasks:details/);
+  });
+  it('tasks:open строит адрес из проверенной ссылки и отклоняет чужой хост', async () => {
+    const { handlers, opened } = deps();
+    assert.deepEqual(await handlers.open(gh), {});
+    assert.equal(opened[0], taskUrl(gh));
+    await assert.rejects(async () => handlers.open({ ...gh, host: 'evil.com' }), /tasks:open/);
+    assert.equal(opened.length, 1);
+  });
+  it('tasks:open: отказ браузера возвращается текстом', async () => {
+    const h = createTaskHandlers({ list: async () => result() }, new TaskDetailsService(async () => ok('')), async () => { throw new Error('нет браузера\nстек'); });
+    assert.deepEqual(await h.open(gh), { error: 'нет браузера' });
   });
 });

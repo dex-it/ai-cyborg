@@ -6,16 +6,12 @@ import { MrsService } from './mrs-service';
 import { validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
-import { TaskDetailsService, validateTaskDetailsArgs } from './task-details';
+import { createTaskHandlers, TaskDetailsService } from './task-details';
 import {
   createCliRunner,
-  firstLine,
-  taskUrl,
-  validateOpenArgs,
   sessionDirsAllowed,
   TrackerSettingsStore,
   TrackersService,
-  validateListArgs,
   saveProjectsState,
 } from './trackers';
 
@@ -33,7 +29,7 @@ const trackers = new TrackersService({
 });
 
 const mrs = new MrsService(trackers, runCli);
-const taskDetails = new TaskDetailsService(runCli);
+const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), (url) => shell.openExternal(url));
 
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff');
 
@@ -70,26 +66,11 @@ ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?
   return sessions.create(cwd, addDirs, prompt);
 });
 ipcMain.handle('trackers:status', () => trackers.status());
-ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) => {
-  const args = validateListArgs(projectId, assignedToMe, tracked, recheck);
-  if (!args) throw new Error('Некорректные аргументы tasks:list');
-  return trackers.list(args.projectId, args.assignedToMe, args.tracked, args.recheck).then((r) => taskDetails.remember(r));
-});
-ipcMain.handle('tasks:details', (_event, selection: unknown, ref: unknown) => {
-  const args = validateTaskDetailsArgs(selection, ref);
-  if (!args) throw new Error('Некорректные аргументы tasks:details');
-  return taskDetails.details(args.selection, args.ref);
-});
-ipcMain.handle('tasks:open', async (_event, arg: unknown) => {
-  const ref = validateOpenArgs(arg);
-  if (!ref) throw new Error('Некорректные аргументы tasks:open');
-  try {
-    await shell.openExternal(taskUrl(ref));
-    return {};
-  } catch (error) {
-    return { error: firstLine((error as Error).message) || 'браузер не открылся' };
-  }
-});
+ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) =>
+  taskHandlers.list(projectId, assignedToMe, tracked, recheck),
+);
+ipcMain.handle('tasks:details', (_event, selection: unknown, ref: unknown) => taskHandlers.details(selection, ref));
+ipcMain.handle('tasks:open', (_event, arg: unknown) => taskHandlers.open(arg));
 ipcMain.handle('mrs:list', (_event, projectId: unknown, filter: unknown, tracked: unknown, recheck: unknown) => {
   const args = validateMrListArgs(projectId, filter, tracked, recheck);
   if (!args) throw new Error('Некорректные аргументы mrs:list');

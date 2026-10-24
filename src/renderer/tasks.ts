@@ -58,6 +58,8 @@ export class TasksView implements PanelView {
   private readonly actions: TaskAction[];
   private readonly gate = new RefreshGate();
   private result: TasksResult | null = null;
+  /** Задачи последнего ответа: полоса меток не исчезает и не теряет цвета, пока идёт повторная загрузка. */
+  private labelSource: Task[] = [];
   private sortKey: SortKey = 'updated';
   private readonly labelsBar = el('div', 'tasks-labels');
   private labelFilter: LabelFilter = new Map();
@@ -103,6 +105,7 @@ export class TasksView implements PanelView {
   onProjectChanged(): void {
     this.gate.cancel();
     this.result = null;
+    this.labelSource = [];
     this.expanded.clear();
     this.openErrors.clear();
     this.descriptions.reset();
@@ -141,7 +144,7 @@ export class TasksView implements PanelView {
   }
 
   private renderLabelsBar(): void {
-    const labels = availableLabels(this.result?.tasks ?? [], this.labelFilter);
+    const labels = availableLabels(this.labelSource, this.labelFilter);
     if (!labels.size) {
       this.labelsBar.replaceChildren();
       this.labelsBar.hidden = true;
@@ -223,6 +226,7 @@ export class TasksView implements PanelView {
     }
     if (!this.gate.finish(token)) return;
     this.result = result;
+    this.labelSource = result.tasks;
     this.host.applyStatuses(result);
     this.render();
   }
@@ -300,7 +304,15 @@ export class TasksView implements PanelView {
   private row(task: Task): HTMLElement {
     const open = this.host.sessionOf(task.key);
     const row = el('div', 'task-row');
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-expanded', String(this.expanded.has(task.key)));
     row.addEventListener('click', () => this.toggle(task.key));
+    row.addEventListener('keydown', (event) => {
+      if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      this.toggle(task.key);
+    });
     const main = el('div', 'task-main');
     const title = el('div', 'task-title');
     const number = el('button', 'task-number', `#${task.number}`);

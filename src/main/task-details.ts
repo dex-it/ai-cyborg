@@ -1,4 +1,4 @@
-import { enc, firstLine, interpret, taskKey, validateRef, type CliRunner, type TaskRef, type TasksResult } from './trackers';
+import { enc, firstLine, interpret, taskKey, taskUrl, validateListArgs, validateOpenArgs, validateRef, type CliRunner, type TaskRef, type TasksResult } from './trackers';
 
 export type TaskDetailsResult = { description: string } | { error: string };
 
@@ -47,4 +47,34 @@ export class TaskDetailsService {
       return { error: firstLine((error as Error).message) };
     }
   }
+}
+
+/** Обработчики каналов задач без electron: проверка аргументов и выдача номера выборки живут здесь, main.ts только регистрирует их. */
+export function createTaskHandlers(
+  trackers: { list(projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck: boolean): Promise<TasksResult> },
+  details: TaskDetailsService,
+  openExternal: (url: string) => Promise<void>,
+) {
+  return {
+    list(projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown): Promise<TasksResult> {
+      const args = validateListArgs(projectId, assignedToMe, tracked, recheck);
+      if (!args) throw new Error('Некорректные аргументы tasks:list');
+      return trackers.list(args.projectId, args.assignedToMe, args.tracked, args.recheck).then((r) => details.remember(r));
+    },
+    details(selection: unknown, ref: unknown): Promise<TaskDetailsResult> {
+      const args = validateTaskDetailsArgs(selection, ref);
+      if (!args) throw new Error('Некорректные аргументы tasks:details');
+      return details.details(args.selection, args.ref);
+    },
+    async open(arg: unknown): Promise<{ error?: string }> {
+      const ref = validateOpenArgs(arg);
+      if (!ref) throw new Error('Некорректные аргументы tasks:open');
+      try {
+        await openExternal(taskUrl(ref));
+        return {};
+      } catch (error) {
+        return { error: firstLine((error as Error).message) || 'браузер не открылся' };
+      }
+    },
+  };
 }
