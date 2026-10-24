@@ -1,3 +1,5 @@
+import { readPref, writePref } from './prefs';
+
 export const DEFAULT_FONT_SIZE = 13;
 const MIN = 8;
 const MAX = 32;
@@ -15,17 +17,9 @@ export function parseFontSize(raw: string | null): number {
 }
 
 export function loadFontSize(): number {
-  try {
-    return parseFontSize(localStorage.getItem(KEY));
-  } catch {
-    return DEFAULT_FONT_SIZE;
-  }
+  return parseFontSize(readPref(KEY));
 }
 
 export function saveFontSize(size: number): void {
-  try {
-    localStorage.setItem(KEY, String(size));
-  } catch {
-    // Размер не сохранится до перезапуска, но в текущем окне применён.
-  }
+  writePref(KEY, String(size));
 }

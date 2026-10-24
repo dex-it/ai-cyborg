@@ -1,6 +1,7 @@
 import type { Mr, MrFilter, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Project } from '../main/projects';
 import { el } from './dom';
+import { readChoice, writePref } from './prefs';
 import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
@@ -63,8 +64,13 @@ export class MrsView implements PanelView {
     };
     fill(this.filter, MR_FILTER_OPTIONS);
     fill(this.sort, MR_SORT_OPTIONS);
+    this.filter.value = readChoice('cyborg.mrs.filter', MR_FILTER_OPTIONS.map((o) => o.key), MR_FILTER_OPTIONS[0].key);
+    this.filter.addEventListener('change', () => writePref('cyborg.mrs.filter', this.filter.value));
+    this.sortKey = readChoice('cyborg.mrs.sort', MR_SORT_OPTIONS.map((o) => o.key), this.sortKey);
+    this.sort.value = this.sortKey;
     this.sort.addEventListener('change', () => {
       this.sortKey = this.sort.value as SortKey;
+      writePref('cyborg.mrs.sort', this.sortKey);
       this.render();
     });
     wireRefresh({ filter: this.filter, reload: this.reload }, (force, trigger) => this.refresh(force, trigger));

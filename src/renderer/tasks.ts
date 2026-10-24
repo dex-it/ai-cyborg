@@ -1,6 +1,7 @@
 import type { Project } from '../main/projects';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { el } from './dom';
+import { readChoice, writePref } from './prefs';
 import type { PanelView } from './panel';
 import { fetchTasks, RefreshGate, wireRefresh, type RefreshTrigger } from './task-flow';
 import { emptyView, SORT_OPTIONS, sortTasks, sourceLabel, statusText, type SortKey } from './task-model';
@@ -50,14 +51,18 @@ export class TasksView implements PanelView {
       },
     ];
     this.assigned.type = 'checkbox';
-    this.assigned.checked = true;
+    this.assigned.checked = readChoice('cyborg.tasks.assigned', ['1', '0'], '1') === '1';
+    this.assigned.addEventListener('change', () => writePref('cyborg.tasks.assigned', this.assigned.checked ? '1' : '0'));
     for (const option of SORT_OPTIONS) {
       const node = el('option', '', option.label) as HTMLOptionElement;
       node.value = option.key;
       this.sort.append(node);
     }
+    this.sortKey = readChoice('cyborg.tasks.sort', SORT_OPTIONS.map((o) => o.key), this.sortKey);
+    this.sort.value = this.sortKey;
     this.sort.addEventListener('change', () => {
       this.sortKey = this.sort.value as SortKey;
+      writePref('cyborg.tasks.sort', this.sortKey);
       this.render();
     });
     wireRefresh({ filter: this.assigned, reload: this.reload }, (force, trigger) => this.refresh(force, trigger));

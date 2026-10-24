@@ -52,7 +52,6 @@ interface Session {
 const api = window.cyborg;
 const sidebar = byId('sidebar');
 const projectSelect = byId<HTMLSelectElement>('project-select');
-const projectEdit = byId<HTMLButtonElement>('project-edit');
 const treeEl = byId('tree');
 const treeTitle = byId('tree-title');
 const treeMeta = byId('tree-meta');
@@ -61,6 +60,8 @@ const newSessionButton = byId<HTMLButtonElement>('new-session');
 const sessionsEl = byId('sessions');
 const empty = byId('empty');
 const repoMenu = byId('repo-menu');
+const projectMenu = byId('project-menu');
+const projectMenuButton = byId<HTMLButtonElement>('project-menu-open');
 const taskSessions = new TaskSessionRegistry<Session>();
 const startGuard = new StartGuard();
 
@@ -88,7 +89,6 @@ function renderProjectSelect(): void {
   if (!state.projects.length) projectSelect.append(el('option', '', 'Нет проектов'));
   projectSelect.value = project?.id ?? '';
   projectSelect.disabled = !state.projects.length;
-  projectEdit.disabled = !project;
 }
 
 function selectProject(next: Project | null): void {
@@ -177,8 +177,33 @@ projectDelete.addEventListener('click', () => {
 });
 
 projectSelect.addEventListener('change', () => selectProject(state.projects.find((p) => p.id === projectSelect.value) ?? null));
-projectEdit.addEventListener('click', () => project && editProject(project));
-byId('project-new').addEventListener('click', () => editProject(null));
+
+function showProjectMenu(): void {
+  const item = (label: string, run: () => void): HTMLElement => {
+    const node = el('div', 'menu-item', label);
+    node.addEventListener('click', () => {
+      projectMenu.hidden = true;
+      run();
+    });
+    return node;
+  };
+  const current = project;
+  projectMenu.replaceChildren(
+    ...(current ? [item('Свойства проекта', () => editProject(current))] : []),
+    item('Новый проект', () => editProject(null)),
+    item('Настройки', () => settings.open()),
+  );
+  const rect = projectMenuButton.getBoundingClientRect();
+  projectMenu.style.top = `${rect.bottom + 2}px`;
+  projectMenu.style.left = `${rect.left}px`;
+  projectMenu.hidden = false;
+}
+
+projectMenuButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  if (projectMenu.hidden) showProjectMenu();
+  else projectMenu.hidden = true;
+});
 
 // ---------- сессии ----------
 
@@ -626,7 +651,6 @@ function trackedRefs(): TaskRef[] {
 const settings = initSettings(() => {
   if (panel.isOpen) void panel.refreshActive(true);
 });
-byId('settings-open').addEventListener('click', () => settings.open());
 
 const panel = new TrackerPanel({
   tasks: {
@@ -662,11 +686,12 @@ newSessionButton.addEventListener('click', (event) => {
 });
 document.addEventListener('click', (event) => {
   if (!repoMenu.contains(event.target as Node)) repoMenu.hidden = true;
+  if (!projectMenu.contains(event.target as Node)) projectMenu.hidden = true;
 });
 window.addEventListener(
   'keydown',
   (event) => {
-    if (event.key === 'Escape') repoMenu.hidden = true;
+    if (event.key === 'Escape') repoMenu.hidden = projectMenu.hidden = true;
     if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key === '0') {
       event.preventDefault();
       event.stopPropagation();
@@ -689,8 +714,15 @@ function setFontSize(size: number): void {
   saveFontSize(size);
   for (const s of sessions) s.term.options.fontSize = size;
   applyMonacoFontSize(size);
+  zoomTree();
   if (active) fitSession(active);
 }
+
+// zoom, а не font-size: высоты строк и бейджи дерева заданы в px и масштабируются вместе с текстом.
+function zoomTree(): void {
+  treeEl.style.zoom = String(fontSize / DEFAULT_FONT_SIZE);
+}
+zoomTree();
 
 // В capture до xterm: иначе Ctrl+колесо прокрутит историю терминала.
 window.addEventListener(

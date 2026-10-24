@@ -1,4 +1,4 @@
-import { byId, el } from './dom';
+import { byId } from './dom';
 import { MrsView, type MrsViewHost } from './mrs';
 import { refreshOnPanelEvent, type RefreshTrigger } from './task-flow';
 import { TasksView, type TasksViewHost } from './tasks';
@@ -13,10 +13,7 @@ export interface PanelView {
 
 type Tab = 'tasks' | 'mrs';
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'tasks', label: 'Задачи' },
-  { id: 'mrs', label: 'MR/PR' },
-];
+const TOGGLES: Record<Tab, string> = { tasks: 'tasks-toggle', mrs: 'mrs-toggle' };
 
 export interface TrackerPanelHosts {
   tasks: TasksViewHost;
@@ -24,12 +21,10 @@ export interface TrackerPanelHosts {
   onClosed(): void;
 }
 
-/** Панель трекеров: кнопка «Задачи» открывает её, вкладки переключают виды. Выбранная вкладка живёт до перезапуска. */
+/** Панель трекеров: кнопки «Задачи» и «MR/PR» полосы сессий открывают каждая свой вид, повторный клик закрывает. Выбранный вид живёт до перезапуска. */
 export class TrackerPanel {
   private readonly root = byId('tasks-panel');
-  private readonly toggle = byId<HTMLButtonElement>('tasks-toggle');
   private readonly sessionsEl = byId('sessions');
-  private readonly nav = el('nav', 'panel-tabs');
   private readonly views: Record<Tab, PanelView>;
   private readonly buttons = new Map<Tab, HTMLButtonElement>();
   private tab: Tab = 'tasks';
@@ -37,14 +32,12 @@ export class TrackerPanel {
 
   constructor(private readonly hosts: TrackerPanelHosts) {
     this.views = { tasks: new TasksView(hosts.tasks), mrs: new MrsView(hosts.mrs) };
-    for (const { id, label } of TABS) {
-      const button = el('button', 'panel-tab', label) as HTMLButtonElement;
-      button.addEventListener('click', () => this.select(id));
+    for (const [id, buttonId] of Object.entries(TOGGLES) as [Tab, string][]) {
+      const button = byId<HTMLButtonElement>(buttonId);
+      button.addEventListener('click', () => this.press(id));
       this.buttons.set(id, button);
-      this.nav.append(button);
     }
     this.mount();
-    this.toggle.addEventListener('click', () => (this.opened ? this.close() : this.open()));
   }
 
   get isOpen(): boolean {
@@ -56,12 +49,26 @@ export class TrackerPanel {
   }
 
   private mount(): void {
-    for (const [id, button] of this.buttons) button.classList.toggle('active', id === this.tab);
-    this.root.replaceChildren(this.nav, this.view.element);
+    this.markButtons();
+    this.root.replaceChildren(this.view.element);
+  }
+
+  private markButtons(): void {
+    for (const [id, button] of this.buttons) button.classList.toggle('active', this.opened && id === this.tab);
+  }
+
+  private press(tab: Tab): void {
+    if (!this.opened) {
+      if (tab !== this.tab) {
+        this.tab = tab;
+        this.mount();
+      }
+      this.open();
+    } else if (tab === this.tab) this.close();
+    else this.select(tab);
   }
 
   private select(tab: Tab): void {
-    if (tab === this.tab) return;
     this.tab = tab;
     this.mount();
     void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'tab');
@@ -71,7 +78,7 @@ export class TrackerPanel {
     this.opened = true;
     this.root.hidden = false;
     this.sessionsEl.classList.add('tasks-open');
-    this.toggle.classList.add('active');
+    this.markButtons();
     void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'open');
   }
 
@@ -80,7 +87,7 @@ export class TrackerPanel {
     this.opened = false;
     this.root.hidden = true;
     this.sessionsEl.classList.remove('tasks-open');
-    this.toggle.classList.remove('active');
+    this.markButtons();
     this.hosts.onClosed();
   }
 
