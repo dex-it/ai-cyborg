@@ -190,7 +190,7 @@ function treeRoots(s: Session): TreeRoot[] {
     hint: s.root === s.repo ? 'репозиторий сессии' : `worktree репозитория ${s.repo}`,
   };
   const others = s.project.repos
-    .filter((r) => r !== s.repo)
+    .filter((r) => r !== s.root && (r !== s.repo || s.project.repos.includes(s.root)))
     .map((r) => ({ path: r, label: basename(r), hint: 'другой репозиторий проекта, доступен сессии через --add-dir' }));
   return [own, ...others];
 }
