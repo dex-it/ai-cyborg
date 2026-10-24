@@ -31,3 +31,32 @@ export function droppedPaths(
 export function acceptsDrop(types: readonly string[]): boolean {
   return types.includes('Files') || types.includes(TREE_PATH_MIME);
 }
+
+/** Строка дерева становится источником перетаскивания: dragstart отдаёт путь в своём типе и разрешает только копирование. */
+export function makeDraggable(row: HTMLElement, path: string): void {
+  row.draggable = true;
+  row.addEventListener('dragstart', (event) => {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData(TREE_PATH_MIME, path);
+    event.dataTransfer.effectAllowed = 'copy';
+  });
+}
+
+export interface DropTarget {
+  exited: boolean;
+  term: { paste(text: string): void };
+}
+
+/** Решение броска: завершённой сессии и пустому тексту - ни вставки, ни показа терминала; иначе один paste и showTerminal. */
+export function dropIntoSession(
+  session: DropTarget,
+  data: Pick<DataTransfer, 'types' | 'getData' | 'files'>,
+  pathOf: (file: File) => string,
+  showTerminal: () => void,
+): void {
+  if (session.exited) return;
+  const text = pastePaths(droppedPaths(data, pathOf));
+  if (!text) return;
+  session.term.paste(text);
+  showTerminal();
+}

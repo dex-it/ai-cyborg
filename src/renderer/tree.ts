@@ -1,5 +1,5 @@
 import { basename, el, parentRel } from './dom';
-import { TREE_PATH_MIME } from './drop-path';
+import { makeDraggable } from './drop-path';
 
 export interface TreeRoot {
   path: string;
@@ -20,15 +20,6 @@ interface Entry {
 }
 
 const api = window.cyborg;
-
-function makeDraggable(row: HTMLElement, path: string): void {
-  row.draggable = true;
-  row.addEventListener('dragstart', (event) => {
-    if (!event.dataTransfer) return;
-    event.dataTransfer.setData(TREE_PATH_MIME, path);
-    event.dataTransfer.effectAllowed = 'copy';
-  });
-}
 
 function statusLabel(code: string): string {
   if (code === '?') return 'U';

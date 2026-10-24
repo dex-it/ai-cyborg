@@ -4,7 +4,7 @@ import type { Project, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
-import { acceptsDrop, droppedPaths, pastePaths } from './drop-path';
+import { acceptsDrop, dropIntoSession } from './drop-path';
 import { initSettings } from './settings';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
@@ -427,11 +427,7 @@ function bindPathDrop(s: Session, target: HTMLElement): void {
   target.addEventListener('drop', (event) => {
     if (!event.dataTransfer || !acceptsDrop(event.dataTransfer.types)) return;
     event.preventDefault();
-    if (s.exited) return;
-    const text = pastePaths(droppedPaths(event.dataTransfer, api.pathForFile));
-    if (!text) return;
-    s.term.paste(text);
-    showInner(s, null);
+    dropIntoSession(s, event.dataTransfer, api.pathForFile, () => showInner(s, null));
   });
 }
 

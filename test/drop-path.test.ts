@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { acceptsDrop, droppedPaths, pastePaths, shellQuote, TREE_PATH_MIME } from '../src/renderer/drop-path';
+import { acceptsDrop, droppedPaths, dropIntoSession, makeDraggable, pastePaths, shellQuote, TREE_PATH_MIME } from '../src/renderer/drop-path';
 
 const files = (...names: string[]) => names.map((name) => ({ name }) as File) as unknown as FileList;
 
@@ -65,5 +65,46 @@ describe('acceptsDrop', () => {
     assert.equal(acceptsDrop(['Files']), true);
     assert.equal(acceptsDrop([TREE_PATH_MIME]), true);
     assert.equal(acceptsDrop(['text/plain']), false);
+  });
+});
+
+describe('dropIntoSession', () => {
+  const treeData = (path: string) => ({ types: [TREE_PATH_MIME], getData: () => path, files: files() });
+  const setup = (exited: boolean) => {
+    const pasted: string[] = [];
+    let shown = 0;
+    return { pasted, shown: () => shown, session: { exited, term: { paste: (t: string) => void pasted.push(t) } }, show: () => void shown++ };
+  };
+  it('непустой бросок: один paste с текстом pastePaths и один показ терминала', () => {
+    const t = setup(false);
+    dropIntoSession(t.session, treeData('/a b'), () => '', t.show);
+    assert.deepEqual(t.pasted, ["'/a b' "]);
+    assert.equal(t.shown(), 1);
+  });
+  it('завершённая сессия: ни вставки, ни показа', () => {
+    const t = setup(true);
+    dropIntoSession(t.session, treeData('/a'), () => '', t.show);
+    assert.deepEqual(t.pasted, []);
+    assert.equal(t.shown(), 0);
+  });
+  it('файлы ОС без пути: ни вставки, ни показа', () => {
+    const t = setup(false);
+    dropIntoSession(t.session, { types: ['Files'], getData: () => '', files: files('x') }, () => '', t.show);
+    assert.deepEqual(t.pasted, []);
+    assert.equal(t.shown(), 0);
+  });
+});
+
+describe('makeDraggable', () => {
+  it('draggable=true; dragstart кладёт путь в своём типе, effectAllowed copy, без text/plain', () => {
+    let listener: ((e: { dataTransfer: unknown }) => void) | undefined;
+    const row = { draggable: false, addEventListener: (type: string, l: typeof listener) => void (type === 'dragstart' && (listener = l)) };
+    makeDraggable(row as unknown as HTMLElement, '/x/y');
+    assert.equal(row.draggable, true);
+    const set: Record<string, string> = {};
+    const dt = { effectAllowed: 'none', setData: (t: string, v: string) => void (set[t] = v) };
+    listener!({ dataTransfer: dt });
+    assert.deepEqual(set, { [TREE_PATH_MIME]: '/x/y' });
+    assert.equal(dt.effectAllowed, 'copy');
   });
 });
