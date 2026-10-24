@@ -4,7 +4,7 @@ import { listDir, readTextFile } from './files';
 import { gitBranch, gitRemotes, gitRoot, gitStatus } from './git';
 import { MrsService } from './mrs-service';
 import { validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
-import { ProjectStore, type ProjectsState } from './projects';
+import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
 import {
   createCliRunner,
@@ -12,22 +12,20 @@ import {
   TrackerSettingsStore,
   TrackersService,
   validateListArgs,
-  saveTrackerSettings,
+  saveProjectsState,
 } from './trackers';
 
 let win: BrowserWindow | null = null;
 const sessions = new SessionManager(app.getPath('userData'), (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
-const projects = new ProjectStore(path.join(app.getPath('userData'), 'projects.json'));
-
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
+const projects = new ProjectStore(path.join(app.getPath('userData'), 'projects.json'), () => trackerSettings.load());
 const runCli = createCliRunner(app.getPath('userData'));
 const trackers = new TrackersService({
   run: runCli,
   remotes: gitRemotes,
   projects: () => projects.load(),
-  settings: () => trackerSettings.load(),
 });
 
 const mrs = new MrsService(trackers, runCli);
@@ -58,7 +56,7 @@ ipcMain.handle('dialog:pickDir', async (_event, defaultPath?: string) => {
   return result.canceled ? null : result.filePaths[0];
 });
 ipcMain.handle('projects:load', () => projects.load());
-ipcMain.handle('projects:save', (_event, state: ProjectsState) => projects.save(state));
+ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
 ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?: unknown) => {
   if (start === undefined) return sessions.create(cwd, addDirs);
   const prompt = validateSessionStart(start);
@@ -66,8 +64,6 @@ ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?
   if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
   return sessions.create(cwd, addDirs, prompt);
 });
-ipcMain.handle('trackers:load', () => trackerSettings.load());
-ipcMain.handle('trackers:save', (_event, settings: unknown) => saveTrackerSettings(settings, trackerSettings, trackers));
 ipcMain.handle('trackers:status', () => trackers.status());
 ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) => {
   const args = validateListArgs(projectId, assignedToMe, tracked, recheck);

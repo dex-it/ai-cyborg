@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import type { Task, TasksResult, TrackersStatus } from '../src/main/trackers';
 import type { Mr, MrListResult } from '../src/main/mrs';
 import { applyMrDetails, mrActionLabel, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
-import { authLines, sortByKey, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
+import { authLines, hasSources, sortByKey, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
 
 const task = (n: number, over: Partial<Task> = {}): Task => ({
   kind: 'github', host: 'github.com', path: 'o/r', number: n, key: `github:github.com/o/r#${n}`, title: `T${n}`, state: 'open',
@@ -154,5 +154,15 @@ describe('MR: пустые состояния', () => {
   });
   it('glab-ошибка без path не заменяет «нет remote»', () => {
     assert.equal(mrEmptyView(result({ sources: [{ kind: 'gitlab', host: '', path: '', error: 'x' }] })), 'no-remotes');
+  });
+});
+
+describe('hasSources', () => {
+  const p = (github: boolean, gitlab: boolean) => ({ trackers: { github, gitlab } });
+  it('кнопки панелей только при включённом источнике выбранного проекта', () => {
+    assert.equal(hasSources(null), false);
+    assert.equal(hasSources(p(false, false)), false);
+    assert.equal(hasSources(p(true, false)), true);
+    assert.equal(hasSources(p(false, true)), true);
   });
 });

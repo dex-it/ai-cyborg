@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { Project } from '../src/main/projects';
+import type { Project, ProjectsState } from '../src/main/projects';
 import {
   classifyRemote,
   parseGlabStatus,
   parseRemote,
-  saveTrackerSettings,
+  saveProjectsState,
   sessionDirsAllowed,
   splitJsonValues,
   taskPrompt,
   TrackersService,
   validateListArgs,
+  validateProjectsState,
   validateRef,
   validateSettings,
   type CliResult,
@@ -126,7 +127,7 @@ describe('валидация аргументов каналов', () => {
     assert.equal(validateListArgs('p', true, [{ ...ref, path: '../x' }], false), null);
   });
   it('sessionDirsAllowed: каталоги только из репозиториев проектов', () => {
-    const state = { projects: [{ id: 'p', name: 'p', description: '', repos: ['/a', '/b'] }], lastProjectId: null };
+    const state = { projects: [{ id: 'p', name: 'p', description: '', repos: ['/a', '/b'], trackers: BOTH }], lastProjectId: null };
     assert.equal(sessionDirsAllowed(state, '/a', ['/b']), true);
     assert.equal(sessionDirsAllowed(state, '/etc', []), false);
     assert.equal(sessionDirsAllowed(state, '/a', ['/etc']), false);
@@ -155,8 +156,9 @@ describe('начальный промпт', () => {
 
 const repoA = '/w/a';
 const repoB = '/w/b';
-const project: Project = { id: 'p1', name: 'P', description: '', repos: [repoA, repoB] };
-const other: Project = { id: 'p2', name: 'Q', description: '', repos: ['/w/other'] };
+const BOTH: TrackerSettings = { github: true, gitlab: true };
+const project: Project = { id: 'p1', name: 'P', description: '', repos: [repoA, repoB], trackers: BOTH };
+const other: Project = { id: 'p2', name: 'Q', description: '', repos: ['/w/other'], trackers: BOTH };
 
 interface Call {
   cmd: string;
@@ -166,6 +168,7 @@ interface Call {
 function service(opts: {
   remotes: Record<string, string[]>;
   settings?: TrackerSettings;
+  otherSettings?: TrackerSettings;
   respond: (call: Call) => CliResult | undefined;
 }) {
   const calls: Call[] = [];
@@ -178,8 +181,7 @@ function service(opts: {
       return opts.respond(call) ?? ok('');
     },
     remotes: async (repo) => opts.remotes[repo] ?? [],
-    projects: () => ({ projects: [project, other], lastProjectId: null }),
-    settings: () => opts.settings ?? { github: true, gitlab: true },
+    projects: () => ({ projects: [{ ...project, trackers: opts.settings ?? BOTH }, { ...other, trackers: opts.otherSettings ?? BOTH }], lastProjectId: null }),
   });
   return { svc, calls };
 }
@@ -247,8 +249,7 @@ describe('TrackersService.list', () => {
     const svc2 = new TrackersService({
       run: async (cmd) => (cmd === 'glab' ? ok('', down) : ok('me\n')),
       remotes: async () => ['git@git.corp:g/p.git'],
-      projects: () => ({ projects: [project], lastProjectId: null }),
-      settings: () => ({ github: true, gitlab: true }),
+      projects: () => ({ projects: [{ ...project, trackers: { github: true, gitlab: true } }], lastProjectId: null }),
     });
     const r = await svc2.list('p1', false, []);
     const src = r.sources.filter((s) => s.path);
@@ -298,8 +299,7 @@ describe('TrackersService.list', () => {
         return fail(4, 'To get started with GitHub CLI, please run: gh auth login');
       },
       remotes: async () => ['git@github.com:o/a.git'],
-      projects: () => ({ projects: [project], lastProjectId: null }),
-      settings: () => ({ github: true, gitlab: false }),
+      projects: () => ({ projects: [{ ...project, trackers: { github: true, gitlab: false } }], lastProjectId: null }),
     });
     const r = await svc.list('p1', true, []);
     assert.equal(r.sources[0].error, 'gh не залогинен');
@@ -311,6 +311,16 @@ describe('TrackersService.list', () => {
     const r = await svc.list('p1', false, []);
     assert.equal(calls.length, 0);
     assert.deepEqual(r.enabled, { github: false, gitlab: false });
+  });
+
+  it('у второго проекта другие источники: каждый опрашивается по своим', async () => {
+    const remotes = { [repoA]: ['git@github.com:o/a.git'], '/w/other': ['git@github.com:x/other.git'] };
+    const one = service({ remotes, settings: { github: true, gitlab: false }, otherSettings: { github: false, gitlab: true }, respond: () => ok('') });
+    assert.deepEqual((await one.svc.list('p1', false, [])).enabled, { github: true, gitlab: false });
+    assert.ok(one.calls.some((c) => c.cmd === 'gh'));
+    const two = service({ remotes, settings: { github: true, gitlab: false }, otherSettings: { github: false, gitlab: true }, respond: () => ok('') });
+    assert.deepEqual((await two.svc.list('p2', false, [])).enabled, { github: false, gitlab: true });
+    assert.equal(two.calls.filter((c) => c.cmd === 'gh').length, 0);
   });
 
   it('включён только GitLab - remote GitHub не опрашиваются', async () => {
@@ -412,7 +422,6 @@ describe('TrackersService.status', () => {
       run: async (cmd) => (cmd === 'gh' ? gh : glab),
       remotes: async () => [],
       projects: () => ({ projects: [], lastProjectId: null }),
-      settings: () => ({ github: false, gitlab: false }),
     });
   const missing: CliResult = { code: null, stdout: '', stderr: '', missing: true };
 
@@ -449,8 +458,7 @@ describe('TrackersService: кэш проверки входа', () => {
         return ok('');
       },
       remotes: async () => ['git@github.com:o/a.git', 'git@git.corp:g/p.git'],
-      projects: () => ({ projects: [project], lastProjectId: null }),
-      settings: () => ({ github: true, gitlab: true }),
+      projects: () => ({ projects: [{ ...project, trackers: { github: true, gitlab: true } }], lastProjectId: null }),
     });
     const auth = (cmd: string) => calls.filter((c) => c.cmd === cmd && (c.args[0] === 'auth' || c.args.includes('user'))).length;
     return { svc, auth };
@@ -530,8 +538,7 @@ describe('TrackersService: проверка входа при старте и п
         return ok('[]');
       },
       remotes: async () => ['git@github.com:o/a.git', 'git@git.corp:g/p.git'],
-      projects: () => ({ projects: [project], lastProjectId: null }),
-      settings: () => ({ github: true, gitlab: true }),
+      projects: () => ({ projects: [{ ...project, trackers: { github: true, gitlab: true } }], lastProjectId: null }),
     });
     const isAuth = (c: { cmd: string; args: string[] }) => (c.cmd === 'glab' && c.args[0] === 'auth') || (c.cmd === 'gh' && c.args.includes('user'));
     const listCalls = () => calls.filter((c) => !isAuth(c));
@@ -556,12 +563,41 @@ describe('TrackersService: проверка входа при старте и п
     const svc = new TrackersService({
       run: async (cmd) => (calls.push(cmd), ok('')),
       remotes: async () => [],
-      projects: () => ({ projects: [project], lastProjectId: null }),
-      settings: () => ({ github: false, gitlab: true }),
+      projects: () => ({ projects: [{ ...project, trackers: { github: false, gitlab: true } }], lastProjectId: null }),
     });
     svc.warmAuth();
     await tick();
     assert.deepEqual(calls, ['glab']);
+  });
+
+  it('warmAuth: проверяется источник, включённый хотя бы у одного проекта', async () => {
+    const calls: string[] = [];
+    const svc = new TrackersService({
+      run: async (cmd) => (calls.push(cmd), ok('')),
+      remotes: async () => [],
+      projects: () => ({
+        projects: [
+          { ...project, trackers: { github: true, gitlab: false } },
+          { ...other, trackers: { github: false, gitlab: true } },
+        ],
+        lastProjectId: null,
+      }),
+    });
+    svc.warmAuth();
+    await tick();
+    assert.deepEqual(calls.sort(), ['gh', 'glab']);
+  });
+
+  it('warmAuth: ни у одного проекта нет включённых источников - процессов нет', async () => {
+    const calls: string[] = [];
+    const svc = new TrackersService({
+      run: async (cmd) => (calls.push(cmd), ok('')),
+      remotes: async () => [],
+      projects: () => ({ projects: [{ ...project, trackers: { github: false, gitlab: false } }], lastProjectId: null }),
+    });
+    svc.warmAuth();
+    await tick();
+    assert.deepEqual(calls, []);
   });
 
   it('без прежнего результата выборка ждёт проверку', async () => {
@@ -649,15 +685,59 @@ describe('TrackersService: проверка входа при старте и п
   });
 });
 
-describe('saveTrackerSettings', () => {
-  it('сохранение настроек сбрасывает кэш входа; некорректные настройки не сохраняются и кэш не трогают', () => {
+describe('saveProjectsState', () => {
+  const stateOf = (...flags: (TrackerSettings | null)[]) => ({
+    projects: flags.map((trackers, i) => ({ id: `p${i}`, name: 'n', description: '', repos: [], trackers })),
+    lastProjectId: 'p0',
+  });
+  const run = (prev: unknown, next: unknown) => {
     const events: string[] = [];
-    const store = { save: () => void events.push('save') };
+    const store = { load: () => prev as ProjectsState, save: () => void events.push('save') };
     const trackers = { resetAuth: () => void events.push('reset') };
-    saveTrackerSettings({ github: true, gitlab: false }, store, trackers);
-    assert.deepEqual(events, ['save', 'reset']);
-    events.length = 0;
-    assert.throws(() => saveTrackerSettings({ github: 'x' }, store, trackers), /Некорректные настройки/);
-    assert.deepEqual(events, []);
+    return { events, call: () => saveProjectsState(next, store, trackers) };
+  };
+  const off = { github: false, gitlab: false };
+  const gh = { github: true, gitlab: false };
+
+  it('источники одного проекта изменились - сохранение и сброс кэша входа', () => {
+    const t = run(stateOf(off, gh), stateOf(off, { github: false, gitlab: true }));
+    t.call();
+    assert.deepEqual(t.events, ['save', 'reset']);
+  });
+  it('смена выбранного проекта, имени и те же источники - кэш входа не сбрасывается', () => {
+    const prev = stateOf(gh, off);
+    const next = { ...stateOf(gh, off), lastProjectId: 'p1' };
+    next.projects[0].name = 'другое';
+    const t = run(prev, next);
+    t.call();
+    assert.deepEqual(t.events, ['save']);
+  });
+  it('новый проект: с выключенными источниками кэш не сбрасывается, с включённым - сбрасывается; удаление включённого - сбрасывается', () => {
+    const a = run(stateOf(gh), stateOf(gh, off));
+    a.call();
+    assert.deepEqual(a.events, ['save']);
+    const b = run(stateOf(gh), stateOf(gh, gh));
+    b.call();
+    assert.deepEqual(b.events, ['save', 'reset']);
+    const c = run(stateOf(gh, off), stateOf(off));
+    c.call();
+    assert.deepEqual(c.events, ['save', 'reset']);
+    const d = run(stateOf(off, off), stateOf(off));
+    d.call();
+    assert.deepEqual(d.events, ['save']);
+  });
+  it('поле источников не из двух boolean - ошибка, файл не пишется, кэш не сбрасывается', () => {
+    for (const bad of [{ github: 'true', gitlab: false }, { github: true }, null, 'x', undefined]) {
+      const t = run(stateOf(off), stateOf(bad as unknown as TrackerSettings));
+      assert.throws(t.call, /Некорректные источники/);
+      assert.deepEqual(t.events, []);
+    }
+    const t = run(stateOf(off), { projects: [null], lastProjectId: null });
+    assert.throws(t.call, /Некорректные источники/);
+    assert.deepEqual(t.events, []);
+  });
+  it('лишние ключи поля источников в файл не попадают', () => {
+    const valid = validateProjectsState(stateOf({ github: true, gitlab: false, token: 'x' } as unknown as TrackerSettings));
+    assert.deepEqual(valid?.projects[0].trackers, gh);
   });
 });

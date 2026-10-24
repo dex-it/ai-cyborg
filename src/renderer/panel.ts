@@ -91,6 +91,12 @@ export class TrackerPanel {
     this.hosts.onClosed();
   }
 
+  /** Кнопки есть, только когда у выбранного проекта включён источник; без него открытая панель закрывается. */
+  setAvailable(available: boolean): void {
+    for (const button of this.buttons.values()) button.hidden = !available;
+    if (!available) this.close();
+  }
+
   onProjectChanged(): void {
     for (const view of Object.values(this.views)) view.onProjectChanged();
     // Смена проекта - новый вопрос: идёт в обход флага загрузки, ответ прежнего отбросит токен.

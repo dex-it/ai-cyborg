@@ -26,7 +26,6 @@ export interface TasksViewHost {
   applyStatuses(result: TasksResult): void;
   sessionOf(key: string): OpenTaskSession | undefined;
   startTask(task: Task, anchor: HTMLElement): void;
-  openSettings(): void;
 }
 
 const api = window.cyborg;
@@ -126,13 +125,9 @@ export class TasksView implements PanelView {
       else if (source.note) nodes.push(el('p', 'tasks-note small', `${sourceLabel(source)}: ${source.note}`));
     }
     switch (emptyView(result)) {
-      case 'disabled': {
-        nodes.push(el('p', 'tasks-note', 'Источники задач не включены.'), el('p', 'tasks-note', '«⚙» слева вверху — включить GitHub или GitLab.'));
-        const open = el('button', '', 'Открыть настройки');
-        open.addEventListener('click', () => this.host.openSettings());
-        nodes.push(open);
+      case 'disabled':
+        nodes.push(el('p', 'tasks-note', 'Источники задач проекта не включены.'));
         break;
-      }
       case 'no-remotes':
         nodes.push(el('p', 'tasks-note', 'У репозиториев проекта нет remote GitHub или GitLab, на который залогинен glab.'));
         break;

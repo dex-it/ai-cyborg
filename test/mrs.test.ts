@@ -231,12 +231,13 @@ describe('runLimited', () => {
 const ok = (stdout: string, stderr = ''): CliResult => ({ code: 0, stdout, stderr, missing: false });
 const fail = (code: number, stderr: string): CliResult => ({ code, stdout: '', stderr, missing: false });
 const GLAB_STATUS = 'git.corp\n  ✓ Logged in to git.corp as mmx003 (/x)\n';
-const project: Project = { id: 'p1', name: 'P', description: '', repos: ['/w/a', '/w/b'] };
-const other: Project = { id: 'p2', name: 'Q', description: '', repos: ['/w/other'] };
+const BOTH: TrackerSettings = { github: true, gitlab: true };
+const project: Project = { id: 'p1', name: 'P', description: '', repos: ['/w/a', '/w/b'], trackers: BOTH };
+const other: Project = { id: 'p2', name: 'Q', description: '', repos: ['/w/other'], trackers: BOTH };
 
 interface Call { cmd: string; args: string[] }
 
-function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSettings; respond: (c: Call) => CliResult | undefined; user?: CliResult | (() => CliResult | Promise<CliResult>); slow?: boolean; hold?: (c: Call) => Promise<void> | undefined }) {
+function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSettings; otherSettings?: TrackerSettings; respond: (c: Call) => CliResult | undefined; user?: CliResult | (() => CliResult | Promise<CliResult>); slow?: boolean; hold?: (c: Call) => Promise<void> | undefined }) {
   const calls: Call[] = [];
   const load = { now: 0, peak: 0 };
   const run = async (cmd: 'gh' | 'glab', args: string[]): Promise<CliResult> => {
@@ -254,8 +255,7 @@ function setup(opts: { remotes: Record<string, string[]>; settings?: TrackerSett
   const trackers = new TrackersService({
     run,
     remotes: async (repo) => opts.remotes[repo] ?? [],
-    projects: () => ({ projects: [project, other], lastProjectId: null }),
-    settings: () => opts.settings ?? { github: true, gitlab: true },
+    projects: () => ({ projects: [{ ...project, trackers: opts.settings ?? BOTH }, { ...other, trackers: opts.otherSettings ?? BOTH }], lastProjectId: null }),
   });
   return { svc: new MrsService(trackers, run), calls, load };
 }
@@ -566,6 +566,13 @@ describe('MrsService.listMrs', () => {
     const r = await full(none.svc, 'p1', 'all', []);
     assert.equal(none.calls.length, 0);
     assert.deepEqual(r.enabled, { github: false, gitlab: false });
+  });
+
+  it('у второго проекта другие источники: MR выбранного проекта идут по его галочкам', async () => {
+    const { svc, calls } = setup({ remotes, settings: { github: false, gitlab: true }, otherSettings: { github: true, gitlab: false }, respond: () => undefined });
+    const r = await full(svc, 'p1', 'all', []);
+    assert.deepEqual(r.enabled, { github: false, gitlab: true });
+    assert.equal(calls.filter((c) => c.cmd === 'gh').length, 0);
   });
 
   it('неизвестный проект - ошибка без вызовов', async () => {

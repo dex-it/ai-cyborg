@@ -5,11 +5,11 @@ import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
 import { acceptsDrop, dropIntoSession } from './drop-path';
-import { initSettings } from './settings';
+import { initSourcesSection } from './sources';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
 import { TrackerPanel } from './panel';
-import { findTask, sessionLabel, taskTooltip } from './task-model';
+import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
 import { TreeView, type TreeRoot } from './tree';
@@ -94,14 +94,22 @@ function renderProjectSelect(): void {
 function selectProject(next: Project | null): void {
   project = next;
   state.lastProjectId = next?.id ?? null;
-  void api.saveProjects(state);
+  persist();
   renderProjectSelect();
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
   if (session) activateSession(session, panel.isOpen);
   else showNoSession();
+  panel.setAvailable(hasSources(next));
   panel.onProjectChanged();
+}
+
+/** Отказ записи не откатывает состояние в памяти: оператор не теряет ввод, но знает, что на диск он не лёг. */
+function persist(): void {
+  api.saveProjects(state).catch((error: Error) => {
+    alert(`Не удалось сохранить проекты: ${error.message}. Изменения действуют до закрытия приложения, на диск они не записаны.`);
+  });
 }
 
 const projectDialog = byId<HTMLDialogElement>('project-dialog');
@@ -109,17 +117,21 @@ const projectName = byId<HTMLInputElement>('project-name');
 const projectDescription = byId<HTMLTextAreaElement>('project-description');
 const projectRepos = byId('project-repos');
 const projectDelete = byId<HTMLButtonElement>('project-delete');
+const sources = initSourcesSection();
 let draft: Project | null = null;
 let editing: Project | null = null;
 
 function editProject(target: Project | null): void {
   editing = target;
-  draft = target ? { ...target, repos: [...target.repos] } : { id: crypto.randomUUID(), name: '', description: '', repos: [] };
+  draft = target
+    ? { ...target, repos: [...target.repos], trackers: { ...target.trackers } }
+    : { id: crypto.randomUUID(), name: '', description: '', repos: [], trackers: { github: false, gitlab: false } };
   byId('project-dialog-title').textContent = target ? 'Свойства проекта' : 'Новый проект';
   projectName.value = draft.name;
   projectDescription.value = draft.description;
   projectDelete.hidden = !target;
   renderDraftRepos();
+  sources.open(draft.trackers);
   projectDialog.showModal();
 }
 
@@ -155,9 +167,11 @@ byId('project-add-repo').addEventListener('click', async () => {
 });
 
 projectDialog.addEventListener('close', () => {
+  sources.close();
   if (projectDialog.returnValue !== 'save' || !draft) return;
   draft.name = projectName.value.trim();
   draft.description = projectDescription.value.trim();
+  draft.trackers = sources.read();
   let target = editing;
   if (target) Object.assign(target, draft);
   else state.projects.push((target = draft));
@@ -191,7 +205,6 @@ function showProjectMenu(): void {
   projectMenu.replaceChildren(
     ...(current ? [item('Свойства проекта', () => editProject(current))] : []),
     item('Новый проект', () => editProject(null)),
-    item('Настройки', () => settings.open()),
   );
   const rect = projectMenuButton.getBoundingClientRect();
   projectMenu.style.top = `${rect.bottom + 2}px`;
@@ -648,10 +661,6 @@ function trackedRefs(): TaskRef[] {
   return [...refs.values()];
 }
 
-const settings = initSettings(() => {
-  if (panel.isOpen) void panel.refreshActive(true);
-});
-
 const panel = new TrackerPanel({
   tasks: {
     project: () => project,
@@ -660,7 +669,6 @@ const panel = new TrackerPanel({
     applyStatuses,
     sessionOf: (key) => (project ? taskSessions.get(project.id, key) : undefined),
     startTask,
-    openSettings: () => settings.open(),
   },
   mrs: {
     project: () => project,
@@ -669,7 +677,6 @@ const panel = new TrackerPanel({
     applyStatuses: applyMrStatuses,
     sessionOf: (key) => (project ? taskSessions.get(project.id, key) : undefined),
     startMr,
-    openSettings: () => settings.open(),
   },
   onClosed: () =>
     requestAnimationFrame(() => {

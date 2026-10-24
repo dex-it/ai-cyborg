@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import { writeJsonAtomic } from './jsonfile';
-import type { Project, ProjectsState } from './projects';
+import { readTrackers, type Project, type ProjectsState, type TrackerSettings } from './projects';
+
+export type { TrackerSettings } from './projects';
 
 export type TrackerKind = 'github' | 'gitlab';
 
@@ -30,11 +31,6 @@ export interface SourceResult {
   path: string;
   error?: string;
   note?: string;
-}
-
-export interface TrackerSettings {
-  github: boolean;
-  gitlab: boolean;
 }
 
 export interface TasksResult {
@@ -75,7 +71,6 @@ export interface TrackerDeps {
   run: CliRunner;
   remotes: (repo: string) => Promise<string[]>;
   projects: () => ProjectsState;
-  settings: () => TrackerSettings;
 }
 
 const CLI_TIMEOUT_MS = 120_000;
@@ -245,28 +240,57 @@ export function sessionDirsAllowed(state: ProjectsState, cwd: unknown, addDirs: 
 
 // ---------- настройки ----------
 
-/** Сохранение настроек из канала trackers:save: включённые трекеры другие, поэтому вход проверяется заново. */
-export function saveTrackerSettings(settings: unknown, store: { save(s: TrackerSettings): void }, trackers: { resetAuth(): void }): void {
-  const valid = validateSettings(settings);
-  if (!valid) throw new Error('Некорректные настройки трекеров');
-  store.save(valid);
-  trackers.resetAuth();
+/** Состояние проектов из канала projects:save: поле источников каждого проекта - два boolean; лишние ключи отбрасываются. */
+export function validateProjectsState(value: unknown): ProjectsState | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const state = value as ProjectsState;
+  if (!Array.isArray(state.projects)) return state;
+  const projects: Project[] = [];
+  for (const p of state.projects) {
+    if (typeof p !== 'object' || p === null) return null;
+    const trackers = validateSettings((p as Partial<Project>).trackers);
+    if (!trackers) return null;
+    projects.push({ ...p, trackers });
+  }
+  return { ...state, projects };
 }
 
+/** Источники хотя бы одного проекта различаются; отсутствующий проект - оба выключены. */
+export function sourcesChanged(a: ProjectsState, b: ProjectsState): boolean {
+  const flags = (s: ProjectsState) => new Map(s.projects.map((p) => [p.id, p.trackers]));
+  const [from, to] = [flags(a), flags(b)];
+  const off = { github: false, gitlab: false };
+  for (const id of new Set([...from.keys(), ...to.keys()])) {
+    const x = from.get(id) ?? off;
+    const y = to.get(id) ?? off;
+    if (x.github !== y.github || x.gitlab !== y.gitlab) return true;
+  }
+  return false;
+}
+
+/** Сохранение проектов: включённые источники другие - вход проверяется заново; прочие сохранения кэш входа не трогают. */
+export function saveProjectsState(
+  raw: unknown,
+  store: { load(): ProjectsState; save(s: ProjectsState): void },
+  trackers: { resetAuth(): void },
+): void {
+  const valid = validateProjectsState(raw);
+  if (!valid) throw new Error('Некорректные источники задач проекта');
+  const prev = store.load();
+  store.save(valid);
+  if (sourcesChanged(prev, valid)) trackers.resetAuth();
+}
+
+/** Прежний общий trackers.json: только чтение, значения подставляются проектам без поля источников. */
 export class TrackerSettingsStore {
   constructor(private readonly file: string) {}
 
   load(): TrackerSettings {
     try {
-      const raw = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Record<string, unknown>;
-      return { github: raw.github === true, gitlab: raw.gitlab === true };
+      return readTrackers(JSON.parse(fs.readFileSync(this.file, 'utf8'))) ?? { github: false, gitlab: false };
     } catch {
       return { github: false, gitlab: false };
     }
-  }
-
-  save(settings: TrackerSettings): void {
-    writeJsonAtomic(this.file, { github: settings.github, gitlab: settings.gitlab });
   }
 }
 
@@ -426,7 +450,8 @@ export class TrackersService {
 
   /** Проверка входа при старте приложения: один раз, результат ложится в кэш выборок (без опроса по таймеру). */
   warmAuth(): Promise<void> {
-    const enabled = this.deps.settings();
+    const all = this.deps.projects().projects;
+    const enabled = { github: all.some((p) => p.trackers.github), gitlab: all.some((p) => p.trackers.gitlab) };
     const pending: Promise<unknown>[] = [];
     if (enabled.gitlab) pending.push(this.gitlabCache.get().current);
     if (enabled.github) pending.push(this.githubCache.get().current);
@@ -458,8 +483,8 @@ export class TrackersService {
   /** Источники проекта: remote его репозиториев, признанные трекерами; общий разбор для задач и MR. */
   async resolveSources(projectId: string, recheck = false): Promise<ResolvedSources> {
     if (recheck) this.resetAuth();
-    const enabled = this.deps.settings();
     const project = this.deps.projects().projects.find((p) => p.id === projectId);
+    const enabled = project?.trackers ?? { github: false, gitlab: false };
     const resolved: ResolvedSources = {
       project,
       enabled,

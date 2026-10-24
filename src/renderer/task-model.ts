@@ -69,13 +69,18 @@ function authText(cli: 'gh' | 'glab', auth: AuthState, host?: string): string {
   }
 }
 
-/** Строки состояния источника для окна настроек: на gh одна, на glab - по строке на хост. */
+/** У проекта включён хотя бы один источник: только тогда у полосы сессий есть кнопки «Задачи» и «MR/PR». */
+export function hasSources(p: { trackers: { github: boolean; gitlab: boolean } } | null): boolean {
+  return !!p && (p.trackers.github || p.trackers.gitlab);
+}
+
+/** Строки состояния источника для диалога проекта: на gh одна, на glab - по строке на хост. */
 export function authLines(kind: TrackerKind, enabled: boolean, status: TrackersStatus): string[] {
   const mode = enabled ? 'включён' : 'выключен';
   if (kind === 'github') return [`${mode} · ${authText('gh', status.github)}`];
   const gitlab = status.gitlab;
   if (gitlab.state === 'hosts') {
-    // glab перечисляет и хосты, куда пользователь не входил (gitlab.com по умолчанию) - в настройках они шум.
+    // glab перечисляет и хосты, куда пользователь не входил (gitlab.com по умолчанию) - в диалоге проекта они шум.
     const hosts = gitlab.hosts.filter((h) => h.auth.state !== 'logged-out');
     if (hosts.length) return hosts.map((h) => `${h.host}: ${mode} · ${authText('glab', h.auth, h.host)}`);
     return [`${mode} · ${authText('glab', { state: 'logged-out' })}`];

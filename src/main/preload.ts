@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DirEntry } from './files';
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsState } from './projects';
-import type { TaskRef, TasksResult, TrackerSettings, TrackersStatus } from './trackers';
+import type { TaskRef, TasksResult, TrackersStatus } from './trackers';
 
 const api = {
   pickDir: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir', defaultPath),
@@ -10,8 +10,6 @@ const api = {
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),
   createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', cwd, addDirs, start),
-  loadTrackerSettings: (): Promise<TrackerSettings> => ipcRenderer.invoke('trackers:load'),
-  saveTrackerSettings: (settings: TrackerSettings): Promise<void> => ipcRenderer.invoke('trackers:save', settings),
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),
   listTasks: (projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck: boolean): Promise<TasksResult> =>
     ipcRenderer.invoke('tasks:list', projectId, assignedToMe, tracked, recheck),
