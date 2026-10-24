@@ -191,25 +191,27 @@ export async function gitBranches(root: string): Promise<Branches> {
   }
 }
 
-// Выписывание файлов запускает smudge-фильтры: их драйверы из недоверенного конфига репозитория не исполняются вовсе.
-async function hasRepoFilters(root: string): Promise<boolean> {
+// Выписывание файлов запускает smudge-фильтры, а в partial clone - докачку недостающих объектов транспортом из конфига
+// (core.sshCommand, remote.*.uploadpack); GIT_NO_LAZY_FETCH есть только с git 2.45, поэтому такие репозитории не переключаются.
+async function repoSwitchRisk(root: string): Promise<string | null> {
   let raw: string;
   try {
-    raw = (await gitRaw(root, ['config', '--show-scope', '--null', '--name-only', '--get-regexp', '^filter\\.'], { LC_ALL: 'C' })).toString('latin1');
+    raw = (await gitRaw(root, ['config', '--show-scope', '--null', '--name-only', '--get-regexp', '^(filter\\.|extensions\\.partialclone$|remote\\..*\\.promisor$)'], { LC_ALL: 'C' })).toString('latin1');
   } catch (e) {
     if ((e as { code?: unknown }).code !== 1) throw e;
-    return false;
+    return null;
   }
   const cfg = raw.split('\0');
-  for (let i = 0; i + 1 < cfg.length; i += 2) if (REPO_SCOPES.has(cfg[i])) return true;
-  return false;
+  for (let i = 0; i + 1 < cfg.length; i += 2) if (REPO_SCOPES.has(cfg[i])) return cfg[i + 1];
+  return null;
 }
 
 /** Только ветка из gitBranches: имя не уходит в git опцией. Незакоммиченные правки git переносит сам или отказывает. */
 export async function gitSwitch(root: string, branch: string): Promise<void> {
   const { local, remote } = await gitBranches(root);
   if (branch.startsWith('-') || (!local.includes(branch) && !remote.includes(branch))) throw new Error(`Ветки ${branch} нет`);
-  if (await hasRepoFilters(root)) throw new Error('в конфиге репозитория заданы фильтры filter.*, их git запустил бы при смене ветки: переключите её в терминале');
+  const risk = await repoSwitchRisk(root);
+  if (risk) throw new Error(`в конфиге репозитория задан ${risk}: при смене ветки git запустил бы команду из него, переключите ветку в терминале`);
   try {
     // Подмодули со своим непроверенным конфигом switch не трогает, даже если репозиторий задал submodule.recurse.
     await git(root, ['-c', 'submodule.recurse=false', 'switch', branch]);

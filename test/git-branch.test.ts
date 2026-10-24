@@ -39,9 +39,17 @@ describe('gitBranches и gitSwitch', () => {
 
       git(dir, 'checkout', '-q', '--', 'a.txt');
       git(dir, 'config', 'filter.evil.smudge', 'touch pwned');
-      await assert.rejects(gitSwitch(dir, 'main'), /filter\.\*/);
+      await assert.rejects(gitSwitch(dir, 'main'), /filter\.evil\.smudge/);
       assert.equal(await gitBranch(dir), 'remote-only');
       assert.ok(!fs.existsSync(path.join(dir, 'pwned')));
+
+      git(dir, 'config', '--unset', 'filter.evil.smudge');
+      git(dir, 'config', 'remote.origin.promisor', 'true');
+      await assert.rejects(gitSwitch(dir, 'main'), /remote\.origin\.promisor/);
+      git(dir, 'config', '--unset', 'remote.origin.promisor');
+      git(dir, 'config', 'extensions.partialClone', 'origin');
+      await assert.rejects(gitSwitch(dir, 'main'), /extensions\.partialclone/);
+      assert.equal(await gitBranch(dir), 'remote-only');
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
