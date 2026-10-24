@@ -108,7 +108,7 @@ describe('TreeView: раскрытие по каждому каталогу не
     assert.ok(byTitle(frag, '/r/a/c/deep.txt'));
   });
 
-  // Корни, как их строит treeRoots (src/renderer/app.ts:185-194), когда cwd сессии ушёл в другой репозиторий проекта.
+  // Дубль пути корня, каким его давал прежний фильтр прочих корней (`r !== s.repo`), когда cwd сессии ушёл в другой репозиторий проекта.
   it('cwd сессии в другом репозитории проекта: клик по каталогу раскрывает одну строку, а не одноимённую в другом корне', async () => {
     const { TreeView } = await import('../src/renderer/tree');
     const view = new TreeView(() => {}, () => {}) as unknown as View & { setRoots(r: typeof roots): void };
