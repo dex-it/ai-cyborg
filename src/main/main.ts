@@ -1,10 +1,10 @@
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, shell } from 'electron';
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate } from './menu';
+import { appMenuTemplate, NOTIFICATIONS_MENU_ID } from './menu';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
@@ -152,6 +152,42 @@ ipcMain.handle('mrs:details', (_event, id: unknown) => {
 ipcMain.on('session:input', (_event, id: number, data: string) => sessions.write(id, data));
 ipcMain.on('session:resize', (_event, id: number, cols: number, rows: number) => sessions.resize(id, cols, rows));
 ipcMain.on('session:kill', (_event, id: number) => sessions.kill(id));
+
+// Без ссылки уведомление собирает GC, и клик по нему уже некому обработать.
+const shownNotifications = new Map<number, Notification>();
+ipcMain.on('session:notify', (_event, id: number, title: string, body: string) => {
+  if (!Notification.isSupported() || typeof title !== 'string' || typeof body !== 'string') return;
+  shownNotifications.get(id)?.close();
+  const notification = new Notification({ title, body, icon: path.join(__dirname, 'icon.png') });
+  const forget = () => {
+    if (shownNotifications.get(id) === notification) shownNotifications.delete(id);
+  };
+  notification.on('click', () => {
+    forget();
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    win.webContents.send('session:reveal', { id });
+  });
+  notification.on('close', forget);
+  shownNotifications.set(id, notification);
+  notification.show();
+});
+ipcMain.on('session:unnotify', (_event, id: number) => {
+  shownNotifications.get(id)?.close();
+  shownNotifications.delete(id);
+});
+
+// Выключатель хранит интерфейс (FR-1015: главный процесс на диск настроек не пишет); меню только отражает его.
+ipcMain.on('notifications:state', (_event, enabled: boolean) => {
+  const item = Menu.getApplicationMenu()?.getMenuItemById(NOTIFICATIONS_MENU_ID);
+  if (item) item.checked = enabled === true;
+  if (enabled !== true) {
+    for (const notification of shownNotifications.values()) notification.close();
+    shownNotifications.clear();
+  }
+});
 ipcMain.handle('fs:list', (_event, dir: unknown) => paths.list(dir));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('git:root', (_event, dir: unknown) => paths.root(dir));
@@ -179,9 +215,13 @@ app.whenReady().then(() => {
   app.dock?.setIcon(path.join(__dirname, 'icon.png'));
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
-      appMenuTemplate(process.platform, () => {
-        if (confirmEndSessions()) app.quit();
-      }),
+      appMenuTemplate(
+        process.platform,
+        () => {
+          if (confirmEndSessions()) app.quit();
+        },
+        (enabled) => win?.webContents.send('notifications:toggle', enabled),
+      ),
     ),
   );
   void trackers.warmAuth();
