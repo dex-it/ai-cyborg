@@ -40,3 +40,13 @@ jobs:
       - name: smoke (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum node scripts/smoke.mjs --no-sandbox
+
+  # Одна проверка на весь CI: её имя можно сделать обязательным в защите ветки, не перечисляя матрицу.
+  required:
+    name: CI
+    if: always()
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: test "${{ needs.check.result }}" = success
