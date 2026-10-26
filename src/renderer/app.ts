@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { HistoryEntry } from '../main/history';
-import type { Project, ProjectsState } from '../main/projects';
+import type { Project, ProjectsProblem, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
@@ -124,6 +124,14 @@ function selectProject(next: Project | null): void {
 }
 
 /** Отказ записи не откатывает состояние в памяти: оператор не теряет ввод, но знает, что на диск он не лёг. */
+/** Текст предупреждения о файле проектов (ADR-0004, п.4): что случилось, где исходные байты, что делать. */
+function projectsProblemText(problem: ProjectsProblem): string {
+  if (problem.kind === 'unreadable') {
+    return `Файл проектов не прочитан (${problem.detail}). Проекты не загружены, и пока файл недоступен, запись в него отключена: он не будет затёрт. Исправьте доступ к projects.json в каталоге данных приложения и перезапустите Cyborg.`;
+  }
+  return `Файл проектов повреждён (${problem.detail}), проекты не загружены. Исходное содержимое сохранено:\n${problem.copy}\nЧтобы вернуть проекты: закройте Cyborg, исправьте копию и положите её на место projects.json.`;
+}
+
 function persist(): void {
   api.saveProjects(state).catch((error: Error) => {
     alert(`Не удалось сохранить проекты: ${error.message}. Изменения действуют до закрытия приложения, на диск они не записаны.`);
@@ -992,7 +1000,9 @@ splitter.addEventListener('mousedown', (down) => {
   window.addEventListener('mouseup', up);
 });
 
-void api.loadProjects().then((loaded) => {
+void api.loadProjects().then(async (loaded) => {
   state = loaded;
+  const problem = await api.projectsProblem();
   selectProject(state.projects.find((p) => p.id === state.lastProjectId) ?? state.projects[0] ?? null);
+  if (problem) alert(projectsProblemText(problem));
 });
