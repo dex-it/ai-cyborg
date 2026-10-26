@@ -72,6 +72,40 @@ describe('история сессий', () => {
     }
   });
 
+  it('сессии worktree: журнал в каталоге <репозиторий>--claude-worktrees-<имя> виден, возобновляется и удаляется', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-history-'));
+    try {
+      const repo = '/w/repo';
+      const prompt = (text: string) => line({ type: 'user', entrypoint: 'cli', message: { content: text } });
+      const journal = (dirName: string, id: string, text: string) => {
+        const dir = path.join(root, dirName);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${id}.jsonl`), prompt(text));
+        return dir;
+      };
+      // раскладка настоящего Claude Code: worktree - <repo>/.claude/worktrees/<имя>
+      const wtDir = projectDirName(`${repo}/.claude/worktrees/create-a-txt`);
+      assert.equal(wtDir, `${projectDirName(repo)}--claude-worktrees-create-a-txt`);
+      journal(projectDirName(repo), ID_A, 'в репозитории');
+      const wt = journal(wtDir, ID_B, 'в worktree');
+      journal(projectDirName('/w/repo2'), ID_C, 'чужой репозиторий с похожим именем');
+      journal(`${projectDirName('/w/repo2')}--claude-worktrees-x`, ID_C, 'worktree чужого репозитория');
+
+      assert.deepEqual(listHistory([repo], root).map((e) => [e.id, e.repo]).sort(), [[ID_A, repo], [ID_B, repo]]);
+      assert.equal(historyExists(repo, ID_B, root), true);
+      assert.equal(historyExists('/w/other', ID_B, root), false);
+
+      fs.mkdirSync(path.join(wt, ID_B, 'subagents'), { recursive: true });
+      deleteHistory(repo, ID_B, root);
+      assert.equal(fs.existsSync(path.join(wt, `${ID_B}.jsonl`)), false);
+      assert.equal(fs.existsSync(path.join(wt, ID_B)), false);
+      assert.deepEqual(listHistory([repo], root).map((e) => e.id), [ID_A]);
+      assert.throws(() => deleteHistory(repo, ID_B, root));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('claudeArgs: --resume с id стоит до --add-dir', () => {
     assert.deepEqual(claudeArgs(['/b'], undefined, ID_A), ['--resume', ID_A, '--append-system-prompt', ISOLATION_PROMPT, '--add-dir', '/b']);
   });

@@ -21,6 +21,24 @@ export const claudeProjectsDir = (): string => path.join(os.homedir(), '.claude'
 
 export const projectDirName = (cwd: string): string => cwd.replace(/[^a-zA-Z0-9]/g, '-');
 
+// Сессия, ушедшая в worktree (`EnterWorktree`: <repo>/.claude/worktrees/<имя>), пишет журнал в каталог проекта worktree: его имя -
+// projectDirName пути worktree, то есть каталог репозитория плюс `--claude-worktrees-<имя>`. Так Cyborg изолирует каждую
+// параллельную сессию, и без этих каталогов история не видела бы именно такие сессии. Возобновляет их `claude --resume <id>`
+// из каталога репозитория: Claude Code сам находит журнал worktree и возвращает сессию в него.
+const WORKTREE_INFIX = '--claude-worktrees-';
+
+/** Каталоги журналов репозитория в `root`: собственный и его worktree. */
+function journalDirs(repo: string, root: string): string[] {
+  const own = projectDirName(repo);
+  let names: string[];
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return [];
+  }
+  return names.filter((name) => name === own || name.startsWith(own + WORKTREE_INFIX)).map((name) => path.join(root, name));
+}
+
 export const isSessionId = (value: unknown): value is string => typeof value === 'string' && SESSION_ID.test(value);
 
 const oneLine = (text: string): string => {
@@ -89,22 +107,23 @@ function readEdges(file: string, size: number): [string, string] {
 export function listHistory(repos: string[], root = claudeProjectsDir(), limit = LIMIT): HistoryEntry[] {
   const candidates: { id: string; repo: string; file: string; size: number; updated: number }[] = [];
   for (const repo of new Set(repos)) {
-    const dir = path.join(root, projectDirName(repo));
-    let names: string[];
-    try {
-      names = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const name of names) {
-      const id = name.replace(/\.jsonl$/, '');
-      if (id === name || !isSessionId(id)) continue;
-      const file = path.join(dir, name);
+    for (const dir of journalDirs(repo, root)) {
+      let names: string[];
       try {
-        const stat = fs.statSync(file);
-        if (stat.isFile() && stat.size > 0) candidates.push({ id, repo, file, size: stat.size, updated: stat.mtimeMs });
+        names = fs.readdirSync(dir);
       } catch {
         continue;
+      }
+      for (const name of names) {
+        const id = name.replace(/\.jsonl$/, '');
+        if (id === name || !isSessionId(id)) continue;
+        const file = path.join(dir, name);
+        try {
+          const stat = fs.statSync(file);
+          if (stat.isFile() && stat.size > 0) candidates.push({ id, repo, file, size: stat.size, updated: stat.mtimeMs });
+        } catch {
+          continue;
+        }
       }
     }
   }
@@ -123,14 +142,19 @@ export function listHistory(repos: string[], root = claudeProjectsDir(), limit =
   return entries;
 }
 
+/** Каталог, где лежит журнал сессии: репозиторий либо его worktree. */
+function journalDirOf(repo: string, id: string, root: string): string | undefined {
+  return isSessionId(id) ? journalDirs(repo, root).find((dir) => fs.existsSync(path.join(dir, `${id}.jsonl`))) : undefined;
+}
+
 export function historyExists(repo: string, id: string, root = claudeProjectsDir()): boolean {
-  return isSessionId(id) && fs.existsSync(path.join(root, projectDirName(repo), `${id}.jsonl`));
+  return journalDirOf(repo, id, root) !== undefined;
 }
 
 /** Журнал сессии и её каталог (вывод инструментов, субагенты) удаляются; продолжить её после этого нельзя. */
 export function deleteHistory(repo: string, id: string, root = claudeProjectsDir()): void {
-  if (!historyExists(repo, id, root)) throw new Error('Журнал сессии не найден');
-  const dir = path.join(root, projectDirName(repo));
+  const dir = journalDirOf(repo, id, root);
+  if (!dir) throw new Error('Журнал сессии не найден');
   fs.rmSync(path.join(dir, id), { recursive: true, force: true });
   fs.rmSync(path.join(dir, `${id}.jsonl`));
 }
