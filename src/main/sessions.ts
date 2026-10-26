@@ -39,28 +39,25 @@ const HOOK_COMMAND = '{ cat; echo; } >> "$CYBORG_EVENTS"';
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'Notification'];
 
 // Белый список: новый тип Notification в следующей версии CC не уведомляет; idle_prompt повторяет Stop через минуту.
-const WAITING_NOTIFICATIONS = new Set([
-  'permission_prompt',
-  'elicitation_dialog',
-  'elicitation_url_dialog',
-  'agent_needs_input',
-  'quota_auto_resume_stale',
-  'quota_auto_resume_disabled',
+// Текст уведомления зависит только от типа события: ответ Claude и сообщение запроса на экран блокировки не попадают (D-07).
+const WAITING_NOTIFICATIONS: ReadonlyMap<string, string> = new Map([
+  ['permission_prompt', 'Просит разрешение'],
+  ['elicitation_dialog', 'Задаёт вопрос'],
+  ['elicitation_url_dialog', 'Задаёт вопрос'],
+  ['agent_needs_input', 'Ждёт ответа'],
+  ['quota_auto_resume_stale', 'Остановилась на лимите'],
+  ['quota_auto_resume_disabled', 'Остановилась на лимите'],
 ]);
-
-const REASON_LENGTH = 200;
 
 /** Сессия ждёт человека: ход закончен либо CC стоит на вопросе, разрешении или лимите (типы - code.claude.com/docs/en/hooks). */
 export function waitingReason(event: SessionEvent): string | null {
   if (event.hook_event_name === 'Stop') {
     // Непустые background_tasks или session_crons - пауза до фоновой работы: сессия проснётся сама.
     if (event.background_tasks?.length || event.session_crons?.length) return null;
-    const text = event.last_assistant_message?.replace(/\s+/g, ' ').trim();
-    if (!text) return 'Ход завершён, ждёт ответа';
-    return text.length > REASON_LENGTH ? `${text.slice(0, REASON_LENGTH - 1)}…` : text;
+    return 'Ход завершён, ждёт ответа';
   }
-  if (event.hook_event_name !== 'Notification' || !WAITING_NOTIFICATIONS.has(event.notification_type ?? '')) return null;
-  return event.message || 'Ждёт ответа';
+  if (event.hook_event_name !== 'Notification') return null;
+  return WAITING_NOTIFICATIONS.get(event.notification_type ?? '') ?? null;
 }
 
 // Унаследованные маркеры делают сессию дочерней, и CC не пишет её транскрипт.
