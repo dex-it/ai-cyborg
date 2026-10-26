@@ -150,6 +150,8 @@ ipcMain.handle('git:switch', async (_event, root: unknown, branch: unknown) => {
 ipcMain.handle('git:headContent', (_event, file: unknown) => (typeof file === 'string' ? gitHeadContent(file) : null));
 
 app.whenReady().then(() => {
+  // icon у BrowserWindow на macOS не действует: в Dock остался бы значок Electron.
+  app.dock?.setIcon(path.join(__dirname, 'icon.png'));
   Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform)));
   void trackers.warmAuth();
   createWindow();

@@ -113,12 +113,12 @@ macOS наравне с Linux. Вход - BRD фичи (`brd-feat.md`, BR-5001) 
 - **Требование:** шрифты терминала - `'JetBrains Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Ubuntu Mono',
   monospace`. Каталог данных замера `scripts/measure.mjs` по умолчанию - каталог данных Electron:
   `~/Library/Application Support/cyborg` на macOS, `$XDG_CONFIG_HOME/cyborg` либо `~/.config/cyborg` на остальных;
-  `CYBORG_USERDATA` главнее.
+  `CYBORG_USERDATA` главнее. На macOS значок в Dock - `assets/icon.png`: `icon` окна там не действует.
 - **traced from:** BR-5001.
 - **источник:** Issue #2, раздел «Что сделать» (шрифты, `scripts/measure.mjs`).
 - **rationale:** reason - в списке не было шрифтов macOS, замер искал данные там, где их нет;
   assumptions - имя приложения `cyborg` (проверено `app.getName()`); relationships - нет; design constraints - нет.
-- **verification:** демонстрация - `app.getName()` и `app.getPath('appData')` в собранном приложении;
+- **verification:** демонстрация - `app.getName()` и `app.getPath('appData')` в собранном приложении; значок Dock - вызов `app.dock.setIcon` без ошибки, файл 512x512 загружается (сам значок в Dock не просматривался);
   `node scripts/measure.mjs` называет путь macOS.
 - **класс:** Functions. **origin:** source.
 
