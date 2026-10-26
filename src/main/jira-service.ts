@@ -18,7 +18,6 @@ import {
   problemOf,
   problemText,
   suggestKeys,
-  timeOf,
   type JiraDetailsResult,
   type JiraListResult,
   type JiraIssue,
@@ -29,6 +28,7 @@ import {
   type JiraStatus,
   type JiraUrlResult,
 } from './jira';
+import { timeOf } from './jira-keys';
 import type { ProjectsState } from './projects';
 import type { CliResult, JiraRunner } from './trackers';
 
@@ -57,6 +57,7 @@ export class JiraService {
   /** Ключи последнего списка по проектам: детали и адрес запрашиваются только по задаче, которую главный процесс сам вернул. */
   private readonly seen = new Map<string, Set<string>>();
   private projectsCache: { at: number; projects: JiraProject[] } | null = null;
+  private projectsPending: Promise<JiraProjectsResult> | null = null;
 
   constructor(
     private readonly run: JiraRunner,
@@ -89,7 +90,10 @@ export class JiraService {
     if (this.blocked) return { issues: [], truncated: false, ...this.blocked };
     // Пустой выбор - один запрос без `-p` (проект из `jira init`); иначе по запросу на проект: `jira -p` берёт один.
     const keys = settings.projects?.length ? settings.projects : [''];
-    const parts = await Promise.all(keys.map((key) => this.fetchIssues(key)));
+    // Первый список серии идёт один: неверный вход сервер увидит один раз, а не по два на каждый проект (D-12).
+    const head = await this.fetchIssues(keys[0], true);
+    if ('problem' in head && head.problem === 'auth') return { issues: [], truncated: false, ...head };
+    const parts = [head, ...(await Promise.all(keys.slice(1).map((key) => this.fetchIssues(key, false))))];
     const done = parts.flatMap((part) => ('issues' in part ? [part] : []));
     const failed = parts.flatMap((part, i) => ('issues' in part ? [] : [{ key: keys[i], ...part }]));
     if (!done.length) {
@@ -108,10 +112,12 @@ export class JiraService {
     };
   }
 
-  /** Задачи одного проекта (пустой ключ - без `-p`): список, ключи «в работе» вторым запросом, категории проставлены. */
-  private async fetchIssues(project: string): Promise<{ issues: JiraIssue[]; truncated: boolean } | Refusal> {
+  /** Задачи одного проекта (пустой ключ - без `-p`); probe - первый запрос серии, он один проверяет вход. */
+  private async fetchIssues(project: string, probe: boolean): Promise<{ issues: JiraIssue[]; truncated: boolean } | Refusal> {
     // Категории статуса в списке нет: ключи «в работе» берутся вторым запросом, его отказ только оставляет категории пустыми.
-    const [res, progress] = await Promise.all([this.run('jira', jiraListArgs(project)), this.run('jira', jiraProgressArgs(project))]);
+    const listing = this.run('jira', jiraListArgs(project));
+    const pending = probe ? null : this.run('jira', jiraProgressArgs(project));
+    const res = await listing;
     const lost = launchFailure(res);
     if (lost) return lost;
     if (res.code !== 0) {
@@ -119,9 +125,11 @@ export class JiraService {
       if (isEmptyResult(text)) return { issues: [], truncated: false };
       const problem = problemOf(text);
       const refusal = { problem, error: problemText(problem, text) };
-      if (problem === 'auth') this.blocked = refusal;
+      // Отказ «входа» после принятого первого списка - нет прав на этот проект, а не неверные учётные данные.
+      if (problem === 'auth' && probe) this.blocked = refusal;
       return refusal;
     }
+    const progress = await (pending ?? this.run('jira', jiraProgressArgs(project)));
     try {
       const inProgress = progress.code === 0 ? parseKeys(progress.stdout) : new Set<string>();
       const issues = parseIssues(res.stdout).map((issue) => (inProgress.has(issue.key) ? { ...issue, category: 'indeterminate' as const } : issue));
@@ -139,6 +147,12 @@ export class JiraService {
     }
     if (this.blocked) return { ...this.blocked };
     if (this.projectsCache && Date.now() - this.projectsCache.at < PROJECTS_TTL_MS) return { projects: this.projectsCache.projects };
+    // Диалог просит список и подсказки разом: второй запрос ждёт первый, а не запускает `jira` ещё раз.
+    this.projectsPending ??= this.fetchProjects().finally(() => (this.projectsPending = null));
+    return this.projectsPending;
+  }
+
+  private async fetchProjects(): Promise<JiraProjectsResult> {
     const res = await this.run('jira', jiraProjectsArgs());
     const lost = launchFailure(res);
     if (lost) return lost;

@@ -133,17 +133,24 @@ export function initSourcesSection(): {
     renderJira();
     loadProjects(openToken);
   });
-  filterEl.addEventListener('input', renderPicker);
+  filterEl.addEventListener('input', () => {
+    filterEl.setCustomValidity('');
+    renderPicker();
+  });
   // Enter в поле поиска не должен отправлять форму диалога: он добавляет введённый ключ, если он по форме.
   filterEl.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     const typed = filterEl.value.trim();
-    if (PROJECT_KEY.test(typed)) {
-      if (!selected.includes(typed.toUpperCase())) toggleKey(typed);
-      filterEl.value = '';
-      renderPicker();
+    if (!PROJECT_KEY.test(typed)) return;
+    if (!selected.includes(typed.toUpperCase()) && selected.length >= MAX_JIRA_PROJECTS) {
+      filterEl.setCustomValidity(`Выбрано ${MAX_JIRA_PROJECTS} проектов - больше нельзя: уберите один`);
+      filterEl.reportValidity();
+      return;
     }
+    if (!selected.includes(typed.toUpperCase())) toggleKey(typed);
+    filterEl.value = '';
+    renderPicker();
   });
 
   return {

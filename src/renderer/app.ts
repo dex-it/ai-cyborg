@@ -875,11 +875,13 @@ function startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement): void {
   else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где открыть MR', (repo) => void newSession(repo, { mr, intent }));
 }
 
-/** Сессия по задаче Jira: повторное действие возвращает к открытой; репозиторий - у связанного MR, иначе единственный либо по выбору. */
+/** Сессия по задаче Jira: повторное действие возвращает к открытой; репозиторий - у связанного MR из проекта, иначе единственный либо по выбору. */
 function startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement): void {
   if (!project) return;
   const existing = taskSessions.get(project.id, `jira:${issue.key}`);
-  const decision = decideStart(!!existing, linked?.repos.length ? linked.repos : project.repos, project.repos);
+  const { repos } = project;
+  const ofMr = linked?.repos.filter((repo) => repos.includes(repo)) ?? [];
+  const decision = decideStart(!!existing, ofMr.length ? ofMr : repos, repos);
   if (decision.action === 'switch' && existing) activateSession(existing);
   else if (decision.action === 'create') void newSession(decision.repo, { jira: issue });
   else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, { jira: issue }));
