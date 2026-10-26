@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 99; с автотестом - 88, из них со smoke - 6; только smoke - 4; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 103; с автотестом - 92, из них со smoke - 10; только smoke - 4; ручная - 2; только осмотр и демонстрация - 5.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -42,8 +42,11 @@ date: 2026-10-26
 | FR-1023 | Детали задачи раскрытием строки | 01-tasks-panel | автотест | `test/model.test.ts`, `test/tasks-view.test.ts` |
 | FR-1024 | Описание задачи только по задаче текущей выборки | 01-tasks-panel | автотест | `test/task-details.test.ts` |
 | FR-1025 | Открытие задачи в системном браузере | 01-tasks-panel | автотест | `test/task-details.test.ts` |
-| FR-1026 | Повреждённый файл проектов не теряется | 01-tasks-panel | автотест | `test/stores.test.ts` |
+| FR-1026 | Повреждённый файл воркспейса не теряется | 01-tasks-panel | автотест | `test/workspace-text.test.ts`, `test/workspaces.test.ts`, `test/stores.test.ts` |
 | FR-1027 | Каналы файлов и git отвечают только по разрешённым каталогам | 01-tasks-panel | автотест | `test/allowed-paths.test.ts` |
+| FR-1028 | Воркспейс - файл проектов и его выбор при запуске | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `scripts/smoke.mjs` |
+| FR-1029 | Один воркспейс - один процесс, замок и «Недавние» | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-1030 | Окно первого запуска создаёт воркспейс | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/workspace-text.test.ts`, `scripts/smoke.mjs` |
 | FR-2001 | Источники MR - источники задач | 02-mr-view | автотест | `test/mrs.test.ts` |
 | NFR-2001 | Предел деталей MR и процессов CLI | 02-mr-view | автотест | `test/mrs.test.ts` |
 | FR-2002 | Выборка открытых MR со всех страниц | 02-mr-view | автотест | `test/mrs.test.ts` |
@@ -98,8 +101,9 @@ date: 2026-10-26
 | FR-10002 | Фильтры и сортировка панелей переживают перезапуск | 10-ui-preferences | автотест | `test/prefs.test.ts`, `test/model.test.ts` |
 | FR-10003 | `Shift+Enter` - перевод строки в запросе | 10-ui-preferences | осмотр и демонстрация | - |
 | FR-10004 | Порядок репозиториев проекта | 10-ui-preferences | автотест | `test/reorder.test.ts`, `test/roots.test.ts` |
-| FR-10005 | Версия приложения и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `scripts/smoke.mjs` |
+| FR-10005 | Версия приложения, воркспейс и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `test/workspaces.test.ts`, `scripts/smoke.mjs` |
 | FR-10006 | Уведомление, когда сессия ждёт человека | 10-ui-preferences | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/notify-args.test.ts`, `test/menu.test.ts` |
+| FR-10007 | Системное меню «Воркспейс» вместо меню проекта на панели | 10-ui-preferences | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-11001 | Jira в свойствах проекта | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11002 | Кнопка «Статус» и карточка | 11-status-hub | smoke | `scripts/smoke.mjs` |
 | FR-11003 | Сбор и обновление данных | 11-status-hub | smoke | `scripts/smoke.mjs` |

@@ -1,11 +1,14 @@
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell } from 'electron';
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate, NOTIFICATIONS_MENU_ID } from './menu';
+import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from './menu';
 import { validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
@@ -20,13 +23,50 @@ import {
   saveProjectsState,
   validateRef,
 } from './trackers';
+import {
+  canonicalWorkspace,
+  createAndOpen,
+  directoryProblem,
+  isLegacyWorkspace,
+  isRegularFile,
+  launchArgs,
+  launchInstance,
+  legacyFileOf,
+  lockPathOf,
+  openRecentWorkspace,
+  openWorkspaceFile,
+  parseWorkspaceArg,
+  readRecent,
+  releaseLock,
+  resolveStartup,
+  sessionDirOf,
+  touchRecent,
+  tryLock,
+  workspaceDisplayName,
+  type OpenDeps,
+  type OpenResult,
+  type SpawnFn,
+} from './workspaces';
 
 let win: BrowserWindow | null = null;
 const sessions = new SessionManager(app.getPath('userData'), (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
-const projects = new ProjectStore(path.join(app.getPath('userData'), 'projects.json'), () => trackerSettings.load());
+const userData = app.getPath('userData');
+type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem'>;
+// Инстанс без воркспейса (отмена окна первого запуска): проектов нет, писать некуда.
+const noWorkspace: Projects = {
+  load: () => ({ projects: [], lastProjectId: null }),
+  save: () => {
+    throw new Error('Воркспейс не открыт');
+  },
+  problem: () => null,
+};
+// Воркспейс выбирается в whenReady; замыкания ниже читают переменную при вызове.
+let projects: Projects = noWorkspace;
+let current: { file: string | null; legacy: boolean } = { file: null, legacy: false };
+let heldLock: string | null = null;
 const paths = createPathHandlers({
   allowed: new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]),
   liveDirs: () => sessions.liveDirs(),
@@ -70,15 +110,25 @@ function confirmEndSessions(): boolean {
 
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff');
 
-function createWindow(): void {
+// Настройки интерфейса (localStorage) живут в сессии воркспейса; прежний projects.json остаётся в сессии по умолчанию.
+function windowSession(): Electron.Session {
+  if (!current.file) return session.fromPartition('cyborg-no-workspace');
+  if (current.legacy) return session.defaultSession;
+  const dir = sessionDirOf(userData, current.file);
+  fs.mkdirSync(dir, { recursive: true });
+  return session.fromPath(dir);
+}
+
+function createWindow(bounds?: Electron.Rectangle): void {
   win = new BrowserWindow({
     width: 1600,
     height: 1000,
+    ...bounds,
     title: 'Cyborg',
     icon: path.join(__dirname, 'icon.png'),
     backgroundColor: windowBackground(),
-    autoHideMenuBar: true,
     webPreferences: {
+      session: windowSession(),
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
@@ -97,6 +147,29 @@ nativeTheme.on('updated', () => win?.setBackgroundColor(windowBackground()));
 ipcMain.handle('dialog:pickDir', async (_event, defaultPath?: string) => {
   const result = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], defaultPath });
   return paths.picked(result.canceled ? null : result.filePaths[0]);
+});
+ipcMain.handle('dialog:pickWorkspaceDir', async (_event, defaultPath?: unknown) => {
+  const result = await dialog.showOpenDialog(win!, {
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: typeof defaultPath === 'string' ? defaultPath : undefined,
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+ipcMain.handle('workspace:info', () => ({
+  file: current.file,
+  name: current.file && !current.legacy ? workspaceDisplayName(current.file) : null,
+  home: os.homedir(),
+  sep: path.sep,
+}));
+ipcMain.handle('workspace:create', async (_event, raw: unknown) => {
+  const outcome = await createAndOpen(raw, openDeps);
+  if ('error' in outcome || 'exists' in outcome) return outcome;
+  await report(outcome.opened, '');
+  return {};
+});
+ipcMain.handle('workspace:open', async (_event, file: unknown) => {
+  if (typeof file !== 'string') throw new Error('Некорректные аргументы workspace:open');
+  await report(await openWorkspaceFile(file, openDeps), file);
 });
 ipcMain.handle('projects:load', () => projects.load());
 ipcMain.handle('projects:problem', () => {
@@ -224,12 +297,18 @@ ipcMain.on('session:unnotify', (_event, id: unknown) => {
 
 // Выключатель хранит интерфейс (FR-1015: главный процесс на диск настроек не пишет); меню только отражает его.
 ipcMain.on('notifications:state', (_event, enabled: boolean) => {
+  menuState.notifications = enabled === true;
   const item = Menu.getApplicationMenu()?.getMenuItemById(NOTIFICATIONS_MENU_ID);
   if (item) item.checked = enabled === true;
   if (enabled !== true) {
     for (const notification of shownNotifications.values()) notification.close();
     shownNotifications.clear();
   }
+});
+ipcMain.on('project:selected', (_event, selected: unknown) => {
+  menuState.hasProject = selected === true;
+  const item = Menu.getApplicationMenu()?.getMenuItemById(PROJECT_PROPERTIES_MENU_ID);
+  if (item) item.enabled = menuState.hasProject;
 });
 ipcMain.handle('fs:list', (_event, dir: unknown) => paths.list(dir));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
@@ -253,22 +332,162 @@ ipcMain.handle('git:switch', async (_event, root: unknown, branch: unknown) => {
 });
 ipcMain.handle('git:headContent', (_event, file: unknown) => paths.headContent(file));
 
-app.whenReady().then(() => {
-  // icon у BrowserWindow на macOS не действует: в Dock остался бы значок Electron.
-  app.dock?.setIcon(path.join(__dirname, 'icon.png'));
+const menuState = { hasProject: false, notifications: true };
+
+const fail = (reason: string): void => {
+  dialog.showErrorBox('Cyborg', reason);
+  app.exit(1);
+};
+
+function quitWithConfirm(): void {
+  if (confirmEndSessions()) app.quit();
+}
+
+function rebuildMenu(): void {
+  const workspace: WorkspaceMenu = {
+    recent: readRecent(userData),
+    home: os.homedir(),
+    hasWorkspace: current.file !== null,
+    hasProject: menuState.hasProject,
+    open: () => void chooseWorkspace(),
+    create: () => win?.webContents.send('menu:create-workspace'),
+    openRecent: (file) => void openRecent(file),
+    newProject: () => win?.webContents.send('menu:project', 'new'),
+    editProject: () => win?.webContents.send('menu:project', 'edit'),
+  };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       appMenuTemplate(
         process.platform,
-        () => {
-          if (confirmEndSessions()) app.quit();
-        },
+        quitWithConfirm,
         (enabled) => {
           if (win && !win.isDestroyed()) win.webContents.send('notifications:toggle', enabled);
         },
+        workspace,
+        menuState.notifications,
       ),
     ),
   );
+}
+
+/** Воркспейс становится текущим: хранилище проектов, замок (уже взятый вызывающим), «Недавние». */
+function adoptWorkspace(input: string, locked: boolean): void {
+  const file = canonicalWorkspace(input);
+  current = { file, legacy: isLegacyWorkspace(userData, file) };
+  projects = new ProjectStore(file, () => trackerSettings.load());
+  heldLock = locked ? file : null;
+  touchRecent(userData, file);
+}
+
+function openHere(input: string): OpenResult {
+  const file = canonicalWorkspace(input);
+  const lock = tryLock(file);
+  if (lock.status === 'busy') return { busy: { pid: lock.pid, lock: lockPathOf(file) } };
+  adoptWorkspace(file, lock.status === 'locked');
+  const old = win;
+  createWindow(old && !old.isDestroyed() ? old.getBounds() : undefined);
+  // Новое окно уже есть, поэтому window-all-closed не срабатывает; ответ на вызов из старого окна уходит до его уничтожения.
+  if (old && !old.isDestroyed()) setImmediate(() => old.destroy());
+  menuState.hasProject = false;
+  rebuildMenu();
+  return { ok: true };
+}
+
+const openDeps: OpenDeps = {
+  userData,
+  hasWorkspace: () => current.file !== null,
+  openHere,
+  launch: (file) =>
+    launchInstance(
+      spawn as unknown as SpawnFn,
+      process.execPath,
+      launchArgs({ packaged: app.isPackaged, appPath: app.getAppPath(), userData, argv: process.argv, file }),
+    ),
+};
+
+async function report(result: OpenResult, file: string): Promise<void> {
+  if ('ok' in result || !win || win.isDestroyed()) return;
+  if ('busy' in result) {
+    const { pid, lock } = result.busy;
+    await dialog.showMessageBox(win, {
+      type: 'info',
+      message: 'Воркспейс уже открыт',
+      detail: `${lock.slice(0, -'.lock'.length)}${pid ? `\nПроцесс ${pid}` : ''}\nЕсли Cyborg с ним не запущен, удалите ${lock}`,
+    });
+  } else if ('missing' in result) {
+    await dialog.showMessageBox(win, { type: 'error', message: 'Файл воркспейса не найден', detail: file });
+  } else {
+    await dialog.showMessageBox(win, { type: 'error', message: 'Не удалось запустить Cyborg', detail: result.error });
+  }
+}
+
+async function chooseWorkspace(): Promise<void> {
+  if (!win) return;
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openFile'],
+    filters: [{ name: 'Воркспейс Cyborg', extensions: ['json'] }],
+  });
+  if (result.canceled || !result.filePaths[0]) return;
+  await report(await openWorkspaceFile(result.filePaths[0], openDeps), result.filePaths[0]);
+}
+
+async function openRecent(file: string): Promise<void> {
+  const result = await openRecentWorkspace(file, openDeps);
+  await report(result, file);
+  if ('missing' in result) rebuildMenu();
+}
+
+/** Воркспейс запуска: --workspace, иначе последний свободный из «Недавних», иначе прежний projects.json, иначе пусто (окно первого запуска). */
+function chooseStartupWorkspace(): boolean {
+  const arg = parseWorkspaceArg(process.argv, process.cwd());
+  if (arg.kind === 'error') {
+    fail(arg.reason);
+    return false;
+  }
+  if (arg.kind === 'file') {
+    const file = canonicalWorkspace(arg.file);
+    const problem = directoryProblem(file);
+    if (problem) {
+      fail(problem);
+      return false;
+    }
+    const lock = tryLock(file);
+    if (lock.status === 'busy') {
+      fail(`Воркспейс уже открыт\n${file}${lock.pid ? `\nПроцесс ${lock.pid}` : ''}\nЕсли Cyborg с ним не запущен, удалите ${lockPathOf(file)}`);
+      return false;
+    }
+    adoptWorkspace(file, lock.status === 'locked');
+    return true;
+  }
+  let locked = false;
+  const start = resolveStartup({
+    recent: readRecent(userData),
+    legacyFile: canonicalWorkspace(legacyFileOf(userData)),
+    isFile: isRegularFile,
+    isLegacy: (file) => isLegacyWorkspace(userData, file),
+    tryLock: (file) => {
+      const lock = tryLock(file);
+      locked = lock.status === 'locked';
+      return lock.status === 'busy' ? 'busy' : 'ok';
+    },
+  });
+  if (start.kind === 'workspace') adoptWorkspace(start.file, locked);
+  return true;
+}
+
+const releaseHeldLock = (): void => {
+  if (heldLock) releaseLock(heldLock);
+};
+app.on('will-quit', releaseHeldLock);
+process.on('exit', releaseHeldLock);
+
+app.whenReady().then(() => {
+  // icon у BrowserWindow на macOS не действует: в Dock остался бы значок Electron.
+  app.dock?.setIcon(path.join(__dirname, 'icon.png'));
+  if (!chooseStartupWorkspace()) return;
+  rebuildMenu();
+  // Список «Недавних» общий для инстансов: другой мог изменить его, пока это окно было в фоне.
+  app.on('browser-window-focus', rebuildMenu);
   void trackers.warmAuth();
   createWindow();
 });

@@ -11,4 +11,17 @@ describe('windowTitle', () => {
     assert.equal(windowTitle('0.1.0', null), 'Cyborg v.0.1.0');
     assert.equal(windowTitle('0.1.0', ''), 'Cyborg v.0.1.0');
   });
+
+  it('с воркспейсом: проект, воркспейс, приложение', () => {
+    assert.equal(windowTitle('0.1.0', 'Маркетплейс', 'work'), 'Маркетплейс - work - Cyborg v.0.1.0');
+  });
+
+  it('воркспейс без проекта: воркспейс, затем приложение', () => {
+    assert.equal(windowTitle('0.1.0', null, 'work'), 'work - Cyborg v.0.1.0');
+  });
+
+  it('прежний projects.json и пустой Cyborg: имени воркспейса нет, заголовок прежний', () => {
+    assert.equal(windowTitle('0.1.0', 'Smoke', null), 'Smoke - Cyborg v.0.1.0');
+    assert.equal(windowTitle('0.1.0', null, null), 'Cyborg v.0.1.0');
+  });
 });

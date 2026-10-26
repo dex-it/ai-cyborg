@@ -1,6 +1,7 @@
 ---
 id: ADR-0004
-status: review
+status: superseded
+superseded_by: ADR-0014
 date: 2026-10-23
 relates_to: product, 01-tasks-panel
 origin: derived
@@ -8,6 +9,8 @@ quality-checks: входных записей нет
 ---
 
 # ADR-0004 Хранение проектов - JSON-файл в каталоге профиля приложения
+
+> Заменён ADR-0014.
 
 > Реконструировано из кода, не согласовано.
 
