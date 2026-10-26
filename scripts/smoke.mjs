@@ -35,7 +35,7 @@ writeFileSync(
   join(userData, 'projects.json'),
   JSON.stringify({
     projects: [
-      { id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: true, gitlab: false } },
+      { id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: true, gitlab: false }, jira: { enabled: true, project: 'SMK' } },
       { id: 'p2', name: 'Bare', description: '', repos: [repo], trackers: { github: false, gitlab: false } },
     ],
     lastProjectId: 'p1',
@@ -49,6 +49,7 @@ writeFileSync(
   `#!/bin/sh
 printf '{"hook_event_name":"SessionStart","cwd":"%s"}\\n' "$PWD" >> "$CYBORG_EVENTS"
 echo "fake-claude ready"
+echo "ARGS: $*"
 while IFS= read -r line; do
   case "$line" in
     "cd "*) dir=\${line#cd }; printf '{"hook_event_name":"PostToolUse","cwd":"%s","tool_name":"EnterWorktree"}\\n' "$dir" >> "$CYBORG_EVENTS"; echo "moved";;
@@ -62,6 +63,29 @@ chmodSync(fakeClaude, 0o755);
 const fakeGh = join(fakeBin, 'gh');
 writeFileSync(fakeGh, '#!/bin/sh\necho "You are not logged in to any GitHub hosts." >&2\nexit 1\n');
 chmodSync(fakeGh, 0o755);
+
+// Подставной jira: вход есть, одна задача SMK-1 в работе; формы ответов - как у jira-cli 1.7.0 (`--raw`, `--plain`).
+const fakeJira = join(fakeBin, 'jira');
+writeFileSync(
+  fakeJira,
+  `#!/bin/sh
+case "$1" in
+  version) echo 'Version="1.7.0", GitCommit="smoke"';;
+  me) echo 'smoke@example.com';;
+  open) echo "https://jira.example/browse/$2";;
+  issue)
+    if [ "$2" = list ]; then
+      case "$*" in
+        *--plain*) echo "SMK-1";;
+        *) echo '[{"key":"SMK-1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress"},"issueType":{"name":"Bug"},"priority":{"name":"High"},"assignee":{"displayName":"Я"},"updated":"2026-10-26T12:00:00.000+0300","labels":[],"description":"x"}}]';;
+      esac
+    else
+      echo '{"key":"SMK-1","self":"https://jira.example/rest/api/2/issue/1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Bug"},"description":"Описание из Jira","comment":{"total":1,"comments":[{"id":"1","author":{"displayName":"Коллега"},"body":"Комментарий из Jira"}]}}}'
+    fi;;
+esac
+`,
+);
+chmodSync(fakeJira, 0o755);
 
 const mac = process.platform === 'darwin';
 const commandModifier = mac ? 4 : 2; // CDP: Alt=1, Ctrl=2, Meta=4, Shift=8
@@ -214,9 +238,41 @@ async function main() {
   await ev('(() => { const s = document.querySelector("#project-select"); s.value = "p2"; s.dispatchEvent(new Event("change")); })()');
   await waitFor('открытая панель закрылась у проекта без источников', async () => !(await panelOpen()));
   await waitFor('у проекта без источников нет кнопок панели', async () => (await ev('document.querySelector("#tasks-toggle").hidden && document.querySelector("#mrs-toggle").hidden')) === true);
+  assert.equal(await ev('document.querySelector("#status-toggle").hidden'), true, 'у проекта без источников есть кнопка «Статус»');
   await ev('(() => { const s = document.querySelector("#project-select"); s.value = "p1"; s.dispatchEvent(new Event("change")); })()');
   await waitFor('кнопки вернулись с проектом с источником', async () => (await ev('document.querySelector("#tasks-toggle").hidden')) === false);
   log('панель задач: кнопка открывает и закрывает, сессия закрывает, без источников кнопок нет');
+
+  // FR-11002..FR-11008: кнопка «Статус» - карточка с задачей Jira, детали, закрытие, сессия по задаче с промптом из ключа.
+  const popoverOpen = async () => !(await ev('document.querySelector("#status-popover").hidden'));
+  const visibleTerminal = () => ev('(() => { const e = [...document.querySelectorAll(".xterm-rows")].find((x) => x.offsetParent); return e ? e.innerText : ""; })()');
+  assert.equal(await ev('document.querySelector("#status-toggle").hidden'), false, 'у проекта с источниками нет кнопки «Статус»');
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка статуса открыта кнопкой', popoverOpen);
+  await waitFor('задача Jira в карточке', async () => /SMK-1/.test(await text('#status-popover')));
+  assert.equal(await ev('document.querySelector("#status-toggle .status-dot").dataset.level'), 'unknown', 'без входа в gh уровень не unknown');
+  assert.match(await text('#status-popover'), /нет remote GitHub или GitLab/, 'карточка не объяснила, почему нет данных о MR');
+  await ev('[...document.querySelectorAll(".status-link")].find((e) => e.textContent === "SMK-1").click()');
+  await waitFor('детали задачи Jira', async () => /Описание из Jira/.test(await text('#status-popover')) && /Комментарий из Jira/.test(await text('#status-popover')));
+  assert.ok(await popoverOpen(), 'клик внутри карточки с перерисовкой закрыл её');
+  await ev('document.body.click()');
+  await waitFor('клик снаружи закрыл карточку', async () => !(await popoverOpen()));
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка открыта снова', popoverOpen);
+  await combo(0, 'Escape', 'Escape', 27);
+  await waitFor('Escape закрыл карточку', async () => !(await popoverOpen()));
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка открыта перед стартом', popoverOpen);
+  await ev('document.querySelector(".status-item .status-actions button").click()');
+  await waitFor('карточка закрылась при старте сессии', async () => !(await popoverOpen()));
+  await waitFor('вторая вкладка сессии по задаче Jira', async () => (await tabs()) === 2 && /SMK-1/.test(await text('#session-list > *:nth-child(2)')));
+  await waitFor('промпт задачи Jira в аргументах claude', async () => /Задача Jira SMK-1: прочитай её/.test(await visibleTerminal()));
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка открыта после старта', popoverOpen);
+  await waitFor('у задачи с сессией кнопка «К сессии»', async () => (await text('.status-item .status-actions button')) === 'К сессии');
+  await ev('document.querySelector(".status-item .status-actions button").click()');
+  await waitFor('повторное действие вернуло к сессии без новой вкладки', async () => !(await popoverOpen()) && (await tabs()) === 2);
+  log('кнопка «Статус»: карточка с задачей Jira, детали, закрытие кликом и Escape, сессия по задаче, возврат к ней');
 
   // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».
   const stray = await ev(`(() => {

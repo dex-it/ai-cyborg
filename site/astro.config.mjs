@@ -78,6 +78,7 @@ export default defineConfig({
             'features/sessions',
             'features/tree',
             'features/tasks-mrs',
+            'features/status',
             'features/path-drop',
             'features/isolation',
           ],
