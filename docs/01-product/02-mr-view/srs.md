@@ -306,7 +306,8 @@ quality-checks: входных записей нет
 - **traced from:** BR-2002.
 - **источник:** цель, критерий 19; BRD продукта, non-goal «восстановление сессий»; конвенция FR-1015.
 - **rationale:** reason - non-goal продукта; assumptions - нет; relationships - нет; design constraints - нет.
-- **verification:** осмотр - в `projects.json` нет данных MR, `trackers.json` только читается.
+- **verification:** испытание - `test/static-guards.test.ts` («привязка задачи и MR к сессии только в памяти»); осмотр - в `projects.json` нет данных MR,
+  `trackers.json` только читается.
 - **класс:** Functions. **origin:** source.
 
 ### FR-2015 Данные MR - текстом

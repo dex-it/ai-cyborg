@@ -11,16 +11,17 @@
 - Проверка типов - `npm run typecheck`
 - Линтер - нет
 - Тесты - `npm test` (node --test, без зависимостей)
+- Согласованность корпуса - `npm run check:corpus`; после правки SRS матрицу верификации пересобирает `npm run corpus:matrix`
 - Дымовой тест окна - `npm run smoke` (нужен дисплей; на Linux `xvfb-run`)
-- CI - GitHub Actions, `.github/workflows/ci.yml`: сборка, типы, тесты и дымовой тест на macOS и Linux для каждого PR и пуша в master
+- CI - GitHub Actions, `.github/workflows/ci.yml`: сборка, типы, тесты и дымовой тест на macOS и Linux и проверка корпуса для каждого PR и пуша в master
 
 ## Карта
 
 - `dist/` - выход сборки esbuild (main.js, preload.js, renderer/), в git не входит
 - `docs/` - корпус документации: BRD продукта, ADR, счётчики; адреса в .docs_layout
 - `node_modules/` - установленные npm-зависимости, в git не входят
-- `package.json` - манифест: скрипты build/start/test/typecheck/smoke, main = dist/main.js
-- `scripts/` - build.mjs - сборка трёх бандлов esbuild и копирование статики и Monaco
+- `package.json` - манифест: скрипты build/start/test/typecheck/smoke/check:corpus/corpus:matrix, main = dist/main.js
+- `scripts/` - build.mjs - сборка трёх бандлов esbuild и копирование статики и Monaco; check-corpus.ts и corpus-lib.ts - проверка корпуса и матрица верификации
 - `docs/guide/` - страницы сайта документации для пользователя (не корпус требований); собирает `site/`
 - `site/` - сайт документации (Astro и Starlight): `cd site && npm ci && npm run build && npm run verify`; публикует `.github/workflows/docs-site.yml` в GitHub Pages
 - `src/main/` - главный процесс Electron: сессии в pty, файлы, git, проекты; точки входа main.ts и preload.ts
