@@ -127,21 +127,28 @@ test('SessionManager: каталоги работающих сессий - ра�
   assert.equal(manager.uses(tmp), false);
 });
 
-test('waitingReason: только ожидание человека - конец хода и типы Notification из белого списка', () => {
+test('waitingReason: только ожидание человека, текст по типу события без содержимого ответа', () => {
   assert.equal(waitingReason({ hook_event_name: 'Stop' }), 'Ход завершён, ждёт ответа');
-  assert.equal(waitingReason({ hook_event_name: 'Stop', last_assistant_message: '  Какой вариант\n\nберём?  ', background_tasks: [], session_crons: [] }), 'Какой вариант берём?');
-  const long = waitingReason({ hook_event_name: 'Stop', last_assistant_message: 'я'.repeat(500) })!;
-  assert.equal(long.length, 200);
-  assert.ok(long.endsWith('…'));
+  assert.equal(
+    waitingReason({ hook_event_name: 'Stop', last_assistant_message: 'пароль от стенда: hunter2', background_tasks: [], session_crons: [] }),
+    'Ход завершён, ждёт ответа',
+    'ответ Claude в уведомление не идёт',
+  );
   assert.equal(waitingReason({ hook_event_name: 'Stop', background_tasks: [{ id: 't', type: 'subagent', status: 'running' }] }), null, 'пауза до фоновой задачи');
   assert.equal(waitingReason({ hook_event_name: 'Stop', session_crons: [{ id: 'c', schedule: '*/5 * * * *' }] }), null, 'пауза до пробуждения');
   assert.equal(
     waitingReason({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }),
-    'Claude needs your permission to use Bash',
+    'Просит разрешение',
+    'сообщение запроса в уведомление не идёт',
   );
-  for (const type of ['elicitation_dialog', 'elicitation_url_dialog', 'agent_needs_input', 'quota_auto_resume_stale', 'quota_auto_resume_disabled']) {
-    assert.equal(waitingReason({ hook_event_name: 'Notification', notification_type: type }), 'Ждёт ответа', type);
-  }
+  const byType: Record<string, string> = {
+    elicitation_dialog: 'Задаёт вопрос',
+    elicitation_url_dialog: 'Задаёт вопрос',
+    agent_needs_input: 'Ждёт ответа',
+    quota_auto_resume_stale: 'Остановилась на лимите',
+    quota_auto_resume_disabled: 'Остановилась на лимите',
+  };
+  for (const [type, text] of Object.entries(byType)) assert.equal(waitingReason({ hook_event_name: 'Notification', notification_type: type, message: 'секрет' }), text, type);
   for (const type of ['idle_prompt', 'auth_success', 'elicitation_complete', 'elicitation_response', 'agent_completed', 'quota_auto_resume_fired', 'plugin_notification', 'unknown_future_type', undefined]) {
     assert.equal(waitingReason({ hook_event_name: 'Notification', notification_type: type, message: 'm' }), null, String(type));
   }
@@ -172,7 +179,7 @@ test('SessionManager: после Stop «ждёт» объявляется, то�
   append({ hook_event_name: 'Stop', last_assistant_message: 'готово' });
   await until(() => activity().length === 3);
   await until(() => waiting().length > 0);
-  assert.deepEqual(waiting().map((e) => e.payload), [{ id, reason: 'готово' }]);
+  assert.deepEqual(waiting().map((e) => e.payload), [{ id, reason: 'Ход завершён, ждёт ответа' }]);
   // Моменты событий снимает сам эмиттер, поэтому проверка не зависит от скорости опроса.
   assert.ok(waiting()[0].at! - activity()[2].at! >= delay - 5, 'раньше задержки не объявляется');
   manager.kill(id);
@@ -185,7 +192,7 @@ test('SessionManager: запрос разрешения объявляется �
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'разрешите Bash' }) + '\n');
   await until(() => events.some((e) => e.channel === 'session:waiting'));
-  assert.deepEqual(events.find((e) => e.channel === 'session:waiting')?.payload, { id, reason: 'разрешите Bash' });
+  assert.deepEqual(events.find((e) => e.channel === 'session:waiting')?.payload, { id, reason: 'Просит разрешение' });
   fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'Stop' }) + '\n');
   await until(() => events.filter((e) => e.channel === 'session:activity').length === 2);
   manager.kill(id);
