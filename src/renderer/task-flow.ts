@@ -6,9 +6,10 @@ interface TaskSessionLike {
   project: { id: string };
   task?: { key: string };
   mr?: { key: string };
+  jira?: { key: string };
 }
 
-const sessionKey = (s: TaskSessionLike): string | undefined => s.task?.key ?? s.mr?.key;
+const sessionKey = (s: TaskSessionLike): string | undefined => s.task?.key ?? s.mr?.key ?? (s.jira && `jira:${s.jira.key}`);
 
 const compound = (projectId: string, taskKey: string): string => `${projectId}\u0000${taskKey}`;
 

@@ -201,6 +201,13 @@ describe('ProjectStore: источники задач проекта', () => {
     write([base]);
     assert.deepEqual(flags(store().load()), [{ github: true, gitlab: false }]);
   });
+  it('поле jira не объект (true, строка, массив) читается как отсутствующее: проект можно сохранить', () => {
+    legacy({ github: true, gitlab: false });
+    write([true, 'x', []].map((jira, i) => ({ ...base, id: String(i), jira })));
+    const state = store().load();
+    assert.deepEqual(state.projects.map((p) => 'jira' in p), [false, false, false]);
+    assert.ok(validateProjectsState(state), 'сохранение не отклоняется');
+  });
   it('поле не объект (null, строка, число, массив) читается как отсутствующее', () => {
     legacy({ github: false, gitlab: true });
     write([1, 'x', null, 7, []].map((trackers, i) => ({ ...base, id: String(i), trackers })));
