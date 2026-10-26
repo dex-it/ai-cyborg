@@ -1,31 +1,76 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Cyborg</title>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2b3445"/>
-      <stop offset="1" stop-color="#151a24"/>
+    <!-- Плитка: тёмная, с лёгким подъёмом света сверху -->
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2d3850"/>
+      <stop offset="1" stop-color="#121722"/>
     </linearGradient>
+    <!-- Человеческая половина -->
+    <linearGradient id="human" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f7fb"/>
+      <stop offset="1" stop-color="#d5deea"/>
+    </linearGradient>
+    <!-- Машинная половина -->
+    <linearGradient id="machine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7f8fa9"/>
+      <stop offset="1" stop-color="#56637b"/>
+    </linearGradient>
+    <!-- Свечение глаза -->
     <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#ffd2a8"/>
-      <stop offset="0.45" stop-color="#ff8a3d"/>
+      <stop offset="0" stop-color="#ffb36b" stop-opacity="0.95"/>
+      <stop offset="0.5" stop-color="#ff8a3d" stop-opacity="0.45"/>
       <stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/>
     </radialGradient>
-    <clipPath id="right"><rect x="128" y="0" width="128" height="256"/></clipPath>
-    <clipPath id="left"><rect x="0" y="0" width="128" height="256"/></clipPath>
+    <!-- Голова: купол - точная полуокружность, дальше зеркальные грани -->
+    <path id="head" d="M312 470A200 200 0 0 1 712 470V620Q712 650 690 668L590 744Q580 752 566 752H458Q444 752 434 744L334 668Q312 650 312 620Z"/>
+    <clipPath id="left"><rect x="0" y="0" width="512" height="1024"/></clipPath>
+    <clipPath id="right"><rect x="512" y="0" width="512" height="1024"/></clipPath>
   </defs>
-  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
-  <path clip-path="url(#left)" d="M128 44c-46 0-74 32-74 76 0 30 12 52 30 66v26h88v-26c18-14 30-36 30-66 0-44-28-76-74-76z" fill="#e8ecf2"/>
-  <path clip-path="url(#right)" d="M128 44c-46 0-74 32-74 76 0 30 12 52 30 66v26h88v-26c18-14 30-36 30-66 0-44-28-76-74-76z" fill="#7d8aa0"/>
-  <path clip-path="url(#right)" d="M128 44c-46 0-74 32-74 76 0 30 12 52 30 66v26h88v-26c18-14 30-36 30-66 0-44-28-76-74-76z" fill="none" stroke="#3794ff" stroke-width="6"/>
-  <g stroke="#3794ff" stroke-width="5" fill="none" stroke-linecap="round">
-    <path d="M128 70h26l12 12"/>
-    <path d="M128 168h20l14-14h18"/>
-    <circle cx="183" cy="154" r="4" fill="#3794ff"/>
-    <circle cx="170" cy="85" r="4" fill="#3794ff"/>
+
+  <!-- Плитка -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <rect x="104" y="104" width="816" height="816" rx="181" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="8"/>
+
+  <!-- Композиция по центру плитки: голова крупнее на 14 %, вместе с вкладками сдвинута вверх на 29 -->
+  <g transform="translate(0 -29)">
+  <g transform="translate(512 511) scale(1.14) translate(-512 -511)">
+  <!-- Голова: левая половина - человек, правая - машина -->
+  <g clip-path="url(#left)"><use href="#head" fill="url(#human)"/></g>
+  <g clip-path="url(#right)"><use href="#head" fill="url(#machine)"/></g>
+
+  <!-- Контур машинной половины и схема -->
+  <g clip-path="url(#right)">
+    <use href="#head" fill="none" stroke="#3794ff" stroke-width="16" stroke-linejoin="round"/>
+    <g fill="none" stroke="#3794ff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M512 380H592L626 414H672"/>
+      <path d="M512 596H584L616 564H672"/>
+    </g>
+    <g fill="#3794ff">
+      <circle cx="684" cy="414" r="12"/>
+      <circle cx="684" cy="564" r="12"/>
+    </g>
   </g>
-  <line x1="128" y1="44" x2="128" y2="212" stroke="#151a24" stroke-width="5"/>
-  <ellipse cx="99" cy="124" rx="11" ry="8" fill="#151a24"/>
-  <circle cx="157" cy="124" r="30" fill="url(#glow)"/>
-  <circle cx="157" cy="124" r="11" fill="#fff4e8"/>
-  <path d="M104 186l10 8-10 8" fill="none" stroke="#151a24" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M124 202h22" stroke="#151a24" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- Шов между половинами -->
+  <rect x="508" y="270" width="8" height="482" fill="#121722"/>
+
+  <!-- Глаза: человеческий - тёмный, машинный - светящийся -->
+  <circle cx="432" cy="490" r="26" fill="#121722"/>
+  <circle cx="592" cy="490" r="64" fill="url(#glow)"/>
+  <circle cx="592" cy="490" r="26" fill="#fff1e3"/>
+
+  <!-- Приглашение терминала на человеческой половине -->
+  <g fill="none" stroke="#121722" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M404 590L444 622L404 654"/>
+    <path d="M466 660H496"/>
+  </g>
+  </g>
+  <!-- Три сессии в одном окне: средняя активна -->
+  <g>
+    <rect x="352" y="828" width="96" height="18" rx="9" fill="#e9eef5" fill-opacity="0.55"/>
+    <rect x="464" y="828" width="96" height="18" rx="9" fill="#ff8a3d"/>
+    <rect x="576" y="828" width="96" height="18" rx="9" fill="#3794ff" fill-opacity="0.8"/>
+  </g>
+  </g>
 </svg>
