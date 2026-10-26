@@ -48,5 +48,5 @@ Cyborg ничего не пишет в Jira, GitHub и GitLab: ни статус
 :::
 
 :::caution
-Формат вывода `jira-cli` проверен по тестам и модулю `dex-jira-tracker`; на живом сервере Jira Cyborg пока не прогонялся. Если список пуст или написано «ответ не JSON», сообщите версию `jira version` и тип Jira (Cloud, Server).
+Формат вывода `jira-cli` проверен по тестам и на живом сервере Jira Server 9.2 (jira-cli 1.7.0); Jira Cloud и Data Center вживую не проверялись. Если список пуст или написано «ответ не JSON», сообщите версию `jira version` и тип Jira (Cloud, Server).
 :::

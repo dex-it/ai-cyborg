@@ -4,7 +4,7 @@
 //
 // `issue list --raw` у jira-cli - не ответ REST, а свой плоский вид (`fields.issueType`, у исполнителя только displayName),
 // `issue view --raw` - тело REST как есть (комментарии с `author`, `self`). Разбор следует обоим видам; формы сверены
-// модом dex-jira-tracker на jira-cli 1.7.0 и Jira Server 9.2 (у Cyborg живого входа в Jira нет - D-11 фичи 11).
+// модом dex-jira-tracker на jira-cli 1.7.0 и Jira Server 9.2 (на живой Jira Server 9.2 Cyborg прогнан 26.10.2026; Cloud и Data Center вживую не проверялись - D-11 фичи 11).
 
 import type { CliResult } from './trackers';
 
