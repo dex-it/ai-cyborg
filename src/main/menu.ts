@@ -27,7 +27,8 @@ export interface WorkspaceMenu {
  * без вкладок: они не видны, не закрываются и мешают сменить ветку. Масштаб страницы (Cmd/Ctrl+0, +, -) занят
  * масштабом шрифта приложения. Стандартные роли остаются: правка (копирование и вставка в терминале macOS - Cmd+C/V),
  * окно, инструменты разработчика. Выход - не роль, а `quit`: вызывающий сначала спрашивает подтверждение, пока идут сессии.
- * Окна настроек нет, поэтому выключатель уведомлений о ждущих сессиях живёт в View; состояние галочки выставляет интерфейс.
+ * Окна настроек нет, поэтому выключатель уведомлений о ждущих сессиях живёт в «Вид»; состояние галочки выставляет интерфейс.
+ * Подписи заданы явно: стандартные роли Electron подписывает по-английски независимо от языка системы.
  * «Воркспейс» ведёт воркспейсами и проектами: проект выбирается на панели, а создаётся и правится отсюда.
  */
 export function appMenuTemplate(
@@ -44,14 +45,46 @@ export function appMenuTemplate(
     checked: notificationsEnabled,
     click: (item) => toggleNotifications(item.checked),
   };
-  const quitItem: MenuItemConstructorOptions = { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: quit };
+  const quitItem: MenuItemConstructorOptions = { label: 'Выход', accelerator: 'CmdOrCtrl+Q', click: quit };
   const first: MenuItemConstructorOptions =
     platform === 'darwin'
       ? {
           label: 'Cyborg',
-          submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, quitItem],
+          submenu: [
+            { role: 'about', label: 'О программе Cyborg' },
+            { type: 'separator' },
+            { role: 'services', label: 'Службы' },
+            { type: 'separator' },
+            { role: 'hide', label: 'Скрыть Cyborg' },
+            { role: 'hideOthers', label: 'Скрыть остальные' },
+            { role: 'unhide', label: 'Показать все' },
+            { type: 'separator' },
+            quitItem,
+          ],
         }
-      : { label: 'File', submenu: [{ role: 'close' }, quitItem] };
+      : { label: 'Файл', submenu: [{ role: 'close', label: 'Закрыть окно' }, quitItem] };
+  const editMenu: MenuItemConstructorOptions = {
+    role: 'editMenu',
+    label: 'Правка',
+    submenu: [
+      { role: 'undo', label: 'Отменить' },
+      { role: 'redo', label: 'Повторить' },
+      { type: 'separator' },
+      { role: 'cut', label: 'Вырезать' },
+      { role: 'copy', label: 'Копировать' },
+      { role: 'paste', label: 'Вставить' },
+      { role: 'selectAll', label: 'Выделить всё' },
+    ],
+  };
+  const windowMenu: MenuItemConstructorOptions = {
+    role: 'windowMenu',
+    label: 'Окно',
+    submenu: [
+      { role: 'minimize', label: 'Свернуть' },
+      ...(platform === 'darwin' ? [{ role: 'zoom', label: 'Изменить масштаб окна' } as MenuItemConstructorOptions] : []),
+      { role: 'close', label: 'Закрыть окно' },
+    ],
+  };
   const recent: MenuItemConstructorOptions[] = workspace.recent.length
     ? workspace.recent.map((file) => ({ label: recentLabel(file, workspace.home), click: () => workspace.openRecent(file) }))
     : [{ label: 'Нет недавних', enabled: false }];
@@ -66,5 +99,9 @@ export function appMenuTemplate(
       { id: PROJECT_PROPERTIES_MENU_ID, label: 'Свойства проекта', enabled: workspace.hasProject, click: () => workspace.editProject() },
     ],
   };
-  return [first, workspaceMenu, { role: 'editMenu' }, { label: 'View', submenu: [notificationsItem, { type: 'separator' }, { role: 'toggleDevTools' }, { role: 'togglefullscreen' }] }, { role: 'windowMenu' }];
+  const viewMenu: MenuItemConstructorOptions = {
+    label: 'Вид',
+    submenu: [notificationsItem, { type: 'separator' }, { role: 'toggleDevTools', label: 'Инструменты разработчика' }, { role: 'togglefullscreen', label: 'Во весь экран' }],
+  };
+  return [first, workspaceMenu, editMenu, viewMenu, windowMenu];
 }

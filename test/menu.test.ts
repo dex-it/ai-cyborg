@@ -37,6 +37,17 @@ describe('appMenuTemplate', () => {
       const present = roles(appMenuTemplate(platform, () => {}, notifications, workspaceMenu()));
       assert.ok(present.includes('editMenu'));
       assert.ok(present.includes('windowMenu'));
+      for (const role of ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll', 'minimize', 'close']) assert.ok(present.includes(role), `нет роли ${role}`);
+    });
+
+    it(`${platform}: подписи меню по-русски, ни один пункт не остаётся с английской подписью роли`, () => {
+      const unlabeled = (items: MenuItemConstructorOptions[]): string[] =>
+        items.flatMap((item) => [
+          ...(item.type !== 'separator' && !item.label ? [String(item.role)] : []),
+          ...(item.label && /[A-Za-z]/.test(item.label.replace('Cyborg', '')) ? [item.label] : []),
+          ...(Array.isArray(item.submenu) ? unlabeled(item.submenu) : []),
+        ]);
+      assert.deepEqual(unlabeled(appMenuTemplate(platform, () => {}, notifications, workspaceMenu())), []);
     });
   }
 
@@ -52,9 +63,9 @@ describe('appMenuTemplate', () => {
     }
   });
 
-  it('выключатель уведомлений - галочка в View с известным id, клик передаёт новое состояние', () => {
+  it('выключатель уведомлений - галочка в «Вид» с известным id, клик передаёт новое состояние', () => {
     const set: boolean[] = [];
-    const view = appMenuTemplate('linux', () => {}, (value) => set.push(value), workspaceMenu()).find((item) => item.label === 'View');
+    const view = appMenuTemplate('linux', () => {}, (value) => set.push(value), workspaceMenu()).find((item) => item.label === 'Вид');
     const toggle = ((view?.submenu ?? []) as MenuItemConstructorOptions[]).find((item) => item.id === NOTIFICATIONS_MENU_ID);
     assert.ok(toggle, 'нет выключателя уведомлений');
     assert.equal(toggle.type, 'checkbox');
@@ -100,7 +111,7 @@ describe('appMenuTemplate', () => {
   });
 
   it('пересборка меню сохраняет состояние галочки уведомлений', () => {
-    const view = appMenuTemplate('linux', () => {}, notifications, workspaceMenu(), false).find((item) => item.label === 'View');
+    const view = appMenuTemplate('linux', () => {}, notifications, workspaceMenu(), false).find((item) => item.label === 'Вид');
     assert.equal(submenu(view).find((item) => item.id === NOTIFICATIONS_MENU_ID)?.checked, false);
   });
 

@@ -262,6 +262,7 @@ export function validateCreateRequest(raw: unknown): CreateRequest | { error: st
   if (typeof name !== 'string' || !name.trim()) return { error: 'Нужно имя воркспейса' };
   if (typeof file !== 'string' || !file.trim()) return { error: 'Нужен файл воркспейса' };
   if (!path.isAbsolute(file)) return { error: 'Нужен полный путь' };
+  if (path.extname(file).toLowerCase() !== '.json') return { error: 'Файл воркспейса должен иметь расширение .json' };
   const valid = validateProjectsState({ projects: [project], lastProjectId: null })?.projects[0];
   if (!valid || typeof valid.id !== 'string' || typeof valid.name !== 'string' || !valid.name.trim()) return { error: 'Нужно название проекта' };
   if (!Array.isArray(valid.repos) || !valid.repos.length || valid.repos.some((r) => typeof r !== 'string' || !path.isAbsolute(r))) {
