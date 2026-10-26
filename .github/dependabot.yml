@@ -1,4 +1,4 @@
-# Экшены в ci.yml закреплены по SHA: без Dependabot они не обновятся.
+# Экшены в workflow закреплены по SHA, а зависимости сайта - точными версиями: без Dependabot они не обновятся.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -7,3 +7,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: "CI"
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "Сайт"
