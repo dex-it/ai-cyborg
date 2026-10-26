@@ -15,7 +15,8 @@ const DARK: ITheme = {
   background: '#1e1e1e',
   foreground: '#cccccc',
   cursor: '#cccccc',
-  selectionBackground: '#264f78',
+  selectionBackground: '#3f72af',
+  selectionInactiveBackground: '#35587f',
 };
 
 const LIGHT: ITheme = {
