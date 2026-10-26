@@ -456,8 +456,9 @@ function createTerminal(id: number): Terminal {
   const term = new Terminal({
     fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
     fontSize,
-    cursorBlink: true,
     scrollback: 10000,
+    // Claude Code сам рисует выделение фоном ANSI blue, не меняя цвет текста - без поправки текст сливается с фоном.
+    minimumContrastRatio: 4.5,
     theme: terminalTheme(),
   });
   term.onData((data) => api.input(id, data));
