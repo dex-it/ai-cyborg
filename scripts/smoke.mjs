@@ -177,6 +177,16 @@ async function main() {
   await waitFor('переход дерева в worktree по событию хука', async () => (await text('#tree-meta')).includes(worktree));
   log('рабочий каталог сессии отслежен по событиям хуков');
 
+  // Каналы файлов и git отвечают только по репозиториям проекта и каталогам сессий (ADR-0002, п.5): worktree вне репозитория -
+  // каталог сессии, соседний каталог и корень файловой системы - нет.
+  const answer = (call) => ev(`${call}.then((v) => 'принят: ' + JSON.stringify(v), (e) => String(e.message))`);
+  for (const call of ["listDir('/')", `listDir('${base}')`, "readFile('/etc/hosts')", "gitRoot('/tmp')", "gitStatus('/')", "gitHeadContent('/etc/hosts')"]) {
+    assert.match(await answer(`window.cyborg.${call}`), /Путь вне репозиториев/, `${call} не отклонён`);
+  }
+  assert.match(await answer(`window.cyborg.listDir('${repo}')`), /a\.txt/, 'каталог репозитория проекта не читается');
+  assert.match(await answer(`window.cyborg.listDir('${worktree}')`), /a\.txt/, 'каталог сессии вне репозиториев не читается');
+  log('пути вне репозиториев и сессий отклонены, свои читаются');
+
   assert.equal(await fontSize(), null, 'размер шрифта задан до проверки');
   for (let i = 0; i < 3; i++) await wheelUp(foreignModifier);
   await sleep(300);
