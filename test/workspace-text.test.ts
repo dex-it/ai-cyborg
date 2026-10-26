@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canCreateWorkspace, defaultWorkspaceFile, projectsProblemText, withDirectory } from '../src/renderer/workspace-text';
+import { canCreateWorkspace, defaultWorkspaceFile, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, withDirectory } from '../src/renderer/workspace-text';
 
 describe('projectsProblemText', () => {
   const file = '/work/team.cyborg.json';
@@ -37,5 +37,28 @@ describe('окно создания воркспейса', () => {
     assert.equal(canCreateWorkspace({ ...full, name: '   ' }), false);
     assert.equal(canCreateWorkspace({ ...full, file: '' }), false);
     assert.equal(canCreateWorkspace({ ...full, projectName: ' ' }), false);
+  });
+});
+
+describe('поле файла окна создания', () => {
+  it('«Папка…», затем имя: файл в выбранной папке по имени', () => {
+    let field = fileAfterDir(initialFileField('/home/u'), '', '/srv/ws', '/');
+    assert.equal(field.value, '/srv/ws/workspace.cyborg.json');
+    field = fileAfterName(field, 'Team', '/');
+    assert.equal(field.value, '/srv/ws/Team.cyborg.json');
+  });
+  it('имя, «Папка…», правка имени: папка сохраняется, имя файла меняется', () => {
+    let field = fileAfterName(initialFileField('/home/u'), 'Team', '/');
+    field = fileAfterDir(field, 'Team', '/srv/ws', '/');
+    assert.equal(field.value, '/srv/ws/Team.cyborg.json');
+    field = fileAfterName(field, 'Crew', '/');
+    assert.equal(field.value, '/srv/ws/Crew.cyborg.json');
+  });
+  it('правка поля руками отвязывает путь от имени, «Папка…» меняет только каталог', () => {
+    let field = fileAfterEdit(initialFileField('/home/u'), '/a/mine.json');
+    field = fileAfterName(field, 'Team', '/');
+    assert.equal(field.value, '/a/mine.json');
+    field = fileAfterDir(field, 'Team', '/srv/ws', '/');
+    assert.equal(field.value, '/srv/ws/mine.json');
   });
 });

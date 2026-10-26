@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { ProjectStore, type Project } from '../src/main/projects';
 import { validateProjectsState } from '../src/main/trackers';
 import {
+  argvCwd,
   canonicalWorkspace,
   createAndOpen,
   createWorkspaceFile,
@@ -130,6 +131,25 @@ describe('замок открытого воркспейса', () => {
     fs.utimesSync(lock, old, old);
     assert.deepEqual(tryLock(file, 222, alive()), { status: 'locked' });
   });
+  it('два инстанса на замок мёртвого процесса: второй не перехватывает свежий замок первого', () => {
+    const file = mkfile('w.json');
+    tryLock(file, 111, alive());
+    let first: unknown = null;
+    let inner = false;
+    // Пока B проверяет «жив ли 111», A успевает перехватить замок.
+    const raced = (pid: number): boolean => {
+      if (!inner) {
+        inner = true;
+        first = tryLock(file, 222, (p) => p === 222);
+      }
+      return pid === 222;
+    };
+    const second = tryLock(file, 333, raced);
+    assert.deepEqual(first, { status: 'locked' });
+    assert.deepEqual(second, { status: 'busy', pid: 222 });
+    assert.equal(fs.readFileSync(lockPathOf(file), 'utf8'), '222');
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.stale')), []);
+  });
   it('освобождение убирает только свой замок', () => {
     const file = mkfile('w.json');
     tryLock(file, 111, alive());
@@ -206,6 +226,13 @@ describe('resolveStartup', () => {
   });
   it('все заняты - первый запуск, без отказа', () => {
     assert.deepEqual(resolveStartup({ ...base, recent: ['/a.json', '/b.json'], isFile: () => true, tryLock: () => 'busy' }), { kind: 'first-run' });
+  });
+});
+
+describe('каталог для относительного --workspace', () => {
+  it('CYBORG_CWD лаунчера главнее рабочего каталога процесса', () => {
+    assert.equal(argvCwd({ CYBORG_CWD: '/home/u/work' }, '/repo'), '/home/u/work');
+    assert.equal(argvCwd({}, '/repo'), '/repo');
   });
 });
 

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
-import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
+import fs from 'node:fs';
+import { appMenuTemplate, recentLabel, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -101,5 +102,13 @@ describe('appMenuTemplate', () => {
   it('пересборка меню сохраняет состояние галочки уведомлений', () => {
     const view = appMenuTemplate('linux', () => {}, notifications, workspaceMenu(), false).find((item) => item.label === 'View');
     assert.equal(submenu(view).find((item) => item.id === NOTIFICATIONS_MENU_ID)?.checked, false);
+  });
+
+  it('подпись недавнего: домашний каталог - «~»', () => {
+    assert.equal(recentLabel('/home/u/a.cyborg.json', '/home/u'), '~/a.cyborg.json');
+    assert.equal(recentLabel('/srv/a.cyborg.json', '/home/u'), '/srv/a.cyborg.json');
+  });
+  it('шаблон меню не зависит от слоя хранения', () => {
+    assert.ok(!/from '\.\/workspaces'/.test(fs.readFileSync('src/main/menu.ts', 'utf8')));
   });
 });
