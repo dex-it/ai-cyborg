@@ -31,6 +31,9 @@
       <main id="workspace">
         <nav id="session-strip">
           <div id="session-list"></div>
+          <button id="status-toggle" class="status-toggle" title="Статус проекта" aria-haspopup="dialog" aria-expanded="false" hidden>
+            <span class="status-dot" data-level="unknown"></span><span>Статус</span><span class="status-count" hidden></span>
+          </button>
           <button id="tasks-toggle" class="panel-toggle" title="Задачи из трекеров" hidden>Задачи</button>
           <button id="mrs-toggle" class="panel-toggle" title="MR и PR репозиториев проекта" hidden>MR/PR</button>
           <button id="new-session" title="Новая сессия Claude Code"><span class="plus" aria-hidden="true">+</span> Новая сессия</button>
@@ -43,6 +46,7 @@
       </main>
     </div>
 
+    <div id="status-popover" class="popover" role="dialog" aria-label="Статус проекта" tabindex="-1" hidden></div>
     <div id="repo-menu" class="menu" hidden></div>
     <div id="project-menu" class="menu" hidden></div>
 
@@ -73,7 +77,15 @@
             <div id="project-gitlab-status" class="source-status"></div>
           </div>
           <div class="source">
-            <label class="disabled"><input type="checkbox" disabled /> Jira <span class="hint">пока не поддерживается</span></label>
+            <label><input type="checkbox" id="project-jira" /> Jira</label>
+            <div id="project-jira-status" class="source-status"></div>
+            <div class="jira-picker" id="project-jira-picker">
+              <div class="jira-picker-title">Проекты Jira</div>
+              <div id="project-jira-chosen" class="chips"></div>
+              <div id="project-jira-suggest" class="chips"></div>
+              <input id="project-jira-filter" autocomplete="off" placeholder="Найти проект: ключ или название; Enter - добавить введённый ключ" />
+              <div id="project-jira-list" class="jira-list"></div>
+            </div>
           </div>
         </div>
         <footer>
