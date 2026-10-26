@@ -291,8 +291,8 @@ function updateSessionLabels(s: Session): void {
 
 /** Пояснение, пока нет проекта с репозиториями; общее для пустой области и панели задач. */
 function projectHint(): string[] | null {
-  if (!state.projects.length) return ['Проектов нет.', '«+» слева вверху — создать проект и добавить в него репозитории.'];
-  if (!project?.repos.length) return ['В проекте нет репозиториев.', '«✎» слева вверху — добавить.'];
+  if (!state.projects.length) return ['Проектов нет.', 'Меню проекта (⋯) слева вверху: создайте проект и добавьте в него репозитории.'];
+  if (!project?.repos.length) return ['В проекте нет репозиториев.', 'Меню проекта (⋯) слева вверху: добавьте репозиторий.'];
   return null;
 }
 
@@ -311,11 +311,16 @@ function showNoSession(): void {
   const tree = projectTree();
   tree?.setRoots(project!.repos.map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' })));
   void renderProjectTree(false);
-  empty.replaceChildren(
-    ...(projectHint() ?? ['Сессий нет.', `«+ CC» или ${newSessionShortcut} — запустить Claude Code в репозитории проекта.`]).map((text) =>
-      el('p', '', text),
-    ),
-  );
+  const hint = projectHint();
+  const [title, text] = hint ?? ['Сессий пока нет', 'Claude Code запустится в репозитории проекта. Сессий можно открыть несколько, у каждой свой цвет.'];
+  const nodes = [el('p', 'empty-title', title), el('p', 'empty-text', text)];
+  if (!hint) {
+    const start = el('button', 'primary empty-action', 'Новая сессия');
+    start.append(el('kbd', '', newSessionShortcut));
+    start.addEventListener('click', () => requestSession());
+    nodes.push(start);
+  }
+  empty.replaceChildren(...nodes);
   empty.hidden = false;
 }
 
