@@ -298,7 +298,9 @@ export class StatusHub {
       start.disabled = true;
       start.title = 'Сессии негде открыться: добавьте репозиторий в свойствах проекта';
     }
-    start.addEventListener('click', () => {
+    start.addEventListener('click', (event) => {
+      // Иначе клик дойдёт до document, и обработчик приложения тут же закроет меню выбора репозитория.
+      event.stopPropagation();
       this.close();
       this.host.startJira(issue, linked[0], this.button);
     });
@@ -416,7 +418,8 @@ export class StatusHub {
     const actions = el('div', 'status-actions');
     for (const action of mrActions(mr, why?.kinds ?? [], !!this.host.sessionOf(mr.key))) {
       const button = el('button', action.primary ? 'primary' : '', action.label) as HTMLButtonElement;
-      button.addEventListener('click', () => {
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
         this.close();
         this.host.startMr(mr, action.intent, this.button);
       });
