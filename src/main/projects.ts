@@ -6,6 +6,17 @@ export interface TrackerSettings {
   gitlab: boolean;
 }
 
+/** Jira проекта (FR-11001, ADR-0013): включена ли и ключ проекта для `jira -p`; пустой ключ - проект, сохранённый `jira init`. */
+export interface JiraSettings {
+  enabled: boolean;
+  project: string;
+}
+
+export const NO_JIRA: JiraSettings = { enabled: false, project: '' };
+
+/** Ключ проекта Jira в том виде, в каком он попадает в аргумент `-p`: ничего, кроме букв, цифр и «_». */
+export const PROJECT_KEY = /^[A-Za-z][A-Za-z0-9_]*$/;
+
 export interface Project {
   id: string;
   name: string;
@@ -13,6 +24,8 @@ export interface Project {
   repos: string[];
   /** Источники задач проекта (FR-1010). */
   trackers: TrackerSettings;
+  /** Jira проекта; поля нет - Jira выключена. */
+  jira?: JiraSettings;
 }
 
 export interface ProjectsState {
@@ -25,6 +38,23 @@ export function readTrackers(value: unknown): TrackerSettings | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   return { github: raw.github === true, gitlab: raw.gitlab === true };
+}
+
+/** Поле Jira из файла: не обычный объект - null (поле считается отсутствующим); неверный ключ проекта читается как пустой. */
+export function readJira(value: unknown): JiraSettings | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  return { enabled: raw.enabled === true, project: typeof raw.project === 'string' && PROJECT_KEY.test(raw.project) ? raw.project : '' };
+}
+
+/** Jira проекта при сохранении: нет поля - допустимо (выключена); есть - булев enabled и ключ проекта пустой либо верный; иначе false. */
+export function validateJira(value: unknown): JiraSettings | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const { enabled, project } = value as Record<string, unknown>;
+  if (typeof enabled !== 'boolean' || typeof project !== 'string') return null;
+  if (project !== '' && !PROJECT_KEY.test(project)) return null;
+  return { enabled, project };
 }
 
 /**
@@ -111,11 +141,15 @@ export class ProjectStore {
     }
     const state = parsed as Partial<ProjectsState>;
     let fallback: TrackerSettings | undefined;
-    const projects = (state.projects ?? []).map((p) => ({
-      ...p,
-      repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,
-      trackers: readTrackers((p as Partial<Project>).trackers) ?? { ...(fallback ??= this.defaults()) },
-    }));
+    const projects = (state.projects ?? []).map((p) => {
+      const jira = readJira((p as Partial<Project>).jira);
+      return {
+        ...p,
+        repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,
+        trackers: readTrackers((p as Partial<Project>).trackers) ?? { ...(fallback ??= this.defaults()) },
+        ...(jira ? { jira } : {}),
+      };
+    });
     return { projects, lastProjectId: state.lastProjectId ?? null };
   }
 
