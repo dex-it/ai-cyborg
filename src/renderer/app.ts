@@ -9,6 +9,7 @@ import { basename, byId, el } from './dom';
 import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
 import { moveItem } from './reorder';
+import { windowTitle } from './title';
 import { initSourcesSection } from './sources';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
@@ -119,6 +120,7 @@ function selectProject(next: Project | null): void {
   state.lastProjectId = next?.id ?? null;
   persist();
   renderProjectSelect();
+  document.title = windowTitle(__APP_VERSION__, next?.name ?? null);
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
@@ -151,6 +153,8 @@ const projectDescription = byId<HTMLTextAreaElement>('project-description');
 const projectRepos = byId('project-repos');
 const projectDelete = byId<HTMLButtonElement>('project-delete');
 const sources = initSourcesSection();
+
+document.title = windowTitle(__APP_VERSION__, null);
 let draft: Project | null = null;
 let editing: Project | null = null;
 
@@ -335,7 +339,11 @@ function showNoSession(): void {
   if (!hint) {
     const start = el('button', 'primary empty-action', 'Новая сессия');
     start.append(el('kbd', '', newSessionShortcut));
-    start.addEventListener('click', () => requestSession());
+    start.addEventListener('click', (event) => {
+      // Иначе общий обработчик клика на document тут же закроет открытое меню репозиториев.
+      event.stopPropagation();
+      toggleSessionMenu(start);
+    });
     nodes.push(start);
   }
   empty.replaceChildren(...nodes);
@@ -755,6 +763,8 @@ setInterval(() => {
 // ---------- запуск сессии ----------
 
 function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPick: (repo: string) => void): void {
+  // Кнопки, открывающие это меню, гасят клик до document, поэтому меню проекта закрывается здесь.
+  projectMenu.hidden = true;
   repoMenu.replaceChildren(
     el('div', 'menu-title', title),
     ...repos.map((repo) => {
@@ -823,14 +833,20 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
   filter.focus();
 }
 
-function requestSession(): void {
+/** Кнопка «Новая сессия» (в полосе или на пустом экране): повторное нажатие при открытом меню закрывает его. */
+function toggleSessionMenu(anchor: HTMLElement): void {
+  if (repoMenu.hidden) requestSession(anchor);
+  else repoMenu.hidden = true;
+}
+
+function requestSession(anchor: HTMLElement = newSessionButton): void {
   const repos = project?.repos ?? [];
   if (repos.length === 1) {
     void newSession(repos[0]);
     return;
   }
   if (!repos.length) return;
-  showRepoMenu(repos, newSessionButton, 'Где запустить Claude Code', (repo) => void newSession(repo));
+  showRepoMenu(repos, anchor, 'Где запустить Claude Code', (repo) => void newSession(repo));
 }
 
 // ---------- прошлые сессии ----------
@@ -988,8 +1004,7 @@ const statusHub = new StatusHub({
 
 newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();
-  if (repoMenu.hidden) requestSession();
-  else repoMenu.hidden = true;
+  toggleSessionMenu(newSessionButton);
 });
 sideFiles.addEventListener('click', () => showSideView(false));
 sideHistory.addEventListener('click', () => showSideView(true));

@@ -1,9 +1,19 @@
-import { cpSync, rmSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { cpSync, readFileSync, rmSync } from 'node:fs';
 import { build } from 'esbuild';
 
 rmSync('dist', { recursive: true, force: true });
 
 const common = { bundle: true, sourcemap: true, logLevel: 'info' };
+
+const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+let commit = '';
+try {
+  commit = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+} catch {
+  // Сборка из архива без .git: версия остаётся без хеша.
+}
+const appVersion = commit ? `${version}+${commit}` : version;
 
 await build({
   ...common,
@@ -30,6 +40,7 @@ await build({
   platform: 'browser',
   format: 'iife',
   target: 'chrome130',
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
 });
 
 cpSync('assets/icon.png', 'dist/icon.png');
