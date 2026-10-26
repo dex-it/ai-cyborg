@@ -30,9 +30,16 @@ git(repo, 'add', 'a.txt');
 git(repo, 'commit', '-q', '-m', 'init');
 writeFileSync(join(repo, 'a.txt'), 'hello\nchanged\n');
 git(repo, 'worktree', 'add', '-q', '-b', 'smoke-wt', worktree);
+// Smoke - проект с включённым GitHub (кнопки панели есть), Bare - тот же репозиторий без источников (кнопок нет, FR-1001).
 writeFileSync(
   join(userData, 'projects.json'),
-  JSON.stringify({ projects: [{ id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: false, gitlab: false } }], lastProjectId: 'p1' }),
+  JSON.stringify({
+    projects: [
+      { id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: true, gitlab: false } },
+      { id: 'p2', name: 'Bare', description: '', repos: [repo], trackers: { github: false, gitlab: false } },
+    ],
+    lastProjectId: 'p1',
+  }),
 );
 
 // Подставной claude: SessionStart при старте, по строке `cd <dir>` - событие с новым cwd, остальной ввод эхом.
@@ -51,6 +58,10 @@ done
 `,
 );
 chmodSync(fakeClaude, 0o755);
+// Подставной gh: вход не выполнен. Панель открывается без сети и без настоящего входа разработчика.
+const fakeGh = join(fakeBin, 'gh');
+writeFileSync(fakeGh, '#!/bin/sh\necho "You are not logged in to any GitHub hosts." >&2\nexit 1\n');
+chmodSync(fakeGh, 0o755);
 
 const mac = process.platform === 'darwin';
 const commandModifier = mac ? 4 : 2; // CDP: Alt=1, Ctrl=2, Meta=4, Shift=8
@@ -186,6 +197,41 @@ async function main() {
   assert.match(await answer(`window.cyborg.listDir('${repo}')`), /a\.txt/, 'каталог репозитория проекта не читается');
   assert.match(await answer(`window.cyborg.listDir('${worktree}')`), /a\.txt/, 'каталог сессии вне репозиториев не читается');
   log('пути вне репозиториев и сессий отклонены, свои читаются');
+
+  // FR-1001: кнопка «Задачи» открывает и закрывает панель; переход к сессии закрывает; без источников кнопок нет.
+  const panelOpen = async () => !(await ev('document.querySelector("#tasks-panel").hidden'));
+  assert.equal(await ev('document.querySelector("#tasks-toggle").hidden'), false, 'у проекта с источником нет кнопки «Задачи»');
+  await ev('document.querySelector("#tasks-toggle").click()');
+  await waitFor('панель задач открыта кнопкой', panelOpen);
+  await ev('document.querySelector("#tasks-toggle").click()');
+  await waitFor('панель задач закрыта той же кнопкой', async () => !(await panelOpen()));
+  await ev('document.querySelector("#tasks-toggle").click()');
+  await waitFor('панель задач открыта снова', panelOpen);
+  await ev('document.querySelector("#session-list > *").click()');
+  await waitFor('переход к сессии закрыл панель', async () => !(await panelOpen()));
+  await ev('document.querySelector("#tasks-toggle").click()');
+  await waitFor('панель задач открыта перед сменой проекта', panelOpen);
+  await ev('(() => { const s = document.querySelector("#project-select"); s.value = "p2"; s.dispatchEvent(new Event("change")); })()');
+  await waitFor('открытая панель закрылась у проекта без источников', async () => !(await panelOpen()));
+  await waitFor('у проекта без источников нет кнопок панели', async () => (await ev('document.querySelector("#tasks-toggle").hidden && document.querySelector("#mrs-toggle").hidden')) === true);
+  await ev('(() => { const s = document.querySelector("#project-select"); s.value = "p1"; s.dispatchEvent(new Event("change")); })()');
+  await waitFor('кнопки вернулись с проектом с источником', async () => (await ev('document.querySelector("#tasks-toggle").hidden')) === false);
+  log('панель задач: кнопка открывает и закрывает, сессия закрывает, без источников кнопок нет');
+
+  // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».
+  const stray = await ev(`(() => {
+    const result = {};
+    for (const type of ['dragover', 'drop']) {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File(['x'], 'x.txt'));
+      const event = new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true });
+      document.querySelector('#status-bar').dispatchEvent(event);
+      result[type] = { prevented: event.defaultPrevented, effect: dataTransfer.dropEffect };
+    }
+    return result;
+  })()`);
+  assert.deepEqual(stray, { dragover: { prevented: true, effect: 'none' }, drop: { prevented: true, effect: 'none' } }, 'бросок файла вне зон не отменён');
+  log('бросок файла вне зон отменён, курсор «нельзя»');
 
   assert.equal(await fontSize(), null, 'размер шрифта задан до проверки');
   for (let i = 0; i < 3; i++) await wheelUp(foreignModifier);
