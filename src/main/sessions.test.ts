@@ -106,3 +106,23 @@ test('SessionManager считает только работающие сесси
   manager.killAll();
   assert.equal(manager.count(), 0);
 });
+
+test('SessionManager: каталоги работающих сессий - рабочий, дополнительные и текущий cwd; завершённая сессия их не держит', async (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager, eventsDir } = managerIn(t, events);
+  const tmp = os.tmpdir();
+  assert.deepEqual(manager.liveDirs(), []);
+  assert.equal(manager.uses(tmp), false);
+  const id = manager.create(tmp, ['/extra']);
+  assert.deepEqual(manager.liveDirs(), [tmp, '/extra', tmp]);
+  assert.equal(manager.uses(tmp), true);
+  assert.equal(manager.uses('/extra'), true, 'дополнительный каталог тоже занят сессией');
+  assert.equal(manager.uses('/other'), false);
+  fs.appendFileSync(path.join(eventsDir, `${process.pid}-${id}.jsonl`), JSON.stringify({ hook_event_name: 'PostToolUse', cwd: '/moved', tool_name: 'EnterWorktree' }) + '\n');
+  for (let i = 0; i < 100 && !manager.liveDirs().includes('/moved'); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(manager.liveDirs(), [tmp, '/extra', '/moved']);
+  assert.equal(manager.uses('/moved'), false, 'uses смотрит каталоги запуска, а не текущий cwd');
+  manager.kill(id);
+  assert.deepEqual(manager.liveDirs(), []);
+  assert.equal(manager.uses(tmp), false);
+});
