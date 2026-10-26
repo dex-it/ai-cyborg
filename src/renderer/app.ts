@@ -155,14 +155,14 @@ let editing: Project | null = null;
 function editProject(target: Project | null): void {
   editing = target;
   draft = target
-    ? { ...target, repos: [...target.repos], trackers: { ...target.trackers }, jira: target.jira && { ...target.jira } }
+    ? { ...target, repos: [...target.repos], trackers: { ...target.trackers }, jira: target.jira && { ...target.jira, projects: [...target.jira.projects] } }
     : { id: crypto.randomUUID(), name: '', description: '', repos: [], trackers: { github: false, gitlab: false } };
   byId('project-dialog-title').textContent = target ? 'Свойства проекта' : 'Новый проект';
   projectName.value = draft.name;
   projectDescription.value = draft.description;
   projectDelete.hidden = !target;
   renderDraftRepos();
-  sources.open(draft.trackers, draft.jira);
+  sources.open(draft.trackers, draft.jira, draft.repos);
   projectDialog.returnValue = '';
   projectDialog.showModal();
 }

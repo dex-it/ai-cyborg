@@ -7,22 +7,33 @@ import {
   jiraListArgs,
   jiraOpenArgs,
   jiraProgressArgs,
+  jiraProjectsArgs,
   jiraViewArgs,
   JIRA_LIMIT,
   KEY_RE,
   parseDetails,
   parseIssues,
   parseKeys,
+  parseProjects,
   problemOf,
   problemText,
+  suggestKeys,
+  timeOf,
   type JiraDetailsResult,
   type JiraListResult,
+  type JiraIssue,
   type JiraProblem,
+  type JiraProject,
+  type JiraProjectsResult,
+  type JiraSuggestion,
   type JiraStatus,
   type JiraUrlResult,
 } from './jira';
 import type { ProjectsState } from './projects';
 import type { CliResult, JiraRunner } from './trackers';
+
+/** Как долго список проектов Jira считается свежим. */
+const PROJECTS_TTL_MS = 10 * 60_000;
 
 interface Refusal {
   problem: JiraProblem;
@@ -45,10 +56,11 @@ export class JiraService {
   private blocked: Refusal | null = null;
   /** Ключи последнего списка по проектам: детали и адрес запрашиваются только по задаче, которую главный процесс сам вернул. */
   private readonly seen = new Map<string, Set<string>>();
+  private projectsCache: { at: number; projects: JiraProject[] } | null = null;
 
   constructor(
     private readonly run: JiraRunner,
-    private readonly projects: () => ProjectsState,
+    private readonly projects_: () => ProjectsState,
   ) {}
 
   /** Бинарь и вход: для диалога проекта. Успех снимает блокировку опроса. */
@@ -71,43 +83,92 @@ export class JiraService {
   }
 
   async list(projectId: string, recheck: boolean): Promise<JiraListResult> {
-    const settings = this.projects().projects.find((p) => p.id === projectId)?.jira;
+    const settings = this.projects_().projects.find((p) => p.id === projectId)?.jira;
     if (!settings?.enabled) return { issues: [], truncated: false, problem: 'error', error: 'Jira выключена в свойствах проекта' };
     if (recheck) this.blocked = null;
     if (this.blocked) return { issues: [], truncated: false, ...this.blocked };
+    // Пустой выбор - один запрос без `-p` (проект из `jira init`); иначе по запросу на проект: `jira -p` берёт один.
+    const keys = settings.projects?.length ? settings.projects : [''];
+    const parts = await Promise.all(keys.map((key) => this.fetchIssues(key)));
+    const done = parts.flatMap((part) => ('issues' in part ? [part] : []));
+    const failed = parts.flatMap((part, i) => ('issues' in part ? [] : [{ key: keys[i], ...part }]));
+    if (!done.length) {
+      const first = failed.find((f) => f.problem === 'auth') ?? failed[0];
+      return { issues: [], truncated: false, problem: first.problem, error: keys.length > 1 && first.key ? `${first.key}: ${first.error}` : first.error };
+    }
+    const byKey = new Map<string, JiraIssue>();
+    for (const issue of done.flatMap((part) => part.issues)) if (!byKey.has(issue.key)) byKey.set(issue.key, issue);
+    const merged = [...byKey.values()].sort((a, b) => timeOf(b.updated) - timeOf(a.updated));
+    const shown = merged.slice(0, JIRA_LIMIT);
+    this.seen.set(projectId, new Set(shown.map((issue) => issue.key)));
+    return {
+      issues: shown,
+      truncated: merged.length > JIRA_LIMIT || done.some((part) => part.truncated),
+      ...(failed.length ? { notes: failed.map((f) => `${f.key}: ${f.error}`) } : {}),
+    };
+  }
+
+  /** Задачи одного проекта (пустой ключ - без `-p`): список, ключи «в работе» вторым запросом, категории проставлены. */
+  private async fetchIssues(project: string): Promise<{ issues: JiraIssue[]; truncated: boolean } | Refusal> {
     // Категории статуса в списке нет: ключи «в работе» берутся вторым запросом, его отказ только оставляет категории пустыми.
-    const [res, progress] = await Promise.all([this.run('jira', jiraListArgs(settings.project)), this.run('jira', jiraProgressArgs(settings.project))]);
+    const [res, progress] = await Promise.all([this.run('jira', jiraListArgs(project)), this.run('jira', jiraProgressArgs(project))]);
     const lost = launchFailure(res);
-    if (lost) return { issues: [], truncated: false, ...lost };
+    if (lost) return lost;
     if (res.code !== 0) {
       const text = failureText(res);
-      if (isEmptyResult(text)) return this.listed(projectId, []);
+      if (isEmptyResult(text)) return { issues: [], truncated: false };
       const problem = problemOf(text);
       const refusal = { problem, error: problemText(problem, text) };
       if (problem === 'auth') this.blocked = refusal;
-      return { issues: [], truncated: false, ...refusal };
+      return refusal;
     }
     try {
       const inProgress = progress.code === 0 ? parseKeys(progress.stdout) : new Set<string>();
-      return this.listed(
-        projectId,
-        parseIssues(res.stdout).map((issue) => (inProgress.has(issue.key) ? { ...issue, category: 'indeterminate' as const } : issue)),
-      );
+      const issues = parseIssues(res.stdout).map((issue) => (inProgress.has(issue.key) ? { ...issue, category: 'indeterminate' as const } : issue));
+      return { issues, truncated: issues.length >= JIRA_LIMIT };
     } catch {
-      return { issues: [], truncated: false, problem: 'error', error: 'jira issue list: ответ не JSON' };
+      return { problem: 'error', error: 'jira issue list: ответ не JSON' };
     }
   }
 
-  private listed(projectId: string, issues: ReturnType<typeof parseIssues>): JiraListResult {
-    this.seen.set(projectId, new Set(issues.map((issue) => issue.key)));
-    return { issues, truncated: issues.length >= JIRA_LIMIT };
+  /** Проекты Jira, доступные пользователю (`jira project list`); держатся на время работы, «Обновить» сбрасывает. */
+  async projects(recheck: boolean): Promise<JiraProjectsResult> {
+    if (recheck) {
+      this.blocked = null;
+      this.projectsCache = null;
+    }
+    if (this.blocked) return { ...this.blocked };
+    if (this.projectsCache && Date.now() - this.projectsCache.at < PROJECTS_TTL_MS) return { projects: this.projectsCache.projects };
+    const res = await this.run('jira', jiraProjectsArgs());
+    const lost = launchFailure(res);
+    if (lost) return lost;
+    if (res.code !== 0) {
+      const text = failureText(res);
+      const problem = problemOf(text);
+      const refusal = { problem, error: problemText(problem, text) };
+      if (problem === 'auth') this.blocked = refusal;
+      return refusal;
+    }
+    const projects = parseProjects(res.stdout);
+    this.projectsCache = { at: Date.now(), projects };
+    return { projects };
+  }
+
+  /** Проекты Jira, чьи ключи стоят в именах веток; без списка проектов подсказок нет. */
+  async suggest(branches: readonly string[]): Promise<JiraSuggestion[]> {
+    const res = await this.projects(false);
+    if (!('projects' in res)) return [];
+    return suggestKeys(branches, new Set(res.projects.map((p) => p.key)));
   }
 
   /** Ключ задачи проекта, пришедшей в последнем списке; иначе null и причина. */
   private known(projectId: string, key: unknown): { project: string } | string {
     if (typeof key !== 'string' || !KEY_RE.test(key)) return 'Некорректный ключ задачи';
     if (!this.seen.get(projectId)?.has(key)) return 'Задачи нет в списке проекта: обновите список';
-    return { project: this.projects().projects.find((p) => p.id === projectId)?.jira?.project ?? '' };
+    // `-p` - проект самой задачи, если он выбран в настройках (задачи одного списка могут быть из разных проектов); иначе без `-p`.
+    const prefix = key.slice(0, key.lastIndexOf('-'));
+    const chosen = this.projects_().projects.find((p) => p.id === projectId)?.jira?.projects ?? [];
+    return { project: chosen.includes(prefix) ? prefix : '' };
   }
 
   async details(projectId: string, key: unknown): Promise<JiraDetailsResult> {

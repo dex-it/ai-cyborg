@@ -79,10 +79,13 @@
           <div class="source">
             <label><input type="checkbox" id="project-jira" /> Jira</label>
             <div id="project-jira-status" class="source-status"></div>
-            <label class="source-key" id="project-jira-key-row">
-              <span>Ключ проекта</span>
-              <input id="project-jira-key" autocomplete="off" maxlength="40" pattern="[A-Za-z][A-Za-z0-9_]*" placeholder="пусто: проект из jira init" title="Буквы, цифры и подчёркивание, начиная с буквы" />
-            </label>
+            <div class="jira-picker" id="project-jira-picker">
+              <div class="jira-picker-title">Проекты Jira</div>
+              <div id="project-jira-chosen" class="chips"></div>
+              <div id="project-jira-suggest" class="chips"></div>
+              <input id="project-jira-filter" autocomplete="off" placeholder="Найти проект: ключ или название; Enter - добавить введённый ключ" />
+              <div id="project-jira-list" class="jira-list"></div>
+            </div>
           </div>
         </div>
         <footer>

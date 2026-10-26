@@ -266,6 +266,8 @@ export class StatusHub {
         for (const issue of group.issues) section.append(this.issueRow(issue, mrsOfIssue(issue, mrs)));
       }
     }
+    // Проекты, по которым запрос не удался, когда по другим удался: список показан, но неполный.
+    for (const note of result?.notes ?? []) section.append(el('p', 'status-note error', `Jira ${note}`));
     into.append(section);
   }
 

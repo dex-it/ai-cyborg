@@ -30,12 +30,14 @@ git(repo, 'add', 'a.txt');
 git(repo, 'commit', '-q', '-m', 'init');
 writeFileSync(join(repo, 'a.txt'), 'hello\nchanged\n');
 git(repo, 'worktree', 'add', '-q', '-b', 'smoke-wt', worktree);
+// Ветка с ключом проекта Jira: диалог проекта предложит SMK (FR-11012).
+git(repo, 'branch', 'smk-5-feature');
 // Smoke - проект с включённым GitHub (кнопки панели есть), Bare - тот же репозиторий без источников (кнопок нет, FR-1001).
 writeFileSync(
   join(userData, 'projects.json'),
   JSON.stringify({
     projects: [
-      { id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: true, gitlab: false }, jira: { enabled: true, project: 'SMK' } },
+      { id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: true, gitlab: false }, jira: { enabled: true, projects: [] } },
       { id: 'p2', name: 'Bare', description: '', repos: [repo], trackers: { github: false, gitlab: false } },
     ],
     lastProjectId: 'p1',
@@ -73,6 +75,7 @@ case "$1" in
   version) echo 'Version="1.7.0", GitCommit="smoke"';;
   me) echo 'smoke@example.com';;
   open) echo "https://jira.example/browse/$2";;
+  project) printf 'KEY\\tNAME\\t\\t\\tTYPE\\tLEAD\\nSMK\\tSmoke\\t\\t\\tsoftware\\tIvan\\nOTH\\tOther\\t\\t\\tsoftware\\tOlga\\n';;
   issue)
     if [ "$2" = list ]; then
       case "$*" in
@@ -243,6 +246,27 @@ async function main() {
   await waitFor('кнопки вернулись с проектом с источником', async () => (await ev('document.querySelector("#tasks-toggle").hidden')) === false);
   log('панель задач: кнопка открывает и закрывает, сессия закрывает, без источников кнопок нет');
 
+  // FR-11012: выбор проектов Jira в свойствах проекта - список из `jira project list`, подсказка по веткам, ручной ключ, сохранение.
+  await ev('document.querySelector("#project-menu-open").click()');
+  await waitFor('меню проекта', async () => !(await ev('document.querySelector("#project-menu").hidden')));
+  await ev('[...document.querySelectorAll("#project-menu .menu-item")].find((e) => e.innerText.includes("Свойства")).click()');
+  await waitFor('диалог проекта открыт', async () => (await ev('document.querySelector("#project-dialog").open')) === true);
+  await waitFor('список проектов Jira в диалоге', async () => (await ev('document.querySelectorAll("#project-jira-list .jira-row").length')) === 2);
+  assert.match(await text('#project-jira-list'), /SMK\s+Smoke/, 'в списке нет проекта SMK с названием');
+  assert.match(await text('#project-jira-chosen'), /Не выбрано/, 'без выбора диалог не сказал про проект по умолчанию');
+  await waitFor('подсказка проекта по веткам репозитория', async () => /SMK · 1/.test(await text('#project-jira-suggest')));
+  await ev('document.querySelector("#project-jira-suggest button").click()');
+  assert.match(await text('#project-jira-chosen'), /SMK ×/, 'подсказка не выбрала проект');
+  await ev(`(() => { const f = document.querySelector("#project-jira-filter"); f.value = "oth"; f.dispatchEvent(new Event("input")); })()`);
+  assert.equal(await ev('document.querySelectorAll("#project-jira-list .jira-row").length'), 1, 'поиск не сузил список');
+  await ev(`(() => { const f = document.querySelector("#project-jira-filter"); f.value = "OTH"; f.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); })()`);
+  assert.match(await text('#project-jira-chosen'), /SMK ×\s*OTH ×/, 'введённый ключ не добавлен');
+  assert.ok(await ev('document.querySelector("#project-dialog").open'), 'Enter в поиске отправил форму');
+  await ev('document.querySelector("#project-dialog button[value=save]").click()');
+  await waitFor('диалог закрыт сохранением', async () => (await ev('document.querySelector("#project-dialog").open')) === false);
+  await waitFor('выбранные проекты Jira сохранены', async () => (await ev('window.cyborg.loadProjects().then((s) => JSON.stringify(s.projects.find((p) => p.id === "p1").jira))')) === '{"enabled":true,"projects":["SMK","OTH"]}');
+  log('выбор проектов Jira: список, подсказка по веткам, поиск, ручной ключ, сохранение');
+
   // FR-11002..FR-11008: кнопка «Статус» - карточка с задачей Jira, детали, закрытие, сессия по задаче с промптом из ключа.
   const popoverOpen = async () => !(await ev('document.querySelector("#status-popover").hidden'));
   const visibleTerminal = () => ev('(() => { const e = [...document.querySelectorAll(".xterm-rows")].find((x) => x.offsetParent); return e ? e.innerText : ""; })()');
@@ -250,6 +274,7 @@ async function main() {
   await ev('document.querySelector("#status-toggle").click()');
   await waitFor('карточка статуса открыта кнопкой', popoverOpen);
   await waitFor('задача Jira в карточке', async () => /SMK-1/.test(await text('#status-popover')));
+  assert.equal(await ev('[...document.querySelectorAll("#status-popover .status-link")].filter((e) => e.textContent === "SMK-1").length'), 1, 'задача двух выбранных проектов показана дважды');
   assert.equal(await ev('document.querySelector("#status-toggle .status-dot").dataset.level'), 'unknown', 'без входа в gh уровень не unknown');
   assert.match(await text('#status-popover'), /нет remote GitHub или GitLab/, 'карточка не объяснила, почему нет данных о MR');
   await ev('[...document.querySelectorAll(".status-link")].find((e) => e.textContent === "SMK-1").click()');
