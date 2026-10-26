@@ -19,6 +19,7 @@ import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './
 import { TreeView, type TreeRoot } from './tree';
 import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize } from './font-size';
+import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 
 interface FileTab {
@@ -55,6 +56,7 @@ interface Session {
 }
 
 const api = window.cyborg;
+const notifier = new WaitNotifier(api);
 const mac = isMac(api.platform);
 const commandKey = (event: ModifierState): boolean => hasCommandKey(event, mac);
 const newSessionShortcut = shortcut(mac, 'Shift', 'N');
@@ -275,8 +277,11 @@ projectMenuButton.addEventListener('click', (event) => {
 const rootLabel = (s: Session): string => sessionRootLabel({ ...s, repos: s.project.repos });
 const treeRoots = (s: Session): TreeRoot[] => sessionTreeRoots({ ...s, repos: s.project.repos });
 
+const sessionTitle = (s: Session): string =>
+  s.mr ? mrSessionLabel(s.id, s.mr) : s.task ? sessionLabel(s.id, s.task) : `CC${s.id} · ${rootLabel(s)}`;
+
 function updateSessionLabels(s: Session): void {
-  const label = s.mr ? mrSessionLabel(s.id, s.mr) : s.task ? sessionLabel(s.id, s.task) : `CC${s.id} · ${rootLabel(s)}`;
+  const label = sessionTitle(s);
   const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : '';
   (s.stripTab.querySelector('.label') as HTMLElement).textContent = label;
   s.stripTab.title = tooltip ? `${tooltip}\n${s.cwd}` : s.cwd;
@@ -382,6 +387,7 @@ function activateSession(s: Session, keepPanel = false): void {
   closePreview();
   active = s;
   lastSessionOf.set(s.project.id, s);
+  if (document.hasFocus()) notifier.dismiss(s.id);
   for (const other of sessions) {
     other.container.classList.toggle('active', other === s);
     other.stripTab.classList.toggle('active', other === s);
@@ -603,6 +609,7 @@ document.addEventListener('drop', (event) => {
 function closeSession(s: Session, force: boolean): void {
   if (!s.exited && !force && !confirm('Сессия Claude Code ещё работает. Завершить её?')) return;
   if (!s.exited) api.kill(s.id);
+  notifier.dismiss(s.id);
   s.term.dispose();
   for (const f of s.files) f.viewer.dispose();
   s.stripTab.remove();
@@ -684,17 +691,39 @@ api.on<{ id: number; cwd: string }>('session:cwd', async ({ id, cwd }) => {
 });
 
 let refreshTimer: number | undefined;
-api.on<{ id: number }>('session:activity', ({ id }) => {
+api.on<{ id: number; event?: string }>('session:activity', ({ id, event }) => {
+  if (event === 'UserPromptSubmit') notifier.dismiss(id);
   if (active?.id !== id) return;
   const session = active;
   clearTimeout(refreshTimer);
   refreshTimer = window.setTimeout(() => void renderTree(session, false), 250);
 });
 
+api.on<boolean>('notifications:toggle', (enabled) => notifier.setEnabled(enabled));
+
+api.on<{ id: number; reason: string }>('session:waiting', ({ id, reason }) => {
+  const session = findSession(id);
+  if (session) notifier.waiting(id, `${sessionTitle(session)} · ${session.project.name}`, reason, session === active && document.hasFocus());
+});
+
+api.on<{ id: number }>('session:reveal', ({ id }) => {
+  const session = findSession(id);
+  if (!session) return;
+  // Иначе выбор проекта сначала открыл бы его последнюю сессию и погасил её уведомление, которого человек не видел.
+  lastSessionOf.set(session.project.id, session);
+  if (session.project !== project) selectProject(session.project);
+  else activateSession(session, panel.isOpen);
+});
+
+window.addEventListener('focus', () => {
+  if (active) notifier.dismiss(active.id);
+});
+
 api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
   const session = findSession(id);
   if (!session) return;
   session.exited = true;
+  notifier.dismiss(id);
   session.term.write(`\r\n\x1b[2m[сессия завершена, код ${exitCode}]\x1b[0m\r\n`);
   updateSessionLabels(session);
 });

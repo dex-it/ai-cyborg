@@ -35,7 +35,7 @@ describe('данные задачи и MR - текстом (FR-1018)', () => {
 
 describe('привязка задачи и MR к сессии только в памяти (FR-1015, FR-2014)', () => {
   it('интерфейс пишет в хранилище окна только известные настройки, ни одной - про задачи, MR и сессии', () => {
-    const allowed = [/^'cyborg\.fontSize'$/, /^'cyborg\.tasks\.(assigned|sort)'$/, /^'cyborg\.mrs\.(filter|sort)'$/, /^this\.labelsKey\(/, /^KEY$/];
+    const allowed = [/^'cyborg\.fontSize'$/, /^NOTIFICATIONS_KEY$/, /^'cyborg\.tasks\.(assigned|sort)'$/, /^'cyborg\.mrs\.(filter|sort)'$/, /^this\.labelsKey\(/, /^KEY$/];
     const keys: string[] = [];
     for (const file of sources('src/renderer')) {
       const text = code(file);

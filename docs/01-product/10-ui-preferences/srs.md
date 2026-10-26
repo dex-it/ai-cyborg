@@ -120,12 +120,12 @@ quality-checks: входных записей нет
 
 ## 15. Logical database requirements
 
-Настройки окна - ключи `cyborg.fontSize`, `cyborg.tasks.assigned`, `cyborg.tasks.sort`, `cyborg.mrs.filter`, `cyborg.mrs.sort` и ключ выбора меток
+Настройки окна - ключи `cyborg.fontSize`, `cyborg.tasks.assigned`, `cyborg.tasks.sort`, `cyborg.mrs.filter`, `cyborg.mrs.sort`, `cyborg.notifications` и ключ выбора меток
 каждого проекта в `localStorage` окна; порядок репозиториев - поле `repos` проекта.
 
 ## 16. Design constraints
 
-Настройки интерфейса не передаются в главный процесс; хранение проектов - ADR-0004.
+Настройки интерфейса не передаются в главный процесс, кроме выключателя уведомлений: его галочку в меню главного процесса интерфейс выставляет по своему хранилищу, а главный процесс на диск его не пишет (FR-1015); хранение проектов - ADR-0004.
 
 ## 17. Standards compliance
 
