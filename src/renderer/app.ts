@@ -1,6 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { HistoryEntry } from '../main/history';
+import type { JiraIssue } from '../main/jira';
 import type { Project, ProjectsProblem, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
@@ -13,6 +14,7 @@ import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
 import { TrackerPanel } from './panel';
+import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
@@ -40,6 +42,8 @@ interface Session {
   task?: Task;
   /** MR/PR, из которого начата сессия; тоже только в памяти интерфейса. */
   mr?: Mr;
+  /** Задача Jira, из которой начата сессия; тоже только в памяти интерфейса. */
+  jira?: JiraIssue;
   color: string;
   term: Terminal;
   fit: FitAddon;
@@ -120,6 +124,7 @@ function selectProject(next: Project | null): void {
   else showNoSession();
   panel.setAvailable(hasSources(next));
   panel.onProjectChanged();
+  statusHub.onProjectChanged();
   if (!historyEl.hidden) void loadHistory();
 }
 
@@ -150,14 +155,14 @@ let editing: Project | null = null;
 function editProject(target: Project | null): void {
   editing = target;
   draft = target
-    ? { ...target, repos: [...target.repos], trackers: { ...target.trackers } }
+    ? { ...target, repos: [...target.repos], trackers: { ...target.trackers }, jira: target.jira && { ...target.jira, projects: [...target.jira.projects] } }
     : { id: crypto.randomUUID(), name: '', description: '', repos: [], trackers: { github: false, gitlab: false } };
   byId('project-dialog-title').textContent = target ? 'Свойства проекта' : 'Новый проект';
   projectName.value = draft.name;
   projectDescription.value = draft.description;
   projectDelete.hidden = !target;
   renderDraftRepos();
-  sources.open(draft.trackers);
+  sources.open(draft.trackers, draft.jira, draft.repos);
   projectDialog.returnValue = '';
   projectDialog.showModal();
 }
@@ -223,7 +228,9 @@ projectDialog.addEventListener('close', () => {
   if (projectDialog.returnValue !== 'save' || !draft) return;
   draft.name = projectName.value.trim();
   draft.description = projectDescription.value.trim();
-  draft.trackers = sources.read();
+  const read = sources.read();
+  draft.trackers = read.trackers;
+  draft.jira = read.jira;
   let target = editing;
   if (target) Object.assign(target, draft);
   else state.projects.push((target = draft));
@@ -276,8 +283,14 @@ const rootLabel = (s: Session): string => sessionRootLabel({ ...s, repos: s.proj
 const treeRoots = (s: Session): TreeRoot[] => sessionTreeRoots({ ...s, repos: s.project.repos });
 
 function updateSessionLabels(s: Session): void {
-  const label = s.mr ? mrSessionLabel(s.id, s.mr) : s.task ? sessionLabel(s.id, s.task) : `CC${s.id} · ${rootLabel(s)}`;
-  const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : '';
+  const label = s.mr
+    ? mrSessionLabel(s.id, s.mr)
+    : s.task
+      ? sessionLabel(s.id, s.task)
+      : s.jira
+        ? `CC${s.id} · ${s.jira.key} ${s.jira.summary}`
+        : `CC${s.id} · ${rootLabel(s)}`;
+  const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
   (s.stripTab.querySelector('.label') as HTMLElement).textContent = label;
   s.stripTab.title = tooltip ? `${tooltip}\n${s.cwd}` : s.cwd;
   s.stripTab.classList.toggle('exited', s.exited);
@@ -488,14 +501,14 @@ function createTerminal(id: number): Terminal {
   return term;
 }
 
-type StartFrom = { task: Task } | { mr: Mr; intent: MrIntent };
+type StartFrom = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
 
 const refOf = (x: MrRef): MrRef => ({ kind: x.kind, host: x.host, path: x.path, number: x.number });
 
 async function newSession(repo: string, start?: StartFrom): Promise<void> {
   const owner = project;
   if (!owner) return;
-  const key = start && ('task' in start ? start.task.key : start.mr.key);
+  const key = start && ('task' in start ? start.task.key : 'mr' in start ? start.mr.key : `jira:${start.jira.key}`);
   // Ключ держится до появления сессии в taskSessions: двойной клик «Начать» не создаст вторую.
   if (key) {
     if (!startGuard.begin(owner.id, key)) return;
@@ -515,7 +528,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     : await api.createSession(
         repo,
         addDirs,
-        start && ('task' in start ? { task: refOf(start.task) } : { mr: refOf(start.mr), intent: start.intent }),
+        start && ('task' in start ? { task: refOf(start.task) } : 'mr' in start ? { mr: refOf(start.mr), intent: start.intent } : { jira: { key: start.jira.key } }),
       );
   const root = (await api.gitRoot(repo)) ?? repo;
   const color = sessionColor(colorIndex++);
@@ -551,6 +564,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     exited: false,
     task: start && 'task' in start ? start.task : undefined,
     mr: start && 'mr' in start ? start.mr : undefined,
+    jira: start && 'jira' in start ? start.jira : undefined,
     color,
     term,
     fit,
@@ -866,6 +880,18 @@ function startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement): void {
   else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где открыть MR', (repo) => void newSession(repo, { mr, intent }));
 }
 
+/** Сессия по задаче Jira: повторное действие возвращает к открытой; репозиторий - у связанного MR из проекта, иначе единственный либо по выбору. */
+function startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement): void {
+  if (!project) return;
+  const existing = taskSessions.get(project.id, `jira:${issue.key}`);
+  const { repos } = project;
+  const ofMr = linked?.repos.filter((repo) => repos.includes(repo)) ?? [];
+  const decision = decideStart(!!existing, ofMr.length ? ofMr : repos, repos);
+  if (decision.action === 'switch' && existing) activateSession(existing);
+  else if (decision.action === 'create') void newSession(decision.repo, { jira: issue });
+  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, { jira: issue }));
+}
+
 function applyMrStatuses(result: MrListResult): void {
   for (const s of sessions) {
     if (!s.mr) continue;
@@ -926,6 +952,13 @@ const panel = new TrackerPanel({
       fitSession(active);
       if (!active.activeFile) active.term.focus();
     }),
+});
+
+const statusHub = new StatusHub({
+  project: () => project,
+  sessionOf: (key) => (project ? taskSessions.get(project.id, key) : undefined),
+  startMr,
+  startJira,
 });
 
 newSessionButton.addEventListener('click', (event) => {
