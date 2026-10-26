@@ -34,6 +34,26 @@ const trackers = new TrackersService({
 const mrs = new MrsService(trackers, runCli);
 const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), (url) => shell.openExternal(url));
 
+let quitting = false;
+app.on('before-quit', () => {
+  quitting = true;
+});
+
+/** Закрытие окна и выход завершают все сессии: как и закрытие вкладки, они спрашивают, пока сессия работает. */
+function confirmEndSessions(): boolean {
+  const running = sessions.count();
+  if (!running) return true;
+  const choice = dialog.showMessageBoxSync(win!, {
+    type: 'warning',
+    buttons: ['Закрыть', 'Отмена'],
+    defaultId: 1,
+    cancelId: 1,
+    message: `Работающих сессий Claude Code: ${running}`,
+    detail: 'При закрытии окна они будут завершены.',
+  });
+  return choice === 0;
+}
+
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff');
 
 function createWindow(): void {
@@ -51,19 +71,9 @@ function createWindow(): void {
       sandbox: true,
     },
   });
-  // Закрытие окна завершает все сессии: как и закрытие вкладки, оно спрашивает, пока сессия работает.
+  // Выход уже начался (before-quit: подтверждено в меню, сигнал SIGINT/SIGTERM, завершение сеанса ОС) - окно не спрашивает.
   win.on('close', (event) => {
-    const running = sessions.count();
-    if (!running) return;
-    const choice = dialog.showMessageBoxSync(win!, {
-      type: 'warning',
-      buttons: ['Закрыть', 'Отмена'],
-      defaultId: 1,
-      cancelId: 1,
-      message: `Работающих сессий Claude Code: ${running}`,
-      detail: 'При закрытии окна они будут завершены.',
-    });
-    if (choice !== 0) event.preventDefault();
+    if (!quitting && !confirmEndSessions()) event.preventDefault();
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
@@ -152,7 +162,13 @@ ipcMain.handle('git:headContent', (_event, file: unknown) => (typeof file === 's
 app.whenReady().then(() => {
   // icon у BrowserWindow на macOS не действует: в Dock остался бы значок Electron.
   app.dock?.setIcon(path.join(__dirname, 'icon.png'));
-  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform)));
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      appMenuTemplate(process.platform, () => {
+        if (confirmEndSessions()) app.quit();
+      }),
+    ),
+  );
   void trackers.warmAuth();
   createWindow();
 });

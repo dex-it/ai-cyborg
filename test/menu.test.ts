@@ -9,19 +9,26 @@ const roles = (items: MenuItemConstructorOptions[]): string[] =>
 describe('appMenuTemplate', () => {
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     it(`${platform}: нет перезагрузки интерфейса и масштаба страницы`, () => {
-      const present = roles(appMenuTemplate(platform)).map((r) => r.toLowerCase());
+      const present = roles(appMenuTemplate(platform, () => {})).map((r) => r.toLowerCase());
       for (const forbidden of ['reload', 'forcereload', 'zoomin', 'zoomout', 'resetzoom']) assert.ok(!present.includes(forbidden), `в меню есть ${forbidden}`);
     });
 
     it(`${platform}: правка и окно на месте`, () => {
-      const present = roles(appMenuTemplate(platform));
+      const present = roles(appMenuTemplate(platform, () => {}));
       assert.ok(present.includes('editMenu'));
       assert.ok(present.includes('windowMenu'));
     });
   }
 
-  it('macOS начинается с меню приложения, остальные системы - с меню файла', () => {
-    assert.equal(appMenuTemplate('darwin')[0].role, 'appMenu');
-    assert.equal(appMenuTemplate('linux')[0].role, 'fileMenu');
+  it('выход - пункт с Cmd/Ctrl+Q, который вызывает переданную функцию, а не роль quit', () => {
+    for (const platform of ['darwin', 'linux'] as const) {
+      let calls = 0;
+      const items = (appMenuTemplate(platform, () => calls++)[0].submenu ?? []) as MenuItemConstructorOptions[];
+      const quit = items.find((item) => item.accelerator === 'CmdOrCtrl+Q');
+      assert.ok(quit, `${platform}: нет пункта выхода`);
+      assert.equal(quit.role, undefined);
+      (quit.click as () => void)();
+      assert.equal(calls, 1);
+    }
   });
 });
