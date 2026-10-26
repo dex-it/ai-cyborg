@@ -27,6 +27,21 @@ export function readTrackers(value: unknown): TrackerSettings | null {
   return { github: raw.github === true, gitlab: raw.gitlab === true };
 }
 
+/**
+ * Путь репозитория без символьных ссылок: git (`rev-parse --show-toplevel`) и Claude Code (cwd события хука, имя каталога
+ * журнала в ~/.claude/projects) называют репозиторий физическим путём, и с путём через ссылку (`/tmp`, `/var` на macOS,
+ * ссылка на рабочий каталог) корень сессии, смена ветки и история расходились бы с репозиторием проекта. Каталога нет
+ * (репозиторий удалён или перенесён) - путь остаётся как задан: проект с ним открывается, а дерево покажет ошибку.
+ */
+export function canonicalRepo(dir: string): string {
+  try {
+    return fs.realpathSync(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return dir;
+    throw error;
+  }
+}
+
 export class ProjectStore {
   /** defaults - значения прежнего общего trackers.json для проекта без поля источников; читаются лениво. */
   constructor(
@@ -40,6 +55,7 @@ export class ProjectStore {
       let fallback: TrackerSettings | undefined;
       const projects = (state.projects ?? []).map((p) => ({
         ...p,
+        repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,
         trackers: readTrackers((p as Partial<Project>).trackers) ?? { ...(fallback ??= this.defaults()) },
       }));
       return { projects, lastProjectId: state.lastProjectId ?? null };
