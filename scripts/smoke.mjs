@@ -1,10 +1,11 @@
 // Дымовой тест собранного приложения: node scripts/smoke.mjs [аргументы Electron, например --no-sandbox].
 // Запускает dist/ в Electron с временным каталогом данных, подставным `claude` и репозиторием-пробой, ведёт интерфейс
 // по DevTools Protocol и проверяет: окно, дерево с git-статусом, клавиши команд своей системы, сессию в pty,
-// слежение за рабочим каталогом сессии по событиям хуков, размер шрифта. Нужен дисплей (на Linux - xvfb-run).
+// слежение за рабочим каталогом сессии по событиям хуков, размер шрифта и завершение по SIGTERM при живой сессии.
+// Нужен дисплей (на Linux - xvfb-run).
 // Ничего не пишет вне временного каталога, свой `claude` и ~/.claude не трогает.
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -64,10 +65,20 @@ async function cleanup() {
     ws?.close();
   } catch {}
   if (app && app.exitCode === null) {
+    // SIGTERM при живой сессии: Ctrl+C в терминале, kill и остановка в CI не должны упираться в подтверждение выхода.
     app.kill('SIGTERM');
-    await Promise.race([new Promise((r) => app.once('exit', r)), sleep(3000)]);
-    if (app.exitCode === null) app.kill('SIGKILL');
+    const exited = await Promise.race([new Promise((r) => app.once('exit', () => r(true))), sleep(5000).then(() => false)]);
+    if (!exited) {
+      console.error('smoke: ОШИБКА: приложение с работающей сессией не завершилось по SIGTERM за 5 с');
+      process.exitCode = 1;
+      app.kill('SIGKILL');
+    }
   }
+  // Сессия, пережившая убитый Electron, держит каналы вывода и не даёт скрипту завершиться: чистим по пути этого прогона.
+  // Код pkill не смотрится: 1 - процессов не осталось, это обычный исход.
+  spawnSync('pkill', ['-f', base]);
+  app?.stdout.destroy();
+  app?.stderr.destroy();
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -179,4 +190,5 @@ try {
   process.exitCode = 1;
 } finally {
   await cleanup();
+  process.exit(process.exitCode ?? 0);
 }
