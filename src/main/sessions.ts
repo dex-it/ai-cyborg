@@ -19,17 +19,49 @@ interface Session {
   /** Репозитории запуска: ветками в них управляет сессия. */
   dirs: string[];
   watcher: fs.FSWatcher;
+  /** Отложенное «ждёт» после Stop: любое следующее событие сессии его отменяет. */
+  stopTimer?: NodeJS.Timeout;
 }
 
 export interface SessionEvent {
   hook_event_name?: string;
   cwd?: string;
   tool_name?: string;
+  message?: string;
+  notification_type?: string;
+  last_assistant_message?: string;
+  background_tasks?: unknown[];
+  session_crons?: unknown[];
 }
 
 // Claude Code не оборачивается: Cyborg только дописывает хуки через --settings, и они кладут JSON события в файл сессии.
 const HOOK_COMMAND = '{ cat; echo; } >> "$CYBORG_EVENTS"';
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'];
+const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'Notification'];
+
+// Белый список: новый тип Notification в следующей версии CC не уведомляет; idle_prompt повторяет Stop через минуту.
+const WAITING_NOTIFICATIONS = new Set([
+  'permission_prompt',
+  'elicitation_dialog',
+  'elicitation_url_dialog',
+  'agent_needs_input',
+  'quota_auto_resume_stale',
+  'quota_auto_resume_disabled',
+]);
+
+const REASON_LENGTH = 200;
+
+/** Сессия ждёт человека: ход закончен либо CC стоит на вопросе, разрешении или лимите (типы - code.claude.com/docs/en/hooks). */
+export function waitingReason(event: SessionEvent): string | null {
+  if (event.hook_event_name === 'Stop') {
+    // Непустые background_tasks или session_crons - пауза до фоновой работы: сессия проснётся сама.
+    if (event.background_tasks?.length || event.session_crons?.length) return null;
+    const text = event.last_assistant_message?.replace(/\s+/g, ' ').trim();
+    if (!text) return 'Ход завершён, ждёт ответа';
+    return text.length > REASON_LENGTH ? `${text.slice(0, REASON_LENGTH - 1)}…` : text;
+  }
+  if (event.hook_event_name !== 'Notification' || !WAITING_NOTIFICATIONS.has(event.notification_type ?? '')) return null;
+  return event.message || 'Ждёт ответа';
+}
 
 // Унаследованные маркеры делают сессию дочерней, и CC не пишет её транскрипт.
 const PARENT_SESSION_VARS = [
@@ -67,10 +99,13 @@ export class SessionManager {
   private readonly eventsDir: string;
   private readonly emit: Emit;
   private readonly spawn: Spawn;
+  private readonly stopDelayMs: number;
 
-  constructor(userData: string, emit: Emit, spawn: Spawn = nodePtySpawn) {
+  // Чужой Stop-хук может продолжить ход: «ждёт» после Stop объявляется, только если сессия молчит stopDelayMs.
+  constructor(userData: string, emit: Emit, spawn: Spawn = nodePtySpawn, stopDelayMs = 30_000) {
     this.emit = emit;
     this.spawn = spawn;
+    this.stopDelayMs = stopDelayMs;
     this.eventsDir = path.join(userData, 'sessions');
     prepareEventsDir(this.eventsDir);
     this.removeOrphanedEvents();
@@ -117,6 +152,7 @@ export class SessionManager {
     setImmediate(() => this.readEvents(session));
     proc.onData((data) => this.emit('session:data', { id, data }));
     proc.onExit(({ exitCode }) => {
+      clearTimeout(session.stopTimer);
       session.watcher.close();
       fs.rmSync(eventsFile, { force: true });
       this.sessions.delete(id);
@@ -195,6 +231,12 @@ export class SessionManager {
         this.emit('session:cwd', { id: session.id, cwd: event.cwd });
       }
       this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
+      clearTimeout(session.stopTimer);
+      const reason = waitingReason(event);
+      if (!reason) continue;
+      if (event.hook_event_name === 'Stop') {
+        session.stopTimer = setTimeout(() => this.emit('session:waiting', { id: session.id, reason }), this.stopDelayMs);
+      } else this.emit('session:waiting', { id: session.id, reason });
     }
   }
 }
