@@ -84,8 +84,8 @@ export interface TrackerDeps {
   projects: () => ProjectsState;
 }
 
-const CLI_TIMEOUT_MS = 120_000;
-const CLI_MAX_BUFFER = 64 * 1024 * 1024;
+/** Предел одного вызова gh/glab (NFR-1003): время ожидания и размер ответа. */
+export const CLI_LIMITS = { timeoutMs: 120_000, maxBuffer: 64 * 1024 * 1024 };
 export const MAX_TRACKED = 200;
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
 const HOST = /^[a-z0-9][a-z0-9.-]*$/;
@@ -322,11 +322,11 @@ export class TrackerSettingsStore {
 // ---------- запуск gh и glab ----------
 
 /** gh и glab берут токен из своей конфигурации; Cyborg его не читает и не передаёт. cwd вне репозиториев: glab не выводит хост из текущего. */
-export function createCliRunner(cwd: string): CliRunner {
+export function createCliRunner(cwd: string, limits = CLI_LIMITS): CliRunner {
   const env = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' };
   return (cmd, args) =>
     new Promise((resolve) => {
-      execFile(cmd, args, { cwd, env, timeout: CLI_TIMEOUT_MS, maxBuffer: CLI_MAX_BUFFER }, (error, stdout, stderr) => {
+      execFile(cmd, args, { cwd, env, timeout: limits.timeoutMs, maxBuffer: limits.maxBuffer }, (error, stdout, stderr) => {
         if (!error) return resolve({ code: 0, stdout, stderr, missing: false });
         const e = error as NodeJS.ErrnoException & { killed?: boolean };
         resolve({

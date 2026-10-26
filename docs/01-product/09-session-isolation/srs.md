@@ -83,8 +83,8 @@ quality-checks: входных записей нет
 - **источник:** код `ISOLATION_PROMPT`; прогон на настоящем Claude Code 26.10.2026 (две параллельные сессии ушли в worktree); D-01..D-04.
 - **rationale:** reason - параллельные сессии конфликтуют в общем каталоге; assumptions - D-02, D-05; relationships - FR-9002, FR-9003,
   фича `04-session-tree` (дерево следует за cwd); design constraints - ADR-0012, п.1.
-- **verification:** испытание - те же тесты `claudeArgs`, что у FR-9002 (во всех вариантах запуска есть `--append-system-prompt` с
-  `ISOLATION_PROMPT`); демонстрация - две настоящие сессии ушли в worktree.
+- **verification:** испытание - `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts`: те же тесты `claudeArgs`, что у FR-9002 (во всех
+  вариантах запуска есть `--append-system-prompt` с `ISOLATION_PROMPT`); демонстрация - две настоящие сессии ушли в worktree.
 - **класс:** Functions. **origin:** derived.
 
 ### FR-9003 Решает модель, Cyborg передаёт и следит
