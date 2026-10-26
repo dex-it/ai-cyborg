@@ -59,6 +59,8 @@ export function initSourcesSection(): {
   }
 
   function renderPicker(): void {
+    // Ошибка предела (Enter при полном выборе) живёт до любого изменения выбора: застрявшая, она блокировала бы «Сохранить».
+    filterEl.setCustomValidity('');
     picker.hidden = !jiraBox.checked;
     chosenEl.replaceChildren(
       ...(selected.length
@@ -133,10 +135,7 @@ export function initSourcesSection(): {
     renderJira();
     loadProjects(openToken);
   });
-  filterEl.addEventListener('input', () => {
-    filterEl.setCustomValidity('');
-    renderPicker();
-  });
+  filterEl.addEventListener('input', renderPicker);
   // Enter в поле поиска не должен отправлять форму диалога: он добавляет введённый ключ, если он по форме.
   filterEl.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
