@@ -113,6 +113,7 @@ function selectProject(next: Project | null): void {
   state.lastProjectId = next?.id ?? null;
   persist();
   renderProjectSelect();
+  document.title = next ? `${next.name} - ${appTitle}` : appTitle;
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
@@ -144,6 +145,9 @@ const projectDescription = byId<HTMLTextAreaElement>('project-description');
 const projectRepos = byId('project-repos');
 const projectDelete = byId<HTMLButtonElement>('project-delete');
 const sources = initSourcesSection();
+
+const appTitle = `Cyborg v.${__APP_VERSION__}`;
+document.title = appTitle;
 let draft: Project | null = null;
 let editing: Project | null = null;
 
