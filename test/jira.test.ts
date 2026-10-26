@@ -22,12 +22,12 @@ import {
   problemOf,
   problemText,
   suggestKeys,
-  timeOf,
   validateJiraStart,
 } from '../src/main/jira';
+import { timeOf } from '../src/main/jira-keys';
 import { JiraService } from '../src/main/jira-service';
 import { mrPrompt, validateSessionStart } from '../src/main/mrs';
-import { MAX_JIRA_PROJECTS, NO_JIRA, PROJECT_KEY, readJira, validateJira, type Project, type ProjectsState } from '../src/main/projects';
+import { MAX_JIRA_PROJECTS, PROJECT_KEY, readJira, validateJira, type Project, type ProjectsState } from '../src/main/projects';
 import type { CliResult, JiraRunner } from '../src/main/trackers';
 import { saveProjectsState, validateProjectsState } from '../src/main/trackers';
 
@@ -339,10 +339,10 @@ describe('Jira: сервис', () => {
     const third = await svc.list('p1', false);
     assert.equal(second.problem, 'auth');
     assert.equal(third.error, first.error);
-    assert.equal(calls.length, 2, 'после отказа входа jira не вызывается: только два запроса первой попытки');
+    assert.equal(calls.length, 1, 'после отказа входа jira не вызывается: один запрос первой попытки');
     const again = await svc.list('p1', true);
     assert.deepEqual(again.issues.map((i) => i.key), ['DEX-1']);
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 3);
   });
 
   it('отказ не по входу не блокирует опрос', async () => {
@@ -350,7 +350,7 @@ describe('Jira: сервис', () => {
     const { svc, calls } = service(() => (attempt++ === 0 ? fail('connection refused') : ok('[]')));
     assert.equal((await svc.list('p1', false)).problem, 'error');
     assert.equal((await svc.list('p1', false)).problem, undefined);
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 3, 'первый список отказал - ключи «в работе» не запрашивались');
   });
 
   it('детали и адрес - только по задаче из последнего списка', async () => {
@@ -437,6 +437,7 @@ describe('Jira: проекты проекта', () => {
   it('время jira-cli', () => {
     assert.equal(timeOf('2026-10-25T12:30:00.000+0300'), Date.parse('2026-10-25T12:30:00.000+03:00'));
     assert.equal(timeOf('вчера'), 0);
+    assert.equal(timeOf(''), 0);
   });
 
   it('несколько проектов: запрос и ключи «в работе» на каждый с -p, задачи слиты по давности, повторы убраны', async () => {
@@ -480,14 +481,37 @@ describe('Jira: проекты проекта', () => {
     assert.match(res.notes![0], /^DEX: jira-cli отказал: project does not exist/);
   });
 
-  it('все проекты не ответили: ошибка первого с ключом; отказ входа остановит повторы', async () => {
-    const { svc, calls } = service(() => fail('Unauthorized'), multi);
+  it('отказ входа при нескольких проектах: один вызов за серию, повторов нет до recheck', async () => {
+    const many: Project = { ...project, jira: { enabled: true, projects: ['DEX', 'SUP', 'MDM'] } };
+    const { svc, calls } = service(() => fail('Unauthorized'), many);
     const res = await svc.list('p1', false);
     assert.equal(res.problem, 'auth');
-    assert.match(res.error!, /^(DEX|SUP): /);
-    const before = calls.length;
+    assert.equal(calls.length, 1, 'неверный вход сервер видит один раз');
     await svc.list('p1', false);
-    assert.equal(calls.length, before, 'вход не принят - jira не вызывается');
+    assert.equal(calls.length, 1, 'вход не принят - jira не вызывается');
+    await svc.list('p1', true);
+    assert.equal(calls.length, 2, '«Обновить» - снова один вызов');
+  });
+
+  it('все проекты не ответили не по входу: ошибка первого с ключом', async () => {
+    const { svc } = service(() => fail('project does not exist'), multi);
+    const res = await svc.list('p1', false);
+    assert.equal(res.problem, 'error');
+    assert.match(res.error!, /^DEX: /);
+  });
+
+  it('вход принят, но на один проект нет прав: список остальных, опрос не остановлен', async () => {
+    const { svc, calls } = service((args) => {
+      if (args.includes('--plain')) return ok('');
+      return args.at(-1) === 'SUP' ? fail('403 Forbidden') : ok(JSON.stringify([listed('DEX-1')]));
+    }, multi);
+    const first = await svc.list('p1', false);
+    assert.deepEqual(first.issues.map((i) => i.key), ['DEX-1']);
+    assert.match(first.notes![0], /^SUP: /);
+    const before = calls.length;
+    const second = await svc.list('p1', false);
+    assert.deepEqual(second.issues.map((i) => i.key), ['DEX-1']);
+    assert.ok(calls.length > before, 'следующий опрос снова идёт в jira');
   });
 
   it('детали задачи идут с -p её проекта, если он выбран; чужой префикс - без -p', async () => {
@@ -521,6 +545,8 @@ describe('Jira: проекты проекта', () => {
     assert.equal(calls, 1, 'второй вызов из кэша');
     await svc.projects(true);
     assert.equal(calls, 2, 'recheck сбрасывает кэш');
+    await Promise.all([svc.projects(true), svc.suggest(['dex-1'])]);
+    assert.equal(calls, 3, 'список и подсказки разом - один вызов jira');
     const denied = await service(() => fail('Unauthorized')).svc.projects(false);
     assert.ok('problem' in denied && denied.problem === 'auth');
     assert.ok('problem' in (await service(() => ({ code: null, stdout: '', stderr: '', missing: true })).svc.projects(false)));
@@ -531,11 +557,5 @@ describe('Jira: проекты проекта', () => {
     const { svc } = service((args) => (args[0] === 'project' ? ok(table) : ok('[]')));
     assert.deepEqual(await svc.suggest(['dex-1-a', 'utf-8', 'feature/SUP-2', 'sup-3']), [{ key: 'SUP', count: 2 }, { key: 'DEX', count: 1 }]);
     assert.deepEqual(await service(() => fail('Unauthorized')).svc.suggest(['dex-1']), []);
-  });
-});
-
-describe('Jira: пустые настройки', () => {
-  it('NO_JIRA - выключено и без ключа', () => {
-    assert.deepEqual(NO_JIRA, { enabled: false, projects: [] });
   });
 });

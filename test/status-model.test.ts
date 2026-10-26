@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { JiraIssue } from '../src/main/jira';
 import type { Mr, MrListResult } from '../src/main/mrs';
-import { attentionOf, groupIssues, jiraTime, levelOf, mentionsKey, mrsOfIssue, pipelineTone, usable } from '../src/renderer/status-model';
+import { attentionOf, byAttention, groupIssues, jiraOnlyLevel, levelOf, mentionsKey, mrActions, mrsOfIssue, pipelineTone, reviewQueue, usable } from '../src/renderer/status-model';
 
 let n = 0;
 function mr(extra: Partial<Mr> = {}): Mr {
@@ -125,12 +125,6 @@ describe('Статус: связь задач Jira и MR', () => {
     assert.deepEqual(groupIssues([issue('A-1')]).map((g) => g.id), ['rest']);
     assert.deepEqual(groupIssues([]), []);
   });
-
-  it('время jira-cli с поясом без двоеточия', () => {
-    assert.equal(jiraTime('2026-10-25T12:30:00.000+0300'), Date.parse('2026-10-25T12:30:00.000+03:00'));
-    assert.equal(jiraTime('вчера'), 0);
-    assert.equal(jiraTime(''), 0);
-  });
 });
 
 describe('Статус: когда по MR можно судить', () => {
@@ -165,5 +159,44 @@ describe('Статус: когда по MR можно судить', () => {
   it('один репозиторий упал, другой ответил - судим по ответившему', () => {
     const sources = [{ kind: 'github' as const, host: 'github.com', path: 'o/a', error: 'таймаут' }, { kind: 'github' as const, host: 'github.com', path: 'o/b' }];
     assert.deepEqual(usable(list({ sources })), []);
+  });
+});
+
+describe('Статус: кнопки и порядок записей MR', () => {
+  const view = (actions: ReturnType<typeof mrActions>) => actions.map((a) => `${a.label}/${a.intent}${a.primary ? '*' : ''}`);
+
+  it('свой MR: по кнопке на причину, упавший пайплайн - главная', () => {
+    assert.deepEqual(view(mrActions({ own: true }, ['pipeline-failed'], false)), ['Разобрать пайплайн/ci*']);
+    assert.deepEqual(view(mrActions({ own: true }, ['has-comments'], false)), ['Доработать/rework*']);
+    assert.deepEqual(view(mrActions({ own: true }, ['pipeline-failed', 'has-comments'], false)), ['Разобрать пайплайн/ci*', 'Доработать/rework']);
+    assert.deepEqual(mrActions({ own: true }, [], false), []);
+  });
+
+  it('чужой MR - «Ревью», главная, если ждёт меня', () => {
+    assert.deepEqual(view(mrActions({ own: false }, ['review-requested'], false)), ['Ревью/review*']);
+    assert.deepEqual(view(mrActions({ own: false }, [], false)), ['Ревью/review']);
+  });
+
+  it('есть сессия - одна кнопка «К сессии»', () => {
+    assert.deepEqual(view(mrActions({ own: true }, ['pipeline-failed', 'has-comments'], true)), ['К сессии/rework']);
+    assert.deepEqual(view(mrActions({ own: false }, ['review-requested'], true)), ['К сессии/review']);
+  });
+
+  it('записи с причиной первыми, остальной порядок прежний', () => {
+    const [a, b, c, d] = [mr(), mr(), mr(), mr()];
+    assert.deepEqual(byAttention([a, b, c, d], new Set([c.key, b.key])), [b, c, a, d]);
+  });
+
+  it('«Ждут моего ревью»: открытые чужие', () => {
+    const theirs = mr({ own: false });
+    assert.deepEqual(reviewQueue([theirs, mr({ own: true }), mr({ own: false, state: 'merged' })]), [theirs]);
+  });
+});
+
+describe('Статус: проект только с Jira', () => {
+  it('список Jira получен - всё спокойно; ошибка или нет данных - статус не получен', () => {
+    assert.equal(jiraOnlyLevel({}), 'ok');
+    assert.equal(jiraOnlyLevel({ error: 'вход не принят' }), 'unknown');
+    assert.equal(jiraOnlyLevel(null), 'unknown');
   });
 });

@@ -205,12 +205,6 @@ export function suggestKeys(branches: readonly string[], known: ReadonlySet<stri
   return [...count].map(([key, n]) => ({ key, count: n })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
-/** Время из jira-cli (`+0300` без двоеточия) в миллисекунды; не разобралось - 0. */
-export function timeOf(value: string): number {
-  const ms = Date.parse(value.replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
-  return Number.isNaN(ms) ? 0 : ms;
-}
-
 // ---------- аргументы ----------
 
 const projectArgs = (project: string): string[] => (project === '' ? [] : ['-p', project]);

@@ -2,11 +2,12 @@
 
 import type { JiraDetailsResult, JiraIssue, JiraListResult } from '../main/jira';
 import type { Mr, MrIntent, MrListResult } from '../main/mrs';
+import { timeOf } from '../main/jira-keys';
 import type { Project } from '../main/projects';
 import { ago } from './ago';
 import { byId, el } from './dom';
 import { applyMrDetails, mrNumber } from './mr-model';
-import { attentionOf, ATTENTION_TEXT, groupIssues, jiraTime, levelOf, LEVEL_TEXT, mrsOfIssue, pipelineTone, usable, type Attention, type Level } from './status-model';
+import { attentionOf, ATTENTION_TEXT, byAttention, groupIssues, jiraOnlyLevel, levelOf, LEVEL_TEXT, mrActions, mrsOfIssue, pipelineTone, reviewQueue, usable, type Attention, type Level } from './status-model';
 
 const api = window.cyborg;
 
@@ -93,10 +94,6 @@ export class StatusHub {
     window.addEventListener('resize', () => this.opened && this.place());
   }
 
-  get isOpen(): boolean {
-    return this.opened;
-  }
-
   /** Проект выбран либо его источники изменились: данные прежнего проекта сброшены, кнопка показана по источникам. */
   onProjectChanged(): void {
     this.seq++;
@@ -178,7 +175,10 @@ export class StatusHub {
   // ---------- кнопка ----------
 
   private level(): Level {
-    return this.data ? levelOf(usable(this.data.mine), usable(this.data.review)) : 'unknown';
+    if (!this.data) return 'unknown';
+    const project = this.host.project();
+    if (project && !project.trackers.github && !project.trackers.gitlab) return jiraOnlyLevel(this.data.jira);
+    return levelOf(usable(this.data.mine), usable(this.data.review));
   }
 
   private attention(): Attention[] {
@@ -235,7 +235,7 @@ export class StatusHub {
     if (project.jira?.enabled) this.renderJira(into, data, [...(mine ?? []), ...(review ?? [])]);
     if (codeHost) {
       this.renderMrs(into, 'Мои MR/PR', (mine ?? []).filter((mr) => mr.state === 'open'), 'У вас нет открытых MR/PR.', mine !== null);
-      this.renderMrs(into, 'Ждут моего ревью', (review ?? []).filter((mr) => mr.state === 'open' && !mr.own), 'Ревью от вас никто не ждёт.', review !== null);
+      this.renderMrs(into, 'Ждут моего ревью', reviewQueue(review ?? []), 'Ревью от вас никто не ждёт.', review !== null);
     }
   }
 
@@ -287,13 +287,17 @@ export class StatusHub {
     meta.append(el('span', `chip ${issue.category === 'indeterminate' ? 'tone-progress' : ''}`, issue.status || '—'));
     if (issue.priority) meta.append(el('span', 'chip', issue.priority));
     for (const mr of linked) meta.append(this.mrChip(mr));
-    const updated = jiraTime(issue.updated);
+    const updated = timeOf(issue.updated);
     if (updated) meta.append(el('span', 'status-when', `обновлена ${ago(updated, Date.now())}`));
     main.append(meta);
     const actions = el('div', 'status-actions');
     const open1 = this.host.sessionOf(`jira:${issue.key}`);
     const start = el('button', open1 ? '' : 'primary', open1 ? 'К сессии' : 'Начать') as HTMLButtonElement;
     start.title = open1 ? 'Перейти к открытой сессии задачи' : 'Открыть сессию Claude Code по задаче: прочитает её и предложит план';
+    if (!open1 && !this.host.project()?.repos.length) {
+      start.disabled = true;
+      start.title = 'Сессии негде открыться: добавьте репозиторий в свойствах проекта';
+    }
     start.addEventListener('click', () => {
       this.close();
       this.host.startJira(issue, linked[0], this.button);
@@ -351,7 +355,7 @@ export class StatusHub {
       if (comments.length) {
         box.append(el('div', 'status-group', `Комментарии (последние ${comments.length} из ${total})`));
         for (const comment of comments) {
-          const when = jiraTime(comment.created);
+          const when = timeOf(comment.created);
           box.append(el('div', 'status-comment-head', `${comment.author}${when ? ` · ${ago(when, Date.now())}` : ''}`), el('div', 'status-comment', comment.text));
         }
       }
@@ -388,8 +392,7 @@ export class StatusHub {
     const section = el('section', 'status-section');
     section.append(el('h3', '', `${title}: ${mrs.length}`));
     if (!mrs.length) section.append(el('p', 'status-note', empty));
-    const ordered = [...mrs].sort((a, b) => Number(attention.has(b.key)) - Number(attention.has(a.key)));
-    for (const mr of ordered) section.append(this.mrRow(mr, attention.get(mr.key)));
+    for (const mr of byAttention(mrs, attention)) section.append(this.mrRow(mr, attention.get(mr.key)));
     into.append(section);
   }
 
@@ -411,21 +414,14 @@ export class StatusHub {
     meta.append(el('span', 'status-when', `${mr.path} · ${mr.sourceBranch}`));
     main.append(title, meta);
     const actions = el('div', 'status-actions');
-    const session = this.host.sessionOf(mr.key);
-    const add = (label: string, intent: MrIntent, primary: boolean): void => {
-      const button = el('button', primary && !session ? 'primary' : '', session ? 'К сессии' : label) as HTMLButtonElement;
+    for (const action of mrActions(mr, why?.kinds ?? [], !!this.host.sessionOf(mr.key))) {
+      const button = el('button', action.primary ? 'primary' : '', action.label) as HTMLButtonElement;
       button.addEventListener('click', () => {
         this.close();
-        this.host.startMr(mr, intent, this.button);
+        this.host.startMr(mr, action.intent, this.button);
       });
       actions.append(button);
-    };
-    // У MR одна сессия на все намерения: есть она - одна кнопка «К сессии», иначе по кнопке на причину.
-    if (session) add('', mr.own ? 'rework' : 'review', false);
-    else if (mr.own) {
-      if (why?.kinds.includes('pipeline-failed')) add('Разобрать пайплайн', 'ci', true);
-      if (why?.kinds.includes('has-comments')) add('Доработать', 'rework', !why.kinds.includes('pipeline-failed'));
-    } else add('Ревью', 'review', !!why);
+    }
     row.append(main, actions);
     item.append(row);
     return item;

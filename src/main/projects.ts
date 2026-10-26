@@ -16,8 +16,6 @@ export interface JiraSettings {
   projects: string[];
 }
 
-export const NO_JIRA: JiraSettings = { enabled: false, projects: [] };
-
 export interface Project {
   id: string;
   name: string;
@@ -162,8 +160,8 @@ export class ProjectStore {
     }
     const state = parsed as Partial<ProjectsState>;
     let fallback: TrackerSettings | undefined;
-    const projects = (state.projects ?? []).map((p) => {
-      const jira = readJira((p as Partial<Project>).jira);
+    const projects = (state.projects ?? []).map(({ jira: stored, ...p }) => {
+      const jira = readJira(stored);
       return {
         ...p,
         repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,

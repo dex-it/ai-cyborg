@@ -106,7 +106,7 @@ date: 2026-10-26
 | FR-11006 | Детали задачи Jira и открытие в браузере | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |
 | FR-11007 | Мои MR/PR и MR на моё ревью | 11-status-hub | автотест | `test/status-model.test.ts` |
 | FR-11008 | Сессия по задаче Jira | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |
-| FR-11009 | Сессия по упавшему пайплайну, доработке и ревью из карточки | 11-status-hub | автотест | `test/jira.test.ts` |
+| FR-11009 | Сессия по упавшему пайплайну, доработке и ревью из карточки | 11-status-hub | автотест | `test/jira.test.ts`, `test/status-model.test.ts` |
 | FR-11010 | Только чтение и безопасность аргументов | 11-status-hub | автотест | `test/jira.test.ts`, `test/static-guards.test.ts` |
 | FR-11011 | Отказы `jira-cli` и защита учётной записи | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11012 | Выбор проектов Jira для проекта | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |
