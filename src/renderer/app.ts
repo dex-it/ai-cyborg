@@ -333,7 +333,7 @@ function showNoSession(): void {
     start.addEventListener('click', (event) => {
       // Иначе общий обработчик клика на document тут же закроет открытое меню репозиториев.
       event.stopPropagation();
-      requestSession(start);
+      toggleSessionMenu(start);
     });
     nodes.push(start);
   }
@@ -730,6 +730,8 @@ setInterval(() => {
 // ---------- запуск сессии ----------
 
 function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPick: (repo: string) => void): void {
+  // Кнопки, открывающие это меню, гасят клик до document, поэтому меню проекта закрывается здесь.
+  projectMenu.hidden = true;
   repoMenu.replaceChildren(
     el('div', 'menu-title', title),
     ...repos.map((repo) => {
@@ -796,6 +798,12 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
   repoMenu.style.left = `${rect.left}px`;
   repoMenu.hidden = false;
   filter.focus();
+}
+
+/** Кнопка «Новая сессия» (в полосе или на пустом экране): повторное нажатие при открытом меню закрывает его. */
+function toggleSessionMenu(anchor: HTMLElement): void {
+  if (repoMenu.hidden) requestSession(anchor);
+  else repoMenu.hidden = true;
 }
 
 function requestSession(anchor: HTMLElement = newSessionButton): void {
@@ -963,8 +971,7 @@ const statusHub = new StatusHub({
 
 newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();
-  if (repoMenu.hidden) requestSession();
-  else repoMenu.hidden = true;
+  toggleSessionMenu(newSessionButton);
 });
 sideFiles.addEventListener('click', () => showSideView(false));
 sideHistory.addEventListener('click', () => showSideView(true));
