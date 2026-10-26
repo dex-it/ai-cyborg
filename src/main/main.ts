@@ -1,8 +1,9 @@
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
+import { appMenuTemplate } from './menu';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
@@ -33,6 +34,26 @@ const trackers = new TrackersService({
 const mrs = new MrsService(trackers, runCli);
 const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), (url) => shell.openExternal(url));
 
+let quitting = false;
+app.on('before-quit', () => {
+  quitting = true;
+});
+
+/** Закрытие окна и выход завершают все сессии: как и закрытие вкладки, они спрашивают, пока сессия работает. */
+function confirmEndSessions(): boolean {
+  const running = sessions.count();
+  if (!running) return true;
+  const choice = dialog.showMessageBoxSync(win!, {
+    type: 'warning',
+    buttons: ['Закрыть', 'Отмена'],
+    defaultId: 1,
+    cancelId: 1,
+    message: `Работающих сессий Claude Code: ${running}`,
+    detail: 'При закрытии окна они будут завершены.',
+  });
+  return choice === 0;
+}
+
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff');
 
 function createWindow(): void {
@@ -49,6 +70,10 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  // Выход уже начался (before-quit: подтверждено в меню, сигнал SIGINT/SIGTERM, завершение сеанса ОС) - окно не спрашивает.
+  win.on('close', (event) => {
+    if (!quitting && !confirmEndSessions()) event.preventDefault();
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
@@ -135,6 +160,15 @@ ipcMain.handle('git:switch', async (_event, root: unknown, branch: unknown) => {
 ipcMain.handle('git:headContent', (_event, file: unknown) => (typeof file === 'string' ? gitHeadContent(file) : null));
 
 app.whenReady().then(() => {
+  // icon у BrowserWindow на macOS не действует: в Dock остался бы значок Electron.
+  app.dock?.setIcon(path.join(__dirname, 'icon.png'));
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      appMenuTemplate(process.platform, () => {
+        if (confirmEndSessions()) app.quit();
+      }),
+    ),
+  );
   void trackers.warmAuth();
   createWindow();
 });

@@ -1,0 +1,44 @@
+#!/bin/sh
+# Запуск Cyborg из исходников: зависимости при необходимости, сборка, окно Electron.
+# Работает на macOS и Linux; аргументы передаются Electron. Можно вызвать по ссылке из PATH.
+set -eu
+
+fail() {
+  echo "cyborg: $*" >&2
+  exit 1
+}
+
+# Каталог репозитория по самому скрипту, через цепочку символьных ссылок (readlink -f есть не везде).
+src=$0
+while [ -h "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case $src in
+    /*) ;;
+    *) src=$dir/$src ;;
+  esac
+done
+cd -P "$(dirname "$src")"
+
+command -v git >/dev/null 2>&1 || fail 'не найден git'
+command -v node >/dev/null 2>&1 || fail 'не найден Node.js 24 или новее'
+command -v npm >/dev/null 2>&1 || fail 'не найден npm'
+[ "$(node -p 'process.versions.node.split(".")[0]')" -ge 24 ] || fail "нужен Node.js 24 или новее, найден $(node -v)"
+
+# npm install пересобирает node-pty под Electron (postinstall); повтор нужен после смены package-lock.json.
+if [ ! -d node_modules ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
+  npm install
+fi
+npm run build --silent
+
+# Песочница Chromium на Linux: setuid-chrome-sandbox либо непривилегированные user namespaces.
+# Нет ни того, ни другого - Electron не стартует, и тогда --no-sandbox добавляется явно, с предупреждением.
+if [ "$(uname -s)" = Linux ]; then
+  sandbox=node_modules/electron/dist/chrome-sandbox
+  if ! { [ -u "$sandbox" ] && [ "$(stat -c %u "$sandbox")" = 0 ]; } && ! unshare --user true >/dev/null 2>&1; then
+    echo 'cyborg: песочница Chromium недоступна, запуск с --no-sandbox (см. README)' >&2
+    set -- --no-sandbox "$@"
+  fi
+fi
+
+exec node_modules/.bin/electron . "$@"

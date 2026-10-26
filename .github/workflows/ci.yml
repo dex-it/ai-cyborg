@@ -1,0 +1,52 @@
+name: CI
+
+# Проверка каждого PR и каждого пуша в master на macOS и Linux: установка (как у ./cyborg), сборка, типы, тесты, дымовой тест окна.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      # postinstall пересобирает node-pty под Electron: падение здесь - то же, что у разработчика при первом запуске.
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      # Окно Electron: на macOS есть сессия WindowServer, на Linux нужен виртуальный дисплей и запуск без песочницы.
+      - name: smoke (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/smoke.mjs
+      - name: smoke (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node scripts/smoke.mjs --no-sandbox
+
+  # Одна проверка на весь CI: её имя можно сделать обязательным в защите ветки, не перечисляя матрицу.
+  required:
+    name: CI
+    if: always()
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: test "${{ needs.check.result }}" = success
