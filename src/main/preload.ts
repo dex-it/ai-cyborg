@@ -8,6 +8,7 @@ import type { TaskDetailsResult } from './task-details';
 import type { TaskRef, TasksResult, TrackersStatus } from './trackers';
 
 const api = {
+  platform: process.platform,
   pickDir: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir', defaultPath),
   loadProjects: (): Promise<ProjectsState> => ipcRenderer.invoke('projects:load'),
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),

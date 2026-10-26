@@ -232,7 +232,23 @@ test('gitStatus перекрывает фильтр заполненного п�
   assert.equal(fs.existsSync(marker), false, 'драйвер фильтра подмодуля ..x выполнен');
 });
 
-test('gitStatus с подмодулем по пути не в UTF-8 не запускает его фильтр', async (t) => {
+// APFS (macOS) отвергает имена не в UTF-8 с EILSEQ: фикстуру там не построить, а проверяемое поведение git от ФС не зависит.
+function acceptsNonUtf8Names(): boolean {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-utf8-'));
+  try {
+    fs.writeFileSync(Buffer.concat([Buffer.from(dir + '/'), Buffer.from([0x70, 0xff, 0x71])]), '');
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EILSEQ') return false;
+    throw e;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const NON_UTF8_SKIP = acceptsNonUtf8Names() ? false : 'файловая система не допускает имена файлов не в UTF-8 (EILSEQ)';
+
+test('gitStatus с подмодулем по пути не в UTF-8 не запускает его фильтр', { skip: NON_UTF8_SKIP }, async (t) => {
   const { base, marker, script } = setup(t);
   const repo = repoWithPopulatedSub(base, Buffer.from([0x70, 0xff, 0x71]), script);
 

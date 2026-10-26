@@ -1,0 +1,9 @@
+# Экшены в ci.yml закреплены по SHA: без Dependabot они не обновятся.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CI"

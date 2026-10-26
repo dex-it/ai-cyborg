@@ -9,6 +9,7 @@
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
     "measure": "node scripts/measure.mjs",
+    "smoke": "npm run build && node scripts/smoke.mjs",
     "postinstall": "electron-rebuild -f -w node-pty",
     "test": "node --test 'src/**/*.test.ts' && node scripts/test.mjs"
   },

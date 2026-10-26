@@ -44,6 +44,38 @@ describe('запись JSON', () => {
   });
 });
 
+describe('ProjectStore: пути репозиториев', () => {
+  const load = (repos: unknown) => {
+    const file = path.join(dir, 'projects.json');
+    fs.writeFileSync(file, JSON.stringify({ projects: [{ id: '1', name: 'n', description: 'd', repos, trackers: { github: false, gitlab: false } }], lastProjectId: null }));
+    return new ProjectStore(file).load().projects[0].repos;
+  };
+
+  // tmpdir на macOS сам лежит за ссылкой (/var -> /private/var): физический путь берётся от realpath каталога теста.
+  const linked = () => {
+    const real = path.join(fs.realpathSync(dir), 'real');
+    fs.mkdirSync(real);
+    const link = path.join(dir, 'link');
+    fs.symlinkSync(real, link);
+    return { real, link };
+  };
+
+  it('путь через символьную ссылку читается физическим: так репозиторий называют git и Claude Code', () => {
+    const { real, link } = linked();
+    assert.deepEqual(load([link]), [real]);
+  });
+
+  it('ссылка и её цель в одном проекте сливаются в один репозиторий', () => {
+    const { real, link } = linked();
+    assert.deepEqual(load([link, real]), [real]);
+  });
+
+  it('нет каталога - путь остаётся как задан', () => {
+    const missing = path.join(dir, 'gone');
+    assert.deepEqual(load([missing]), [missing]);
+  });
+});
+
 describe('ProjectStore: источники задач проекта', () => {
   const base = { id: '1', name: 'n', description: 'd', repos: ['/a'] };
   const write = (projects: object[]) => fs.writeFileSync(path.join(dir, 'projects.json'), JSON.stringify({ projects, lastProjectId: null }));
