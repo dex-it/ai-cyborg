@@ -12,7 +12,13 @@
       <aside id="sidebar">
         <div id="project-bar">
           <select id="project-select" title="Проект"></select>
-          <button id="project-menu-open" class="icon-button" title="Проект">⚙</button>
+          <button id="project-menu-open" class="icon-button" title="Проект" aria-label="Меню проекта">
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></svg>
+          </button>
+        </div>
+        <div id="side-tabs" role="tablist">
+          <button id="side-files" class="side-tab active" role="tab" title="Дерево файлов">Файлы</button>
+          <button id="side-history" class="side-tab" role="tab" title="Прошлые сессии Claude Code проекта">Сессии</button>
         </div>
         <header id="tree-header">
           <div id="tree-title"></div>
@@ -27,7 +33,7 @@
           <div id="session-list"></div>
           <button id="tasks-toggle" class="panel-toggle" title="Задачи из трекеров" hidden>Задачи</button>
           <button id="mrs-toggle" class="panel-toggle" title="MR и PR репозиториев проекта" hidden>MR/PR</button>
-          <button id="new-session" title="Новая сессия Claude Code">+ CC</button>
+          <button id="new-session" title="Новая сессия Claude Code"><span class="plus" aria-hidden="true">+</span> Новая сессия</button>
         </nav>
         <div id="sessions">
           <div id="empty"></div>
@@ -36,11 +42,6 @@
         </div>
       </main>
     </div>
-
-    <footer id="status-bar">
-      <button id="side-files" class="side-tab active" title="Дерево файлов">Файлы</button>
-      <button id="side-history" class="side-tab" title="Прошлые сессии Claude Code проекта">Сессии</button>
-    </footer>
 
     <div id="repo-menu" class="menu" hidden></div>
     <div id="project-menu" class="menu" hidden></div>
