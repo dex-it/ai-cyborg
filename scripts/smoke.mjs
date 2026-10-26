@@ -6,11 +6,12 @@
 // Ничего не пишет вне временного каталога, свой `claude` и ~/.claude не трогает.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
+const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const electronArgs = process.argv.slice(2);
 const TIMEOUT_MS = 20_000;
 const CDP_TIMEOUT_MS = 15_000;
@@ -190,12 +191,17 @@ async function main() {
   const tabs = () => ev('document.querySelectorAll("#session-list > *").length');
   const fontSize = () => ev('localStorage.getItem("cyborg.fontSize")');
 
-  await waitFor('окно приложения', async () => (await ev('document.title')) === 'Cyborg');
+  // Заголовок окна - «Проект - Cyborg v.версия[+хеш коммита]»; проект появляется после загрузки списка проектов.
+  const title = () => ev('document.title');
+  await waitFor('окно приложения', async () => (await title()).includes(`Cyborg v.${version}`));
   log('окно открыто');
 
   await waitFor('проект и дерево', async () => /Smoke/.test(await text('#project-select')) && /a\.txt/.test(await text('#tree')));
   assert.match(await text('#tree'), /\bM\b/, 'изменённый файл без отметки M git-статуса');
   log('проект, дерево и git-статус');
+
+  assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
+  log('заголовок окна с проектом и версией');
 
   const shortcut = `${mac ? 'Cmd' : 'Ctrl'}+Shift+N`;
   assert.equal(await ev('window.cyborg.platform'), process.platform);
