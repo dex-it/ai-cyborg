@@ -94,3 +94,15 @@ test('SessionManager читает события: смена cwd, активно
   assert.equal(fs.existsSync(file), false);
   assert.ok(events.some((e) => e.channel === 'session:exit'));
 });
+
+test('SessionManager считает только работающие сессии', (t) => {
+  const { manager } = managerIn(t);
+  assert.equal(manager.count(), 0);
+  const a = manager.create(os.tmpdir(), []);
+  manager.create(os.tmpdir(), []);
+  assert.equal(manager.count(), 2);
+  manager.kill(a);
+  assert.equal(manager.count(), 1);
+  manager.killAll();
+  assert.equal(manager.count(), 0);
+});

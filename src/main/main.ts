@@ -1,8 +1,9 @@
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
+import { appMenuTemplate } from './menu';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
@@ -49,6 +50,20 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  // Закрытие окна завершает все сессии: как и закрытие вкладки, оно спрашивает, пока сессия работает.
+  win.on('close', (event) => {
+    const running = sessions.count();
+    if (!running) return;
+    const choice = dialog.showMessageBoxSync(win!, {
+      type: 'warning',
+      buttons: ['Закрыть', 'Отмена'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Работающих сессий Claude Code: ${running}`,
+      detail: 'При закрытии окна они будут завершены.',
+    });
+    if (choice !== 0) event.preventDefault();
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
@@ -135,6 +150,7 @@ ipcMain.handle('git:switch', async (_event, root: unknown, branch: unknown) => {
 ipcMain.handle('git:headContent', (_event, file: unknown) => (typeof file === 'string' ? gitHeadContent(file) : null));
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform)));
   void trackers.warmAuth();
   createWindow();
 });

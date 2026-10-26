@@ -125,6 +125,11 @@ export class SessionManager {
     return id;
   }
 
+  /** Работающие сессии: завершившаяся убирается из набора в onExit. */
+  count(): number {
+    return this.sessions.size;
+  }
+
   uses(dir: string): boolean {
     return [...this.sessions.values()].some((s) => s.dirs.includes(dir));
   }
