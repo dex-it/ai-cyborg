@@ -2,7 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { HistoryEntry } from '../main/history';
 import type { JiraIssue } from '../main/jira';
-import type { Project, ProjectsProblem, ProjectsState } from '../main/projects';
+import type { Project, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
@@ -10,6 +10,7 @@ import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
 import { moveItem } from './reorder';
 import { windowTitle } from './title';
+import { canCreateWorkspace, defaultWorkspaceFile, projectsProblemText, withDirectory } from './workspace-text';
 import { initSourcesSection } from './sources';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
@@ -84,12 +85,12 @@ const treeHeader = byId('tree-header');
 const historyEl = byId('history');
 const sideFiles = byId<HTMLButtonElement>('side-files');
 const sideHistory = byId<HTMLButtonElement>('side-history');
-const projectMenu = byId('project-menu');
-const projectMenuButton = byId<HTMLButtonElement>('project-menu-open');
 const taskSessions = new TaskSessionRegistry<Session>();
 const startGuard = new StartGuard();
 
 let state: ProjectsState = { projects: [], lastProjectId: null };
+let workspaceFile: string | null = null;
+let workspaceName: string | null = null;
 let project: Project | null = null;
 const sessions: Session[] = [];
 const lastSessionOf = new Map<string, Session>();
@@ -120,7 +121,8 @@ function selectProject(next: Project | null): void {
   state.lastProjectId = next?.id ?? null;
   persist();
   renderProjectSelect();
-  document.title = windowTitle(__APP_VERSION__, next?.name ?? null);
+  document.title = windowTitle(__APP_VERSION__, next?.name ?? null, workspaceName);
+  api.projectSelected(!!next);
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
@@ -133,15 +135,8 @@ function selectProject(next: Project | null): void {
 }
 
 /** Отказ записи не откатывает состояние в памяти: оператор не теряет ввод, но знает, что на диск он не лёг. */
-/** Текст предупреждения о файле проектов (ADR-0004, п.4): что случилось, где исходные байты, что делать. */
-function projectsProblemText(problem: ProjectsProblem): string {
-  if (problem.kind === 'unreadable') {
-    return `Файл проектов не прочитан (${problem.detail}). Проекты не загружены, и пока файл недоступен, запись в него отключена: он не будет затёрт. Исправьте доступ к projects.json в каталоге данных приложения и перезапустите Cyborg.`;
-  }
-  return `Файл проектов повреждён (${problem.detail}), проекты не загружены. Исходное содержимое сохранено:\n${problem.copy}\nЧтобы вернуть проекты: закройте Cyborg, исправьте копию и положите её на место projects.json.`;
-}
-
 function persist(): void {
+  if (!workspaceFile) return;
   api.saveProjects(state).catch((error: Error) => {
     alert(`Не удалось сохранить проекты: ${error.message}. Изменения действуют до закрытия приложения, на диск они не записаны.`);
   });
@@ -154,7 +149,7 @@ const projectRepos = byId('project-repos');
 const projectDelete = byId<HTMLButtonElement>('project-delete');
 const sources = initSourcesSection();
 
-document.title = windowTitle(__APP_VERSION__, null);
+document.title = windowTitle(__APP_VERSION__, null, workspaceName);
 let draft: Project | null = null;
 let editing: Project | null = null;
 
@@ -176,14 +171,12 @@ function editProject(target: Project | null): void {
 // Свой тип данных: строка репозитория не принимается зонами броска пути (acceptsDrop).
 const REPO_INDEX_MIME = 'application/x-cyborg-repo-index';
 
-function renderDraftRepos(): void {
-  if (!draft) return;
-  const current = draft;
-  projectRepos.replaceChildren(
-    ...current.repos.map((repo, index) => {
+function renderRepoList(container: HTMLElement, repos: string[], setRepos: (next: string[]) => void): void {
+  container.replaceChildren(
+    ...repos.map((repo, index) => {
       const item = el('li');
       item.append(el('span', 'repo-name', basename(repo)), el('span', 'repo-path', repo));
-      item.draggable = current.repos.length > 1;
+      item.draggable = repos.length > 1;
       item.title = item.draggable ? 'Перетащите, чтобы изменить порядок' : '';
       item.addEventListener('dragstart', (event) => {
         event.dataTransfer?.setData(REPO_INDEX_MIME, String(index));
@@ -202,29 +195,40 @@ function renderDraftRepos(): void {
         const from = Number(event.dataTransfer?.getData(REPO_INDEX_MIME));
         if (!event.dataTransfer?.types.includes(REPO_INDEX_MIME) || !Number.isInteger(from)) return;
         event.preventDefault();
-        current.repos = moveItem(current.repos, from, index);
-        renderDraftRepos();
+        setRepos(moveItem(repos, from, index));
       });
       const remove = el('button', 'icon-button', '×');
       remove.title = 'Убрать из проекта';
-      remove.addEventListener('click', () => {
-        current.repos = current.repos.filter((r) => r !== repo);
-        renderDraftRepos();
-      });
+      remove.addEventListener('click', () => setRepos(repos.filter((r) => r !== repo)));
       item.append(remove);
       return item;
     }),
   );
-  if (!current.repos.length) projectRepos.append(el('li', 'hint', 'Репозиториев нет'));
+  if (!repos.length) container.append(el('li', 'hint', 'Репозиториев нет'));
+}
+
+/** Каталог репозитория из диалога выбора: корень git либо каталог как есть, если оператор подтвердил. */
+async function pickRepo(near: string | undefined): Promise<string | null> {
+  const dir = await api.pickDir(near);
+  if (!dir) return null;
+  const root = await api.gitRoot(dir);
+  if (!root && !confirm(`${dir} не git-репозиторий: изменений в дереве не будет видно. Добавить всё равно?`)) return null;
+  return root ?? dir;
+}
+
+function renderDraftRepos(): void {
+  const current = draft;
+  if (!current) return;
+  renderRepoList(projectRepos, current.repos, (next) => {
+    current.repos = next;
+    renderDraftRepos();
+  });
 }
 
 byId('project-add-repo').addEventListener('click', async () => {
   if (!draft) return;
-  const dir = await api.pickDir(draft.repos[0]);
-  if (!dir) return;
-  const root = await api.gitRoot(dir);
-  if (!root && !confirm(`${dir} не git-репозиторий: изменений в дереве не будет видно. Добавить всё равно?`)) return;
-  const repo = root ?? dir;
+  const repo = await pickRepo(draft.repos[0]);
+  if (!repo || !draft) return;
   if (!draft.repos.includes(repo)) draft.repos.push(repo);
   renderDraftRepos();
 });
@@ -257,30 +261,114 @@ projectDelete.addEventListener('click', () => {
 
 projectSelect.addEventListener('change', () => selectProject(state.projects.find((p) => p.id === projectSelect.value) ?? null));
 
-function showProjectMenu(): void {
-  const item = (label: string, run: () => void): HTMLElement => {
-    const node = el('div', 'menu-item', label);
-    node.addEventListener('click', () => {
-      projectMenu.hidden = true;
-      run();
-    });
-    return node;
-  };
-  const current = project;
-  projectMenu.replaceChildren(
-    ...(current ? [item('Свойства проекта', () => editProject(current))] : []),
-    item('Новый проект', () => editProject(null)),
-  );
-  const rect = projectMenuButton.getBoundingClientRect();
-  projectMenu.style.top = `${rect.bottom + 2}px`;
-  projectMenu.style.left = `${rect.left}px`;
-  projectMenu.hidden = false;
+// ---------- воркспейс ----------
+
+const workspaceDialog = byId<HTMLDialogElement>('workspace-dialog');
+const workspaceNameInput = byId<HTMLInputElement>('workspace-name');
+const workspaceFileInput = byId<HTMLInputElement>('workspace-file');
+const workspaceProjectInput = byId<HTMLInputElement>('workspace-project');
+const workspaceReposEl = byId('workspace-repos');
+const workspaceError = byId('workspace-error');
+const workspaceCreate = byId<HTMLButtonElement>('workspace-create');
+let workspaceRepos: string[] = [];
+let workspaceHome = '';
+let workspaceSep = '/';
+let fileEdited = false;
+
+const workspaceDraft = () => ({ name: workspaceNameInput.value, file: workspaceFileInput.value, projectName: workspaceProjectInput.value, repos: workspaceRepos });
+
+function refreshWorkspaceDialog(): void {
+  workspaceCreate.disabled = !canCreateWorkspace(workspaceDraft());
+  renderRepoList(workspaceReposEl, workspaceRepos, (next) => {
+    workspaceRepos = next;
+    refreshWorkspaceDialog();
+  });
 }
 
-projectMenuButton.addEventListener('click', (event) => {
-  event.stopPropagation();
-  if (projectMenu.hidden) showProjectMenu();
-  else projectMenu.hidden = true;
+function showWorkspaceError(text: string): void {
+  workspaceError.textContent = text;
+  workspaceError.hidden = !text;
+}
+
+function openWorkspaceDialog(): void {
+  if (workspaceDialog.open) return;
+  workspaceNameInput.value = '';
+  workspaceFileInput.value = '';
+  workspaceProjectInput.value = '';
+  workspaceRepos = [];
+  fileEdited = false;
+  showWorkspaceError('');
+  refreshWorkspaceDialog();
+  workspaceDialog.returnValue = '';
+  workspaceDialog.showModal();
+}
+
+workspaceNameInput.addEventListener('input', () => {
+  if (!fileEdited) workspaceFileInput.value = defaultWorkspaceFile(workspaceNameInput.value, workspaceHome, workspaceSep);
+  refreshWorkspaceDialog();
+});
+workspaceFileInput.addEventListener('input', () => {
+  fileEdited = true;
+  refreshWorkspaceDialog();
+});
+workspaceProjectInput.addEventListener('input', refreshWorkspaceDialog);
+
+byId('workspace-pick-dir').addEventListener('click', async () => {
+  const current = workspaceFileInput.value;
+  const dir = await api.pickWorkspaceDir(current ? current.slice(0, Math.max(current.lastIndexOf('/'), current.lastIndexOf('\\'))) || undefined : workspaceHome);
+  if (!dir) return;
+  const name = current || defaultWorkspaceFile(workspaceNameInput.value, workspaceHome, workspaceSep) || `workspace.cyborg.json`;
+  workspaceFileInput.value = withDirectory(name, dir, workspaceSep);
+  fileEdited = true;
+  refreshWorkspaceDialog();
+});
+
+byId('workspace-add-repo').addEventListener('click', async () => {
+  const repo = await pickRepo(workspaceRepos[0]);
+  if (!repo) return;
+  if (!workspaceRepos.includes(repo)) workspaceRepos.push(repo);
+  refreshWorkspaceDialog();
+});
+
+byId('workspace-cancel').addEventListener('click', () => workspaceDialog.close('cancel'));
+
+workspaceCreate.addEventListener('click', async () => {
+  const draftValue = workspaceDraft();
+  if (!canCreateWorkspace(draftValue)) return;
+  showWorkspaceError('');
+  workspaceCreate.disabled = true;
+  const request = {
+    name: draftValue.name.trim(),
+    file: draftValue.file.trim(),
+    project: {
+      id: crypto.randomUUID(),
+      name: draftValue.projectName.trim(),
+      description: '',
+      repos: [...workspaceRepos],
+      trackers: { github: false, gitlab: false },
+    },
+  };
+  try {
+    const reply = await api.createWorkspace(request);
+    if (reply.exists) {
+      if (confirm(`Файл ${request.file} уже есть и не будет перезаписан. Открыть его?`)) {
+        await api.openWorkspace(request.file);
+        workspaceDialog.close('opened');
+      }
+    } else if (reply.error) showWorkspaceError(reply.error);
+    else workspaceDialog.close('created');
+  } catch (error) {
+    showWorkspaceError((error as Error).message);
+  } finally {
+    refreshWorkspaceDialog();
+  }
+});
+
+api.on<void>('menu:create-workspace', openWorkspaceDialog);
+api.on<'new' | 'edit'>('menu:project', (kind) => {
+  if (!workspaceFile) return;
+  if (kind === 'new') editProject(null);
+  else if (project) editProject(project);
 });
 
 // ---------- сессии ----------
@@ -313,8 +401,9 @@ function updateSessionLabels(s: Session): void {
 
 /** Пояснение, пока нет проекта с репозиториями; общее для пустой области и панели задач. */
 function projectHint(): string[] | null {
-  if (!state.projects.length) return ['Проектов нет.', 'Меню проекта (⋯) слева вверху: создайте проект и добавьте в него репозитории.'];
-  if (!project?.repos.length) return ['В проекте нет репозиториев.', 'Меню проекта (⋯) слева вверху: добавьте репозиторий.'];
+  if (!workspaceFile) return ['Воркспейс не открыт.', 'Меню «Воркспейс»: «Создать…» или «Открыть в новом окне…».'];
+  if (!state.projects.length) return ['Проектов нет.', 'Меню «Воркспейс» - «Новый проект»: создайте проект и добавьте в него репозитории.'];
+  if (!project?.repos.length) return ['В проекте нет репозиториев.', 'Меню «Воркспейс» - «Свойства проекта»: добавьте репозиторий.'];
   return null;
 }
 
@@ -763,8 +852,6 @@ setInterval(() => {
 // ---------- запуск сессии ----------
 
 function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPick: (repo: string) => void): void {
-  // Кнопки, открывающие это меню, гасят клик до document, поэтому меню проекта закрывается здесь.
-  projectMenu.hidden = true;
   repoMenu.replaceChildren(
     el('div', 'menu-title', title),
     ...repos.map((repo) => {
@@ -1010,12 +1097,11 @@ sideFiles.addEventListener('click', () => showSideView(false));
 sideHistory.addEventListener('click', () => showSideView(true));
 document.addEventListener('click', (event) => {
   if (!repoMenu.contains(event.target as Node)) repoMenu.hidden = true;
-  if (!projectMenu.contains(event.target as Node)) projectMenu.hidden = true;
 });
 window.addEventListener(
   'keydown',
   (event) => {
-    if (event.key === 'Escape') repoMenu.hidden = projectMenu.hidden = true;
+    if (event.key === 'Escape') repoMenu.hidden = true;
     if (commandKey(event) && !event.shiftKey && !event.altKey && event.key === '0') {
       event.preventDefault();
       event.stopPropagation();
@@ -1083,9 +1169,14 @@ splitter.addEventListener('mousedown', (down) => {
   window.addEventListener('mouseup', up);
 });
 
-void api.loadProjects().then(async (loaded) => {
+void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, loaded]) => {
+  workspaceFile = info.file;
+  workspaceName = info.name;
+  workspaceHome = info.home;
+  workspaceSep = info.sep;
   state = loaded;
   const problem = await api.projectsProblem();
   selectProject(state.projects.find((p) => p.id === state.lastProjectId) ?? state.projects[0] ?? null);
-  if (problem) alert(projectsProblemText(problem));
+  if (problem) alert(projectsProblemText(problem, workspaceFile));
+  if (!workspaceFile) openWorkspaceDialog();
 });

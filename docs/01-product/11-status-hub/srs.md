@@ -76,7 +76,7 @@ quality-checks: входных записей нет
 - **traced from:** BR-11002.
 - **источник:** запрос владельца; код `readJira`, `validateJira`, `initSourcesSection`; D-02, D-04.
 - **rationale:** reason - включить Jira для проекта без правки файла; assumptions - D-04; relationships - FR-1010 (источники GitHub и
-  GitLab), FR-11012, ADR-0004 (файл проектов); design constraints - ключ проекта попадает в аргумент `-p`, форма проверяется (FR-11010).
+  GitLab), FR-11012, ADR-0014 (файл воркспейса); design constraints - ключ проекта попадает в аргумент `-p`, форма проверяется (FR-11010).
 - **verification:** испытание - `test/jira.test.ts` («Jira: настройки проекта»: чтение из файла, проверка при сохранении, лишние поля не
   переносятся, неверный ключ и больше 10 ключей отклоняют сохранение, прежнее поле `project` читается как один проект); демонстрация -
   диалог проекта на стенде.
@@ -281,7 +281,7 @@ quality-checks: входных записей нет
 
 ## 15. Logical database requirements
 
-Поле проекта `jira: {enabled: boolean, projects: string[]}` в `projects.json` (FR-11001, ADR-0004); результаты опроса на диск не пишутся.
+Поле проекта `jira: {enabled: boolean, projects: string[]}` в файле воркспейса (FR-11001, ADR-0014); результаты опроса на диск не пишутся.
 
 ## 16. Design constraints
 

@@ -6,8 +6,8 @@
 // Ничего не пишет вне временного каталога, свой `claude` и ~/.claude не трогает.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
@@ -97,13 +97,19 @@ const foreignModifier = mac ? 2 : 4;
 const SHIFT = 8;
 
 let app;
+let stderrOfMain;
 let ws;
+const extraApps = [];
+const sockets = [];
 const log = (text) => console.log(`smoke: ${text}`);
 
 async function cleanup() {
-  try {
-    ws?.close();
-  } catch {}
+  for (const socket of [ws, ...sockets]) {
+    try {
+      socket?.close();
+    } catch {}
+  }
+  for (const extra of extraApps) if (extra.exitCode === null) extra.kill('SIGKILL');
   if (app && app.exitCode === null) {
     // SIGTERM при живой сессии: Ctrl+C в терминале, kill и остановка в CI не должны упираться в подтверждение выхода.
     app.kill('SIGTERM');
@@ -137,35 +143,20 @@ async function waitFor(what, probe, timeout = TIMEOUT_MS) {
   throw new Error(`не дождались: ${what}${last instanceof Error ? ` (${last.message})` : ''}`);
 }
 
-async function main() {
-  const electron = join(root, 'node_modules', '.bin', 'electron');
-  app = spawn(electron, [root, `--user-data-dir=${userData}`, '--remote-debugging-port=0', ...electronArgs], {
-    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stderr = '';
-  app.stdout.on('data', () => {});
-  app.stderr.on('data', (d) => (stderr += d));
-  app.once('exit', (code) => {
-    if (code) stderr += `\n[electron завершился с кодом ${code}]`;
-  });
-
-  const port = await waitFor('порт DevTools', () => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//.exec(stderr)?.[1]).catch((e) => {
-    throw new Error(`${e.message}\n${stderr}`);
-  });
-  const page = await waitFor('страница окна', async () => (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === 'page'));
-  ws = new WebSocket(page.webSocketDebuggerUrl);
+// Соединение с целью DevTools: страницей окна или главным процессом (--inspect). Без ответа на вызов прогон падает с причиной, а не висит.
+async function cdp(url) {
+  const socket = new WebSocket(url);
+  sockets.push(socket);
   await new Promise((r, j) => {
-    ws.onopen = r;
-    ws.onerror = () => j(new Error('нет соединения с DevTools'));
+    socket.onopen = r;
+    socket.onerror = () => j(new Error('нет соединения с DevTools'));
   });
   let seq = 0;
   const pending = new Map();
-  ws.onmessage = (m) => {
+  socket.onmessage = (m) => {
     const d = JSON.parse(m.data);
     if (d.id && pending.has(d.id)) pending.get(d.id)(d);
   };
-  // Без ответа на вызов DevTools (окно закрыто модальным диалогом, интерфейс завис) прогон падает с причиной, а не висит до таймаута job.
   const send = (method, params = {}) =>
     new Promise((res, rej) => {
       const id = ++seq;
@@ -174,13 +165,65 @@ async function main() {
         clearTimeout(timer);
         res(reply);
       });
-      ws.send(JSON.stringify({ id, method, params }));
+      socket.send(JSON.stringify({ id, method, params }));
     });
   const ev = async (expression) => {
     const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
     if (r.result?.exceptionDetails) throw new Error(`в странице: ${r.result.exceptionDetails.text} ${r.result.exceptionDetails.exception?.description ?? ''}`);
     return r.result?.result?.value;
   };
+  return { socket, send, ev };
+}
+
+// Запуск Electron с отдельным каталогом данных; возвращает процесс, чтение stderr и адреса DevTools окна и главного процесса.
+async function launch(dataDir, args = [], cwd = root) {
+  const electron = join(root, 'node_modules', '.bin', 'electron');
+  const proc = spawn(electron, [root, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
+    cwd,
+    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  proc.stdout.on('data', () => {});
+  proc.stderr.on('data', (d) => (stderr += d));
+  proc.once('exit', (code) => {
+    if (code) stderr += `\n[electron завершился с кодом ${code}]`;
+  });
+  const port = await waitFor('порт DevTools', () => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//.exec(stderr)?.[1]).catch((e) => {
+    throw new Error(`${e.message}\n${stderr}`);
+  });
+  const inspect = await waitFor('отладчик главного процесса', () => /Debugger listening on (ws:\/\/\S+)/.exec(stderr)?.[1]);
+  const pages = async () => (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter((t) => t.type === 'page');
+  return { proc, port, inspect, pages, stderr: () => stderr };
+}
+
+async function terminate(proc, tail) {
+  // Node при выходе ждёт, пока отладчик отключится.
+  for (const socket of sockets.splice(0)) socket.close();
+  proc.kill('SIGTERM');
+  const exited = await Promise.race([new Promise((r) => (proc.exitCode !== null ? r(true) : proc.once('exit', () => r(true)))), sleep(8000).then(() => false)]);
+  assert.ok(exited, `приложение не завершилось по SIGTERM за 8 с\n${tail?.() ?? ''}`);
+}
+
+// Пункт системного меню по подписям «Воркспейс» -> подпись; клик в главном процессе.
+const clickMenu = (mainEv, label) =>
+  mainEv(`(() => {
+    const { Menu } = process.mainModule.require('electron');
+    const item = Menu.getApplicationMenu().items.find((i) => i.label === 'Воркспейс').submenu.items.find((i) => i.label === ${JSON.stringify(label)});
+    if (!item) throw new Error('нет пункта ${label}');
+    item.click();
+    return item.enabled;
+  })()`);
+
+async function main() {
+  const started = await launch(userData);
+  app = started.proc;
+  stderrOfMain = started.stderr;
+  const page = await waitFor('страница окна', async () => (await started.pages())[0]);
+  const mainEv = (await cdp(started.inspect)).ev;
+  const cdpPage = await cdp(page.webSocketDebuggerUrl);
+  ws = cdpPage.socket;
+  const { send, ev } = cdpPage;
   const combo = async (modifiers, key, code, vk) => {
     const k = { key, code, windowsVirtualKeyCode: vk, modifiers };
     await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
@@ -202,6 +245,13 @@ async function main() {
 
   assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
   log('заголовок окна с проектом и версией');
+
+  // Прежний projects.json открывается как есть: «Недавние» получают его путь, замок лежит рядом, строка меню видна без Alt.
+  const legacyFile = join(userData, 'projects.json');
+  assert.deepEqual(JSON.parse(readFileSync(join(userData, 'recent-workspaces.json'), 'utf8')), { recent: [legacyFile] }, 'прежний файл не попал в «Недавние»');
+  assert.match(readFileSync(`${legacyFile}.lock`, 'utf8'), /^\d+$/, 'нет замка с pid рядом с projects.json');
+  assert.equal(await mainEv('process.mainModule.require("electron").BrowserWindow.getAllWindows()[0].isMenuBarAutoHide()'), false, 'строка меню скрыта');
+  log('прежний projects.json: «Недавние», замок, строка меню видна');
 
   const shortcut = `${mac ? 'Cmd' : 'Ctrl'}+Shift+N`;
   assert.equal(await ev('window.cyborg.platform'), process.platform);
@@ -253,9 +303,9 @@ async function main() {
   log('панель задач: кнопка открывает и закрывает, сессия закрывает, без источников кнопок нет');
 
   // FR-11012: выбор проектов Jira в свойствах проекта - список из `jira project list`, подсказка по веткам, ручной ключ, сохранение.
-  await ev('document.querySelector("#project-menu-open").click()');
-  await waitFor('меню проекта', async () => !(await ev('document.querySelector("#project-menu").hidden')));
-  await ev('[...document.querySelectorAll("#project-menu .menu-item")].find((e) => e.innerText.includes("Свойства")).click()');
+  // Проекты управляются из системного меню «Воркспейс», кнопки ⋯ на панели нет.
+  assert.equal(await ev('!document.querySelector("#project-menu-open") && !document.querySelector("#project-menu")'), true, 'на панели осталось меню проекта');
+  assert.equal(await clickMenu(mainEv, 'Свойства проекта'), true, '«Свойства проекта» недоступны при выбранном проекте');
   await waitFor('диалог проекта открыт', async () => (await ev('document.querySelector("#project-dialog").open')) === true);
   await waitFor('список проектов Jira в диалоге', async () => (await ev('document.querySelectorAll("#project-jira-list .jira-row").length')) === 2);
   assert.match(await text('#project-jira-list'), /SMK\s+Smoke/, 'в списке нет проекта SMK с названием');
@@ -339,7 +389,83 @@ async function main() {
   await combo(commandModifier, '0', 'Digit0', 48);
   await waitFor('сброс размера шрифта на 13', async () => (await fontSize()) === '13');
   log('размер шрифта: колесо и сброс клавишей своей системы');
+
+  await terminate(app, () => stderrOfMain());
+  assert.ok(!existsSync(`${legacyFile}.lock`), 'замок остался после SIGTERM');
+  log('SIGTERM снял замок');
+  await firstRun();
 }
+
+// Первый запуск с пустым userData: окно создания воркспейса, «Отмена», «Создать…» из меню, файл, «Недавние», замок, настройки в своей сессии.
+async function firstRun() {
+  const freshData = join(base, 'userdata-first');
+  const wsFile = join(base, 'team.cyborg.json');
+  mkdirSync(freshData);
+  const started = await launch(freshData);
+  extraApps.push(started.proc);
+  const mainEv = (await cdp(started.inspect)).ev;
+  const firstPage = await waitFor('страница окна первого запуска', async () => (await started.pages())[0]);
+  let { ev } = await cdp(firstPage.webSocketDebuggerUrl);
+  const opened = () => ev('document.querySelector("#workspace-dialog").open');
+  await waitFor('окно первого запуска открыто само', opened);
+  assert.equal(await ev('document.querySelector("#workspace-create").disabled'), true, '«Создать» доступна без данных');
+  await ev('document.querySelector("#workspace-cancel").click()');
+  await waitFor('«Отмена» закрыла окно', async () => !(await opened()));
+  assert.match(await ev('document.title'), new RegExp(`^Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок пустого Cyborg');
+  assert.match(await text0(ev, '#empty'), /Воркспейс не открыт/, 'нет подсказки пустого Cyborg');
+  assert.equal(await mainEv('process.mainModule.require("electron").Menu.getApplicationMenu().getMenuItemById("project-new").enabled'), false, '«Новый проект» доступен без воркспейса');
+  log('первый запуск: окно создания, «Отмена» оставляет пустой Cyborg');
+
+  await clickMenu(mainEv, 'Создать…');
+  await waitFor('«Создать…» открыло то же окно', opened);
+  const fill = (selector, value) => ev(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); e.value = ${JSON.stringify(value)}; e.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await fill('#workspace-name', 'Команда');
+  assert.equal(await ev('document.querySelector("#workspace-file").value'), `${homedir()}/Команда.cyborg.json`, 'файл по умолчанию не следует за именем');
+  await fill('#workspace-file', wsFile);
+  await fill('#workspace-project', 'Основной');
+  assert.equal(await ev('document.querySelector("#workspace-create").disabled'), true, '«Создать» доступна без репозитория');
+  // Диалог выбора каталога главного процесса подменяется: настоящий окном ОС прогон не провести.
+  await mainEv(`process.mainModule.require('electron').dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [${JSON.stringify(repo)}] })`);
+  await ev('document.querySelector("#workspace-add-repo").click()');
+  await waitFor('репозиторий в списке окна', async () => /repo/.test(await text0(ev, '#workspace-repos')));
+  assert.equal(await ev('document.querySelector("#workspace-create").disabled'), false, '«Создать» недоступна при полных данных');
+  await ev('document.querySelector("#workspace-create").click()');
+  const pageAfter = await waitFor('окно воркспейса пересоздано', async () => {
+    const pages = await started.pages();
+    return pages.length === 1 && pages[0].id !== firstPage.id ? pages[0] : null;
+  });
+  ({ ev } = await cdp(pageAfter.webSocketDebuggerUrl));
+  await waitFor('проект в новом окне', async () => /Основной/.test(await text0(ev, '#project-select')));
+  const newTitle = await ev('document.title');
+  assert.match(newTitle, new RegExp(`^Основной - team - Cyborg v\\.${version.replaceAll('.', '\\.')}`), `заголовок: проект, воркспейс, приложение; получено «${newTitle}»`);
+  assert.equal((await started.pages()).length, 1, 'после создания не одно окно');
+  const written = JSON.parse(readFileSync(wsFile, 'utf8'));
+  assert.equal(written.projects.length, 1);
+  assert.deepEqual(written.projects[0].repos, [repo]);
+  assert.equal(written.lastProjectId, written.projects[0].id);
+  assert.deepEqual(JSON.parse(readFileSync(join(freshData, 'recent-workspaces.json'), 'utf8')), { recent: [wsFile] });
+  const lockPid = Number(readFileSync(`${wsFile}.lock`, 'utf8'));
+  assert.ok(lockPid > 0 && (process.kill(lockPid, 0), true), 'в замке нет pid живого процесса');
+  assert.equal(await ev('document.querySelector("#project-delete") !== null'), true);
+  log('первый запуск: «Создать» пишет файл, открывает воркспейс в этом окне, «Недавние», замок');
+
+  await ev('localStorage.setItem("cyborg.fontSize", "15")');
+  await terminate(started.proc);
+  assert.ok(!existsSync(`${wsFile}.lock`), 'замок остался после SIGTERM');
+  assert.ok(readdirSync(join(freshData, 'workspaces')).length === 1, 'нет каталога сессии воркспейса');
+
+  // Перезапуск с --workspace и относительным путём: те же проекты и прежний размер шрифта из сессии воркспейса.
+  const again = await launch(freshData, ['--workspace=team.cyborg.json'], base);
+  extraApps.push(again.proc);
+  ({ ev } = await cdp((await waitFor('страница после перезапуска', async () => (await again.pages())[0])).webSocketDebuggerUrl));
+  await waitFor('проект после перезапуска', async () => /Основной/.test(await text0(ev, '#project-select')));
+  assert.equal(await ev('localStorage.getItem("cyborg.fontSize")'), '15', 'настройки интерфейса не пережили перезапуск воркспейса');
+  await terminate(again.proc);
+  assert.ok(!existsSync(`${wsFile}.lock`), 'замок остался после второго выхода');
+  log('--workspace: относительный путь, проекты и настройки интерфейса пережили перезапуск');
+}
+
+const text0 = (ev, selector) => ev(`document.querySelector(${JSON.stringify(selector)})?.innerText ?? ''`);
 
 try {
   await main();

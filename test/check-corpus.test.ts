@@ -52,6 +52,30 @@ const expectFinding = (rule: string, part: string): void => {
 /** Правка, после которой матрицу пересобирают: проверяется само правило, а не устаревшая матрица. */
 const regenerate = (): void => writeMatrix(root);
 
+describe('check-corpus: статус замены', () => {
+  const ADR2 = 'docs/03-architecture/adr/ADR-0002-second.md';
+  const second = `${front('id: ADR-0002')}# ADR-0002 Второе\n\n## Decision\n\n1. Решение.\n\n## Расхождения с текущим кодом\n\nРасхождений нет.\n`;
+  const supersede = (extra: string): void => change(ADR1, 'status: review', `status: superseded${extra}`);
+  it('superseded с заведённым superseded_by проходит', () => {
+    validCorpus();
+    put(ADR2, second);
+    put('docs/.req_counter/ADR', '2\n');
+    supersede('\nsuperseded_by: ADR-0002');
+    regenerate();
+    assert.deepEqual(checkCorpus(root), []);
+  });
+  it('без superseded_by - находка', () => {
+    validCorpus();
+    supersede('');
+    expectFinding('status', 'без superseded_by');
+  });
+  it('superseded_by на незаведённый ADR - находка', () => {
+    validCorpus();
+    supersede('\nsuperseded_by: ADR-0009');
+    expectFinding('status', 'ADR-0009 не заведён');
+  });
+});
+
 describe('check-corpus: валидный корпус', () => {
   it('согласованный корпус проходит без находок', () => {
     validCorpus();

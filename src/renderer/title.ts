@@ -1,5 +1,5 @@
-/** Заголовок окна: «Проект - Cyborg v.версия»; без проекта - «Cyborg v.версия». */
-export function windowTitle(version: string, projectName: string | null): string {
+/** Заголовок окна: «Проект - Воркспейс - Cyborg v.версия»; без проекта - «Воркспейс - Cyborg v.версия»; без воркспейса - «Cyborg v.версия». */
+export function windowTitle(version: string, projectName: string | null, workspaceName: string | null = null): string {
   const app = `Cyborg v.${version}`;
-  return projectName ? `${projectName} - ${app}` : app;
+  return [projectName, workspaceName, app].filter(Boolean).join(' - ');
 }
