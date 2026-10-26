@@ -130,6 +130,11 @@ export class SessionManager {
     return this.sessions.size;
   }
 
+  /** Каталоги и текущие cwd работающих сессий: интерфейсу они доступны, даже если лежат не в репозиториях проекта. */
+  liveDirs(): string[] {
+    return [...this.sessions.values()].flatMap((s) => [...s.dirs, s.cwd]);
+  }
+
   uses(dir: string): boolean {
     return [...this.sessions.values()].some((s) => s.dirs.includes(dir));
   }

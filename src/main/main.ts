@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
@@ -24,6 +25,16 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
 });
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const projects = new ProjectStore(path.join(app.getPath('userData'), 'projects.json'), () => trackerSettings.load());
+const paths = createPathHandlers({
+  allowed: new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]),
+  liveDirs: () => sessions.liveDirs(),
+  listDir,
+  readTextFile,
+  gitRoot,
+  gitBranch,
+  gitStatus,
+  gitHeadContent,
+});
 const runCli = createCliRunner(app.getPath('userData'));
 const trackers = new TrackersService({
   run: runCli,
@@ -82,7 +93,7 @@ nativeTheme.on('updated', () => win?.setBackgroundColor(windowBackground()));
 
 ipcMain.handle('dialog:pickDir', async (_event, defaultPath?: string) => {
   const result = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], defaultPath });
-  return result.canceled ? null : result.filePaths[0];
+  return paths.picked(result.canceled ? null : result.filePaths[0]);
 });
 ipcMain.handle('projects:load', () => projects.load());
 ipcMain.handle('projects:problem', () => {
@@ -90,12 +101,12 @@ ipcMain.handle('projects:problem', () => {
   return projects.problem();
 });
 ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
-ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?: unknown) => {
-  if (start === undefined) return sessions.create(cwd, addDirs);
+ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?: unknown) => {
+  if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
+  if (start === undefined) return sessions.create(cwd as string, addDirs as string[]);
   const prompt = validateSessionStart(start);
   if (!prompt) throw new Error('Некорректный старт сессии');
-  if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
-  return sessions.create(cwd, addDirs, prompt);
+  return sessions.create(cwd as string, addDirs as string[], prompt);
 });
 ipcMain.handle('history:list', (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
@@ -141,11 +152,11 @@ ipcMain.handle('mrs:details', (_event, id: unknown) => {
 ipcMain.on('session:input', (_event, id: number, data: string) => sessions.write(id, data));
 ipcMain.on('session:resize', (_event, id: number, cols: number, rows: number) => sessions.resize(id, cols, rows));
 ipcMain.on('session:kill', (_event, id: number) => sessions.kill(id));
-ipcMain.handle('fs:list', (_event, dir: string) => listDir(dir));
-ipcMain.handle('fs:read', (_event, file: string) => readTextFile(file));
-ipcMain.handle('git:root', (_event, dir: string) => gitRoot(dir));
-ipcMain.handle('git:branch', (_event, root: string) => gitBranch(root));
-ipcMain.handle('git:status', (_event, root: string) => gitStatus(root));
+ipcMain.handle('fs:list', (_event, dir: unknown) => paths.list(dir));
+ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
+ipcMain.handle('git:root', (_event, dir: unknown) => paths.root(dir));
+ipcMain.handle('git:branch', (_event, root: unknown) => paths.branch(root));
+ipcMain.handle('git:status', (_event, root: unknown) => paths.status(root));
 const projectRepo = (root: unknown): root is string => typeof root === 'string' && projects.load().projects.some((p) => p.repos.includes(root));
 ipcMain.handle('git:branches', (_event, root: unknown) => {
   if (!projectRepo(root)) throw new Error('Некорректные аргументы git:branches');
@@ -161,7 +172,7 @@ ipcMain.handle('git:switch', async (_event, root: unknown, branch: unknown) => {
     return { error: (error as Error).message };
   }
 });
-ipcMain.handle('git:headContent', (_event, file: unknown) => (typeof file === 'string' ? gitHeadContent(file) : null));
+ipcMain.handle('git:headContent', (_event, file: unknown) => paths.headContent(file));
 
 app.whenReady().then(() => {
   // icon у BrowserWindow на macOS не действует: в Dock остался бы значок Electron.
