@@ -266,7 +266,8 @@ async function main() {
   await ev('document.querySelector(".status-item .status-actions button").click()');
   await waitFor('карточка закрылась при старте сессии', async () => !(await popoverOpen()));
   await waitFor('вторая вкладка сессии по задаче Jira', async () => (await tabs()) === 2 && /SMK-1/.test(await text('#session-list > *:nth-child(2)')));
-  await waitFor('промпт задачи Jira в аргументах claude', async () => /Задача Jira SMK-1: прочитай её/.test(await visibleTerminal()));
+  // Терминал переносит длинную строку аргументов по ширине окна (в CI она уже), поэтому пробелы и переносы при сравнении не учитываются.
+  await waitFor('промпт задачи Jira в аргументах claude', async () => (await visibleTerminal()).replace(/\s+/g, '').includes('ЗадачаJiraSMK-1:прочитайеё'));
   await ev('document.querySelector("#status-toggle").click()');
   await waitFor('карточка открыта после старта', popoverOpen);
   await waitFor('у задачи с сессией кнопка «К сессии»', async () => (await text('.status-item .status-actions button')) === 'К сессии');
