@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import { readTrackers, type Project, type ProjectsState, type TrackerSettings } from './projects';
+import { readTrackers, validateJira, type Project, type ProjectsState, type TrackerSettings } from './projects';
 
 export type { TrackerSettings } from './projects';
 
@@ -77,6 +77,9 @@ export interface CliResult {
 }
 
 export type CliRunner = (cmd: 'gh' | 'glab', args: string[]) => Promise<CliResult>;
+
+/** Запуск `jira` (ADR-0013): тот же процесс-обёртка, свой тип, чтобы подставные gh/glab не обязаны были знать о Jira. */
+export type JiraRunner = (cmd: 'jira', args: string[]) => Promise<CliResult>;
 
 export interface TrackerDeps {
   run: CliRunner;
@@ -275,7 +278,9 @@ export function validateProjectsState(value: unknown): ProjectsState | null {
     if (typeof p !== 'object' || p === null) return null;
     const trackers = validateSettings((p as Partial<Project>).trackers);
     if (!trackers) return null;
-    projects.push({ ...p, trackers });
+    const jira = validateJira((p as Partial<Project>).jira);
+    if (jira === null) return null;
+    projects.push({ ...p, trackers, ...(jira ? { jira } : {}) });
   }
   return { ...state, projects };
 }
@@ -322,7 +327,7 @@ export class TrackerSettingsStore {
 // ---------- запуск gh и glab ----------
 
 /** gh и glab берут токен из своей конфигурации; Cyborg его не читает и не передаёт. cwd вне репозиториев: glab не выводит хост из текущего. */
-export function createCliRunner(cwd: string, limits = CLI_LIMITS): CliRunner {
+export function createCliRunner(cwd: string, limits = CLI_LIMITS): CliRunner & JiraRunner {
   const env = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' };
   return (cmd, args) =>
     new Promise((resolve) => {

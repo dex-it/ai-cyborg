@@ -1,8 +1,10 @@
+import { jiraPrompt, validateJiraStart } from './jira';
 import { MAX_TRACKED, taskPrompt, validateRef, type SourceResult, type TaskRef, type TrackerKind, type TrackerSettings } from './trackers';
 
 export type MrRef = TaskRef;
 export type MrFilter = 'all' | 'author' | 'assigned' | 'review';
-export type MrIntent = 'review' | 'rework';
+/** review - чужой MR; rework - замечания к своему; ci - упавший пайплайн своего MR (FR-11009). */
+export type MrIntent = 'review' | 'rework' | 'ci';
 export type MrState = 'open' | 'merged' | 'closed';
 
 export interface Mr extends MrRef {
@@ -55,7 +57,7 @@ export interface MrDetailsResult {
 }
 
 /** Что присылает интерфейс при старте сессии: только проверяемые ссылки, без названий и веток. */
-export type SessionStart = { task: TaskRef } | { mr: MrRef; intent: MrIntent };
+export type SessionStart = { task: TaskRef } | { mr: MrRef; intent: MrIntent } | { jira: { key: string } };
 
 /** MR списка до запроса деталей: участники нужны фильтру, головной коммит - проверкам GitHub. */
 export interface ParsedMr {
@@ -69,7 +71,7 @@ export const MAX_DETAILED = 200;
 export const MR_CONCURRENCY = 6;
 
 const FILTERS: readonly string[] = ['all', 'author', 'assigned', 'review'];
-const INTENTS: readonly string[] = ['review', 'rework'];
+const INTENTS: readonly string[] = ['review', 'rework', 'ci'];
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 export const isSha = (value: string): boolean => SHA.test(value);
@@ -82,6 +84,7 @@ export const mrUrl = (ref: MrRef): string =>
 /** Первое сообщение сессии. Собирается из проверенной ссылки: название, ветки и автор MR (чужой текст) в него не попадают. */
 export function mrPrompt(ref: MrRef, intent: MrIntent): string {
   if (intent === 'review') return `/dex-auto:auto review ${mrUrl(ref)}`;
+  if (intent === 'ci') return `Пайплайн MR ${mrUrl(ref)} упал: найди причину в логах упавших заданий, переключись на ветку MR и исправь её.`;
   return `Разбери замечания к MR ${mrUrl(ref)}: переключись на его ветку и доработай её по замечаниям ревью.`;
 }
 
@@ -113,12 +116,16 @@ export const validateMrDetailsArgs = (id: unknown): number | null => (typeof id 
 /** Начальный промпт по аргументу session:create; null - аргумент некорректен. Лишние поля игнорируются. */
 export function validateSessionStart(value: unknown): string | null {
   if (typeof value !== 'object' || value === null) return null;
-  const { task, mr, intent } = value as Record<string, unknown>;
-  if (task !== undefined && mr === undefined) {
+  const { task, mr, intent, jira } = value as Record<string, unknown>;
+  if (jira !== undefined && task === undefined && mr === undefined) {
+    const key = validateJiraStart(jira);
+    return key ? jiraPrompt(key) : null;
+  }
+  if (task !== undefined && mr === undefined && jira === undefined) {
     const ref = validateRef(task);
     return ref ? taskPrompt(ref) : null;
   }
-  if (mr !== undefined && task === undefined) {
+  if (mr !== undefined && task === undefined && jira === undefined) {
     const ref = validateRef(mr);
     if (!ref || typeof intent !== 'string' || !INTENTS.includes(intent)) return null;
     return mrPrompt(ref, intent as MrIntent);
