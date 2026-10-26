@@ -262,6 +262,15 @@ async function main() {
   await ev(`(() => { const f = document.querySelector("#project-jira-filter"); f.value = "OTH"; f.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); })()`);
   assert.match(await text('#project-jira-chosen'), /SMK ×\s*OTH ×/, 'введённый ключ не добавлен');
   assert.ok(await ev('document.querySelector("#project-dialog").open'), 'Enter в поиске отправил форму');
+  // Предел проектов: Enter с лишним ключом его не добавляет, а сказанная ошибка не переживает снятие проекта и не блокирует «Сохранить».
+  const typeKey = (key) => ev(`(() => { const f = document.querySelector("#project-jira-filter"); f.value = ${JSON.stringify(key)}; f.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); })()`);
+  for (let i = 1; i <= 8; i++) await typeKey(`LIM${i}`);
+  await typeKey('OVER');
+  assert.doesNotMatch(await text('#project-jira-chosen'), /OVER/, 'одиннадцатый проект добавлен сверх предела');
+  assert.notEqual(await ev('document.querySelector("#project-jira-filter").validationMessage'), '', 'предел не назван');
+  for (let i = 1; i <= 8; i++) await ev(`[...document.querySelectorAll("#project-jira-chosen .chip-button")].find((b) => b.textContent === "LIM${i} ×").click()`);
+  assert.equal(await ev('document.querySelector("#project-jira-filter").validationMessage'), '', 'ошибка предела осталась после снятия проекта');
+  assert.ok(await ev('document.querySelector("#project-dialog form").checkValidity()'), 'ошибка предела блокирует «Сохранить»');
   await ev('document.querySelector("#project-dialog button[value=save]").click()');
   await waitFor('диалог закрыт сохранением', async () => (await ev('document.querySelector("#project-dialog").open')) === false);
   await waitFor('выбранные проекты Jira сохранены', async () => (await ev('window.cyborg.loadProjects().then((s) => JSON.stringify(s.projects.find((p) => p.id === "p1").jira))')) === '{"enabled":true,"projects":["SMK","OTH"]}');
