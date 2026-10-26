@@ -51,10 +51,10 @@ function fakePty() {
   };
 }
 
-function managerIn(t: { after: (fn: () => void) => void }, events: { channel: string; payload: any }[] = [], stopDelayMs?: number) {
+function managerIn(t: { after: (fn: () => void) => void }, events: { channel: string; payload: any; at?: number }[] = [], stopDelayMs?: number) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
-  const manager = new SessionManager(userData, (channel, payload) => events.push({ channel, payload }), (() => fakePty()) as any, stopDelayMs);
+  const manager = new SessionManager(userData, (channel, payload) => events.push({ channel, payload, at: Date.now() }), (() => fakePty()) as any, stopDelayMs);
   t.after(() => manager.killAll());
   return { userData, manager, events, eventsDir: path.join(userData, 'sessions') };
 }
@@ -154,26 +154,27 @@ const until = async (cond: () => boolean) => {
 };
 
 test('SessionManager: после Stop «ждёт» объявляется, только если сессия промолчала задержку', async (t) => {
-  const events: { channel: string; payload: any }[] = [];
-  const { manager, eventsDir } = managerIn(t, events, 150);
+  const events: { channel: string; payload: any; at?: number }[] = [];
+  const delay = 150;
+  const { manager, eventsDir } = managerIn(t, events, delay);
   const id = manager.create(os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
-  const append = (event: object) => fs.appendFileSync(file, JSON.stringify(event) + '\n');
-  const activity = () => events.filter((e) => e.channel === 'session:activity').length;
+  const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
+  const activity = () => events.filter((e) => e.channel === 'session:activity');
   const waiting = () => events.filter((e) => e.channel === 'session:waiting');
 
-  append({ hook_event_name: 'Stop', last_assistant_message: 'первый' });
-  await until(() => activity() === 1);
-  append({ hook_event_name: 'PostToolUse', tool_name: 'Bash' });
-  await until(() => activity() === 2);
-  await new Promise((r) => setTimeout(r, 250));
+  // Оба события одной записью: прочитаны одним проходом, задержка нагрузки машины на проверку не влияет.
+  append({ hook_event_name: 'Stop', last_assistant_message: 'первый' }, { hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  await until(() => activity().length === 2);
+  await new Promise((r) => setTimeout(r, delay * 2));
   assert.deepEqual(waiting(), [], 'ход продолжился - Stop не ожидание');
 
   append({ hook_event_name: 'Stop', last_assistant_message: 'готово' });
-  await until(() => activity() === 3);
-  assert.deepEqual(waiting(), [], 'до задержки молчит');
+  await until(() => activity().length === 3);
   await until(() => waiting().length > 0);
   assert.deepEqual(waiting().map((e) => e.payload), [{ id, reason: 'готово' }]);
+  // Моменты событий снимает сам эмиттер, поэтому проверка не зависит от скорости опроса.
+  assert.ok(waiting()[0].at! - activity()[2].at! >= delay - 5, 'раньше задержки не объявляется');
   manager.kill(id);
 });
 

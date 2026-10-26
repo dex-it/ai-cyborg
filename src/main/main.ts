@@ -6,6 +6,7 @@ import { deleteHistory, historyExists, isSessionId, listHistory } from './histor
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
 import { appMenuTemplate, NOTIFICATIONS_MENU_ID } from './menu';
+import { validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
@@ -192,8 +193,10 @@ ipcMain.on('session:kill', (_event, id: number) => sessions.kill(id));
 
 // Без ссылки уведомление собирает GC, и клик по нему уже некому обработать.
 const shownNotifications = new Map<number, Notification>();
-ipcMain.on('session:notify', (_event, id: number, title: string, body: string) => {
-  if (!Notification.isSupported() || typeof title !== 'string' || typeof body !== 'string') return;
+ipcMain.on('session:notify', (_event, rawId: unknown, rawTitle: unknown, rawBody: unknown) => {
+  const args = validateNotifyArgs(rawId, rawTitle, rawBody);
+  if (!args || !Notification.isSupported()) return;
+  const { id, title, body } = args;
   shownNotifications.get(id)?.close();
   const notification = new Notification({ title, body, icon: path.join(__dirname, 'icon.png') });
   const forget = () => {
@@ -208,10 +211,13 @@ ipcMain.on('session:notify', (_event, id: number, title: string, body: string) =
     win.webContents.send('session:reveal', { id });
   });
   notification.on('close', forget);
+  // Разрешение на уведомления снято или демона уведомлений нет: показа не будет, держать ссылку незачем.
+  notification.on('failed', forget);
   shownNotifications.set(id, notification);
   notification.show();
 });
-ipcMain.on('session:unnotify', (_event, id: number) => {
+ipcMain.on('session:unnotify', (_event, id: unknown) => {
+  if (typeof id !== 'number') return;
   shownNotifications.get(id)?.close();
   shownNotifications.delete(id);
 });
@@ -257,7 +263,9 @@ app.whenReady().then(() => {
         () => {
           if (confirmEndSessions()) app.quit();
         },
-        (enabled) => win?.webContents.send('notifications:toggle', enabled),
+        (enabled) => {
+          if (win && !win.isDestroyed()) win.webContents.send('notifications:toggle', enabled);
+        },
       ),
     ),
   );
