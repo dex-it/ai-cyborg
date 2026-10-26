@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
-import { SessionManager } from './sessions.ts';
+import { SessionManager, waitingReason } from './sessions.ts';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 
@@ -51,10 +51,10 @@ function fakePty() {
   };
 }
 
-function managerIn(t: { after: (fn: () => void) => void }, events: { channel: string; payload: any }[] = []) {
+function managerIn(t: { after: (fn: () => void) => void }, events: { channel: string; payload: any; at?: number }[] = [], stopDelayMs?: number) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
-  const manager = new SessionManager(userData, (channel, payload) => events.push({ channel, payload }), (() => fakePty()) as any);
+  const manager = new SessionManager(userData, (channel, payload) => events.push({ channel, payload, at: Date.now() }), (() => fakePty()) as any, stopDelayMs);
   t.after(() => manager.killAll());
   return { userData, manager, events, eventsDir: path.join(userData, 'sessions') };
 }
@@ -125,4 +125,70 @@ test('SessionManager: каталоги работающих сессий - ра�
   manager.kill(id);
   assert.deepEqual(manager.liveDirs(), []);
   assert.equal(manager.uses(tmp), false);
+});
+
+test('waitingReason: только ожидание человека - конец хода и типы Notification из белого списка', () => {
+  assert.equal(waitingReason({ hook_event_name: 'Stop' }), 'Ход завершён, ждёт ответа');
+  assert.equal(waitingReason({ hook_event_name: 'Stop', last_assistant_message: '  Какой вариант\n\nберём?  ', background_tasks: [], session_crons: [] }), 'Какой вариант берём?');
+  const long = waitingReason({ hook_event_name: 'Stop', last_assistant_message: 'я'.repeat(500) })!;
+  assert.equal(long.length, 200);
+  assert.ok(long.endsWith('…'));
+  assert.equal(waitingReason({ hook_event_name: 'Stop', background_tasks: [{ id: 't', type: 'subagent', status: 'running' }] }), null, 'пауза до фоновой задачи');
+  assert.equal(waitingReason({ hook_event_name: 'Stop', session_crons: [{ id: 'c', schedule: '*/5 * * * *' }] }), null, 'пауза до пробуждения');
+  assert.equal(
+    waitingReason({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }),
+    'Claude needs your permission to use Bash',
+  );
+  for (const type of ['elicitation_dialog', 'elicitation_url_dialog', 'agent_needs_input', 'quota_auto_resume_stale', 'quota_auto_resume_disabled']) {
+    assert.equal(waitingReason({ hook_event_name: 'Notification', notification_type: type }), 'Ждёт ответа', type);
+  }
+  for (const type of ['idle_prompt', 'auth_success', 'elicitation_complete', 'elicitation_response', 'agent_completed', 'quota_auto_resume_fired', 'plugin_notification', 'unknown_future_type', undefined]) {
+    assert.equal(waitingReason({ hook_event_name: 'Notification', notification_type: type, message: 'm' }), null, String(type));
+  }
+  assert.equal(waitingReason({ hook_event_name: 'PostToolUse' }), null);
+  assert.equal(waitingReason({ hook_event_name: 'UserPromptSubmit' }), null);
+});
+
+const until = async (cond: () => boolean) => {
+  for (let i = 0; i < 100 && !cond(); i++) await new Promise((r) => setTimeout(r, 20));
+};
+
+test('SessionManager: после Stop «ждёт» объявляется, только если сессия промолчала задержку', async (t) => {
+  const events: { channel: string; payload: any; at?: number }[] = [];
+  const delay = 150;
+  const { manager, eventsDir } = managerIn(t, events, delay);
+  const id = manager.create(os.tmpdir(), []);
+  const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
+  const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
+  const activity = () => events.filter((e) => e.channel === 'session:activity');
+  const waiting = () => events.filter((e) => e.channel === 'session:waiting');
+
+  // Оба события одной записью: прочитаны одним проходом, задержка нагрузки машины на проверку не влияет.
+  append({ hook_event_name: 'Stop', last_assistant_message: 'первый' }, { hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  await until(() => activity().length === 2);
+  await new Promise((r) => setTimeout(r, delay * 2));
+  assert.deepEqual(waiting(), [], 'ход продолжился - Stop не ожидание');
+
+  append({ hook_event_name: 'Stop', last_assistant_message: 'готово' });
+  await until(() => activity().length === 3);
+  await until(() => waiting().length > 0);
+  assert.deepEqual(waiting().map((e) => e.payload), [{ id, reason: 'готово' }]);
+  // Моменты событий снимает сам эмиттер, поэтому проверка не зависит от скорости опроса.
+  assert.ok(waiting()[0].at! - activity()[2].at! >= delay - 5, 'раньше задержки не объявляется');
+  manager.kill(id);
+});
+
+test('SessionManager: запрос разрешения объявляется сразу, выход сессии снимает отложенный Stop', async (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager, eventsDir } = managerIn(t, events, 150);
+  const id = manager.create(os.tmpdir(), []);
+  const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
+  fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'разрешите Bash' }) + '\n');
+  await until(() => events.some((e) => e.channel === 'session:waiting'));
+  assert.deepEqual(events.find((e) => e.channel === 'session:waiting')?.payload, { id, reason: 'разрешите Bash' });
+  fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'Stop' }) + '\n');
+  await until(() => events.filter((e) => e.channel === 'session:activity').length === 2);
+  manager.kill(id);
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(events.filter((e) => e.channel === 'session:waiting').length, 1);
 });
