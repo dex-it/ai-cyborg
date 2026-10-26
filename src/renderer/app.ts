@@ -317,7 +317,11 @@ function showNoSession(): void {
   if (!hint) {
     const start = el('button', 'primary empty-action', 'Новая сессия');
     start.append(el('kbd', '', newSessionShortcut));
-    start.addEventListener('click', () => requestSession());
+    start.addEventListener('click', (event) => {
+      // Иначе общий обработчик клика на document тут же закроет открытое меню репозиториев.
+      event.stopPropagation();
+      requestSession(start);
+    });
     nodes.push(start);
   }
   empty.replaceChildren(...nodes);
@@ -780,14 +784,14 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
   filter.focus();
 }
 
-function requestSession(): void {
+function requestSession(anchor: HTMLElement = newSessionButton): void {
   const repos = project?.repos ?? [];
   if (repos.length === 1) {
     void newSession(repos[0]);
     return;
   }
   if (!repos.length) return;
-  showRepoMenu(repos, newSessionButton, 'Где запустить Claude Code', (repo) => void newSession(repo));
+  showRepoMenu(repos, anchor, 'Где запустить Claude Code', (repo) => void newSession(repo));
 }
 
 // ---------- прошлые сессии ----------
