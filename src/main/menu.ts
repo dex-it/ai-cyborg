@@ -1,9 +1,14 @@
 import type { MenuItemConstructorOptions } from 'electron';
-import { recentLabel } from './workspaces';
+import path from 'node:path';
 
 export const NOTIFICATIONS_MENU_ID = 'notifications';
 export const PROJECT_NEW_MENU_ID = 'project-new';
 export const PROJECT_PROPERTIES_MENU_ID = 'project-properties';
+
+/** Подпись пункта «Недавних»: домашний каталог - «~». */
+export function recentLabel(file: string, home: string): string {
+  return home && (file === home || file.startsWith(home + path.sep)) ? `~${file.slice(home.length)}` : file;
+}
 
 export interface WorkspaceMenu {
   recent: string[];

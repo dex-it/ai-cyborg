@@ -463,6 +463,17 @@ async function firstRun() {
   await terminate(again.proc);
   assert.ok(!existsSync(`${wsFile}.lock`), 'замок остался после второго выхода');
   log('--workspace: относительный путь, проекты и настройки интерфейса пережили перезапуск');
+
+  // Несуществующий файл: пустой перечень, а файл (и замок) не создаются стартом.
+  const missingFile = join(base, 'typo.cyborg.json');
+  const missing = await launch(freshData, [`--workspace=${missingFile}`], base);
+  extraApps.push(missing.proc);
+  ({ ev } = await cdp((await waitFor('страница с несуществующим файлом', async () => (await missing.pages())[0])).webSocketDebuggerUrl));
+  await waitFor('пустой перечень проектов', async () => /Нет проектов/.test(await text0(ev, '#project-select')));
+  await sleep(1500);
+  assert.ok(!existsSync(missingFile), 'старт на несуществующий файл создал его');
+  await terminate(missing.proc);
+  log('--workspace на несуществующий файл: файл не создаётся');
 }
 
 const text0 = (ev, selector) => ev(`document.querySelector(${JSON.stringify(selector)})?.innerText ?? ''`);

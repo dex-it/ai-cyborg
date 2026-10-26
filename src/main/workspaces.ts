@@ -17,6 +17,9 @@ const FRESH_LOCK_MS = 2000;
 
 export type WorkspaceArg = { kind: 'none' } | { kind: 'file'; file: string } | { kind: 'error'; reason: string };
 
+/** Каталог, от которого считается относительный `--workspace`: лаунчер `cyborg` переходит в репозиторий и передаёт каталог вызова в CYBORG_CWD. */
+export const argvCwd = (env: NodeJS.ProcessEnv, cwd: string): string => env.CYBORG_CWD || cwd;
+
 /** `--workspace <файл>` и `--workspace=<файл>`; относительный путь - от рабочего каталога, значение-флаг не путь. */
 export function parseWorkspaceArg(argv: string[], cwd: string): WorkspaceArg {
   for (let i = 0; i < argv.length; i++) {
@@ -91,11 +94,14 @@ function readLock(lock: string): { pid: number | null; fresh: boolean } | null {
 }
 
 // Свежий файл без pid занят: его создали, но ещё не успели записать pid.
-function lockState(lock: string, alive: (pid: number) => boolean): LockState {
-  const held = readLock(lock);
+function classify(held: { pid: number | null; fresh: boolean } | null, alive: (pid: number) => boolean): LockState {
   if (!held) return { busy: false };
   if (held.pid !== null) return alive(held.pid) ? { busy: true, pid: held.pid } : { busy: false };
   return held.fresh ? { busy: true, pid: null } : { busy: false };
+}
+
+function lockState(lock: string, alive: (pid: number) => boolean): LockState {
+  return classify(readLock(lock), alive);
 }
 
 /** Занят ли файл живым инстансом - без захвата. */
@@ -124,12 +130,37 @@ export function tryLock(file: string, pid = process.pid, alive: (pid: number) =>
   };
   const first = create();
   if (first !== 'exists') return first;
-  const state = lockState(lock, alive);
+  const held = readLock(lock);
+  const state = classify(held, alive);
   if (state.busy) return { status: 'busy', pid: state.pid };
-  try {
-    fs.unlinkSync(lock);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { status: 'unlocked' };
+  if (held) {
+    // Замок убирается переименованием, а не unlink: между проверкой и удалением его мог занять другой инстанс.
+    // Снятый файл сверяется с увиденным мёртвым замком; чужой живой возвращается на место.
+    const stale = `${lock}.${pid}.stale`;
+    let moved = true;
+    try {
+      fs.renameSync(lock, stale);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { status: 'unlocked' };
+      moved = false;
+    }
+    if (moved) {
+      const taken = readLock(stale);
+      const same = !taken || (taken.pid === held.pid && (taken.pid !== null || !taken.fresh));
+      if (!same) {
+        try {
+          fs.linkSync(stale, lock);
+        } catch {
+          // Замок уже занят третьим: вернуть нечего.
+        }
+      }
+      try {
+        fs.unlinkSync(stale);
+      } catch {
+        // Файла уже нет.
+      }
+      if (!same) return { status: 'busy', pid: taken?.pid ?? null };
+    }
   }
   const second = create();
   if (second !== 'exists') return second;
@@ -182,11 +213,6 @@ export function forgetRecent(userData: string, file: string): string[] {
   const recent = readRecent(userData).filter((p) => p !== file);
   writeRecent(userData, recent);
   return recent;
-}
-
-/** Подпись пункта «Недавних»: домашний каталог - «~». */
-export function recentLabel(file: string, home: string): string {
-  return home && (file === home || file.startsWith(home + path.sep)) ? `~${file.slice(home.length)}` : file;
 }
 
 // ---------- выбор воркспейса при старте ----------

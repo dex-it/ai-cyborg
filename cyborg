@@ -18,6 +18,9 @@ while [ -h "$src" ]; do
     *) src=$dir/$src ;;
   esac
 done
+# Относительные пути аргументов (--workspace) считаются от каталога вызова, а не репозитория.
+CYBORG_CWD=$PWD
+export CYBORG_CWD
 cd -P "$(dirname "$src")"
 
 command -v git >/dev/null 2>&1 || fail 'не найден git'

@@ -23,6 +23,31 @@ export function withDirectory(file: string, dir: string, sep: string): string {
   return `${dir.replace(/[/\\]+$/, '')}${sep}${name}`;
 }
 
+/** Поле файла окна создания: каталог хранится отдельно, чтобы выбор «Папка…» не считался правкой файла. */
+export interface FileField {
+  value: string;
+  edited: boolean;
+  dir: string;
+}
+
+const FALLBACK_FILE = 'workspace.cyborg.json';
+
+export const initialFileField = (home: string): FileField => ({ value: '', edited: false, dir: home });
+
+/** Путь следует за именем, пока поле файла не правили руками. */
+export function fileAfterName(field: FileField, name: string, sep: string): FileField {
+  return field.edited ? field : { ...field, value: defaultWorkspaceFile(name, field.dir, sep) };
+}
+
+export const fileAfterEdit = (field: FileField, value: string): FileField => ({ ...field, value, edited: true });
+
+/** «Папка…» меняет только каталог: имя файла следует за именем воркспейса, пока его не правили. */
+export function fileAfterDir(field: FileField, name: string, dir: string, sep: string): FileField {
+  const fromName = defaultWorkspaceFile(name, dir, sep);
+  const value = field.edited && field.value ? withDirectory(field.value, dir, sep) : fromName || withDirectory(FALLBACK_FILE, dir, sep);
+  return { value, edited: field.edited, dir };
+}
+
 export interface WorkspaceDraft {
   name: string;
   file: string;

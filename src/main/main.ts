@@ -24,6 +24,7 @@ import {
   validateRef,
 } from './trackers';
 import {
+  argvCwd,
   canonicalWorkspace,
   createAndOpen,
   directoryProblem,
@@ -169,7 +170,7 @@ ipcMain.handle('workspace:create', async (_event, raw: unknown) => {
 });
 ipcMain.handle('workspace:open', async (_event, file: unknown) => {
   if (typeof file !== 'string') throw new Error('Некорректные аргументы workspace:open');
-  await report(await openWorkspaceFile(file, openDeps), file);
+  return report(await openWorkspaceFile(file, openDeps), file);
 });
 ipcMain.handle('projects:load', () => projects.load());
 ipcMain.handle('projects:problem', () => {
@@ -405,8 +406,10 @@ const openDeps: OpenDeps = {
     ),
 };
 
-async function report(result: OpenResult, file: string): Promise<void> {
-  if ('ok' in result || !win || win.isDestroyed()) return;
+/** true - воркспейс открыт; иначе исход назван окном, и вызывающий не закрывает свои диалоги. */
+async function report(result: OpenResult, file: string): Promise<boolean> {
+  if ('ok' in result) return true;
+  if (!win || win.isDestroyed()) return false;
   if ('busy' in result) {
     const { pid, lock } = result.busy;
     await dialog.showMessageBox(win, {
@@ -419,6 +422,7 @@ async function report(result: OpenResult, file: string): Promise<void> {
   } else {
     await dialog.showMessageBox(win, { type: 'error', message: 'Не удалось запустить Cyborg', detail: result.error });
   }
+  return false;
 }
 
 async function chooseWorkspace(): Promise<void> {
@@ -439,7 +443,7 @@ async function openRecent(file: string): Promise<void> {
 
 /** Воркспейс запуска: --workspace, иначе последний свободный из «Недавних», иначе прежний projects.json, иначе пусто (окно первого запуска). */
 function chooseStartupWorkspace(): boolean {
-  const arg = parseWorkspaceArg(process.argv, process.cwd());
+  const arg = parseWorkspaceArg(process.argv, argvCwd(process.env, process.cwd()));
   if (arg.kind === 'error') {
     fail(arg.reason);
     return false;

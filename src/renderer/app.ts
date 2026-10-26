@@ -10,7 +10,7 @@ import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
 import { moveItem } from './reorder';
 import { windowTitle } from './title';
-import { canCreateWorkspace, defaultWorkspaceFile, projectsProblemText, withDirectory } from './workspace-text';
+import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
 import { initSourcesSection } from './sources';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
@@ -116,10 +116,11 @@ function renderProjectSelect(): void {
   projectSelect.disabled = !state.projects.length;
 }
 
-function selectProject(next: Project | null): void {
+/** `save: false` - начальный выбор при загрузке: файл воркспейса создаётся действием оператора, а не стартом (ADR-0014 п.3). */
+function selectProject(next: Project | null, save = true): void {
   project = next;
   state.lastProjectId = next?.id ?? null;
-  persist();
+  if (save) persist();
   renderProjectSelect();
   document.title = windowTitle(__APP_VERSION__, next?.name ?? null, workspaceName);
   api.projectSelected(!!next);
@@ -273,7 +274,7 @@ const workspaceCreate = byId<HTMLButtonElement>('workspace-create');
 let workspaceRepos: string[] = [];
 let workspaceHome = '';
 let workspaceSep = '/';
-let fileEdited = false;
+let fileField: FileField = initialFileField('');
 
 const workspaceDraft = () => ({ name: workspaceNameInput.value, file: workspaceFileInput.value, projectName: workspaceProjectInput.value, repos: workspaceRepos });
 
@@ -296,7 +297,7 @@ function openWorkspaceDialog(): void {
   workspaceFileInput.value = '';
   workspaceProjectInput.value = '';
   workspaceRepos = [];
-  fileEdited = false;
+  fileField = initialFileField(workspaceHome);
   showWorkspaceError('');
   refreshWorkspaceDialog();
   workspaceDialog.returnValue = '';
@@ -304,11 +305,12 @@ function openWorkspaceDialog(): void {
 }
 
 workspaceNameInput.addEventListener('input', () => {
-  if (!fileEdited) workspaceFileInput.value = defaultWorkspaceFile(workspaceNameInput.value, workspaceHome, workspaceSep);
+  fileField = fileAfterName(fileField, workspaceNameInput.value, workspaceSep);
+  workspaceFileInput.value = fileField.value;
   refreshWorkspaceDialog();
 });
 workspaceFileInput.addEventListener('input', () => {
-  fileEdited = true;
+  fileField = fileAfterEdit(fileField, workspaceFileInput.value);
   refreshWorkspaceDialog();
 });
 workspaceProjectInput.addEventListener('input', refreshWorkspaceDialog);
@@ -317,9 +319,8 @@ byId('workspace-pick-dir').addEventListener('click', async () => {
   const current = workspaceFileInput.value;
   const dir = await api.pickWorkspaceDir(current ? current.slice(0, Math.max(current.lastIndexOf('/'), current.lastIndexOf('\\'))) || undefined : workspaceHome);
   if (!dir) return;
-  const name = current || defaultWorkspaceFile(workspaceNameInput.value, workspaceHome, workspaceSep) || `workspace.cyborg.json`;
-  workspaceFileInput.value = withDirectory(name, dir, workspaceSep);
-  fileEdited = true;
+  fileField = fileAfterDir({ ...fileField, value: current }, workspaceNameInput.value, dir, workspaceSep);
+  workspaceFileInput.value = fileField.value;
   refreshWorkspaceDialog();
 });
 
@@ -352,8 +353,7 @@ workspaceCreate.addEventListener('click', async () => {
     const reply = await api.createWorkspace(request);
     if (reply.exists) {
       if (confirm(`Файл ${request.file} уже есть и не будет перезаписан. Открыть его?`)) {
-        await api.openWorkspace(request.file);
-        workspaceDialog.close('opened');
+        if (await api.openWorkspace(request.file)) workspaceDialog.close('opened');
       }
     } else if (reply.error) showWorkspaceError(reply.error);
     else workspaceDialog.close('created');
@@ -1176,7 +1176,7 @@ void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, l
   workspaceSep = info.sep;
   state = loaded;
   const problem = await api.projectsProblem();
-  selectProject(state.projects.find((p) => p.id === state.lastProjectId) ?? state.projects[0] ?? null);
+  selectProject(state.projects.find((p) => p.id === state.lastProjectId) ?? state.projects[0] ?? null, false);
   if (problem) alert(projectsProblemText(problem, workspaceFile));
   if (!workspaceFile) openWorkspaceDialog();
 });
