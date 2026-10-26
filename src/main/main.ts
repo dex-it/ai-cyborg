@@ -85,6 +85,10 @@ ipcMain.handle('dialog:pickDir', async (_event, defaultPath?: string) => {
   return result.canceled ? null : result.filePaths[0];
 });
 ipcMain.handle('projects:load', () => projects.load());
+ipcMain.handle('projects:problem', () => {
+  projects.load();
+  return projects.problem();
+});
 ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
 ipcMain.handle('session:create', (_event, cwd: string, addDirs: string[], start?: unknown) => {
   if (start === undefined) return sessions.create(cwd, addDirs);

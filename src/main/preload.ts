@@ -3,7 +3,7 @@ import type { DirEntry } from './files';
 import type { Branches } from './git';
 import type { HistoryEntry } from './history';
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
-import type { ProjectsState } from './projects';
+import type { ProjectsProblem, ProjectsState } from './projects';
 import type { TaskDetailsResult } from './task-details';
 import type { TaskRef, TasksResult, TrackersStatus } from './trackers';
 
@@ -11,6 +11,7 @@ const api = {
   platform: process.platform,
   pickDir: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir', defaultPath),
   loadProjects: (): Promise<ProjectsState> => ipcRenderer.invoke('projects:load'),
+  projectsProblem: (): Promise<ProjectsProblem | null> => ipcRenderer.invoke('projects:problem'),
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),
   createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', cwd, addDirs, start),
