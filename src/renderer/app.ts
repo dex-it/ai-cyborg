@@ -9,6 +9,7 @@ import { basename, byId, el } from './dom';
 import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
 import { moveItem } from './reorder';
+import { windowTitle } from './title';
 import { initSourcesSection } from './sources';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
@@ -117,7 +118,7 @@ function selectProject(next: Project | null): void {
   state.lastProjectId = next?.id ?? null;
   persist();
   renderProjectSelect();
-  document.title = next ? `${next.name} - ${appTitle}` : appTitle;
+  document.title = windowTitle(__APP_VERSION__, next?.name ?? null);
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
@@ -151,8 +152,7 @@ const projectRepos = byId('project-repos');
 const projectDelete = byId<HTMLButtonElement>('project-delete');
 const sources = initSourcesSection();
 
-const appTitle = `Cyborg v.${__APP_VERSION__}`;
-document.title = appTitle;
+document.title = windowTitle(__APP_VERSION__, null);
 let draft: Project | null = null;
 let editing: Project | null = null;
 
