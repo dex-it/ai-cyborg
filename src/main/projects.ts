@@ -1,9 +1,19 @@
 import fs from 'node:fs';
+import { MAX_JIRA_PROJECTS, PROJECT_KEY } from './jira-keys';
 import { writeJsonAtomic } from './jsonfile';
+
+export { MAX_JIRA_PROJECTS, PROJECT_KEY } from './jira-keys';
 
 export interface TrackerSettings {
   github: boolean;
   gitlab: boolean;
+}
+
+/** Jira проекта (FR-11001, FR-11012, ADR-0013): включена ли и какие проекты Jira показываются; пусто - проект, сохранённый `jira init`. */
+export interface JiraSettings {
+  enabled: boolean;
+  /** Ключи проектов Jira в верхнем регистре, без повторов, не больше MAX_JIRA_PROJECTS. */
+  projects: string[];
 }
 
 export interface Project {
@@ -13,6 +23,8 @@ export interface Project {
   repos: string[];
   /** Источники задач проекта (FR-1010). */
   trackers: TrackerSettings;
+  /** Jira проекта; поля нет - Jira выключена. */
+  jira?: JiraSettings;
 }
 
 export interface ProjectsState {
@@ -25,6 +37,43 @@ export function readTrackers(value: unknown): TrackerSettings | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   return { github: raw.github === true, gitlab: raw.gitlab === true };
+}
+
+/** Ключи из поля: строки по форме, в верхнем регистре, без повторов; null - что-то не по форме либо больше предела. */
+function keysOf(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_JIRA_PROJECTS) return null;
+  const keys: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !PROJECT_KEY.test(item)) return null;
+    const key = item.toUpperCase();
+    if (!keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
+/** Поле Jira из файла: не обычный объект - null (поле считается отсутствующим); прежнее поле `project` читается как один проект, неверные ключи отбрасываются. */
+export function readJira(value: unknown): JiraSettings | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const listed = Array.isArray(raw.projects) ? raw.projects.filter((k) => typeof k === 'string' && PROJECT_KEY.test(k)).slice(0, MAX_JIRA_PROJECTS) : null;
+  const projects = listed ?? (typeof raw.project === 'string' && PROJECT_KEY.test(raw.project) ? [raw.project] : []);
+  return { enabled: raw.enabled === true, projects: [...new Set((projects as string[]).map((k) => k.toUpperCase()))] };
+}
+
+/** Jira проекта при сохранении: нет поля - допустимо (выключена); есть - булев enabled и ключи по форме (прежнее `project` - как один); иначе null. */
+export function validateJira(value: unknown): JiraSettings | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const { enabled, projects, project } = value as Record<string, unknown>;
+  if (typeof enabled !== 'boolean') return null;
+  if (projects !== undefined) {
+    const keys = keysOf(projects);
+    return keys ? { enabled, projects: keys } : null;
+  }
+  if (typeof project !== 'string') return null;
+  if (project === '') return { enabled, projects: [] };
+  const keys = keysOf([project]);
+  return keys ? { enabled, projects: keys } : null;
 }
 
 /**
@@ -111,11 +160,15 @@ export class ProjectStore {
     }
     const state = parsed as Partial<ProjectsState>;
     let fallback: TrackerSettings | undefined;
-    const projects = (state.projects ?? []).map((p) => ({
-      ...p,
-      repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,
-      trackers: readTrackers((p as Partial<Project>).trackers) ?? { ...(fallback ??= this.defaults()) },
-    }));
+    const projects = (state.projects ?? []).map(({ jira: stored, ...p }) => {
+      const jira = readJira(stored);
+      return {
+        ...p,
+        repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,
+        trackers: readTrackers((p as Partial<Project>).trackers) ?? { ...(fallback ??= this.defaults()) },
+        ...(jira ? { jira } : {}),
+      };
+    });
     return { projects, lastProjectId: state.lastProjectId ?? null };
   }
 

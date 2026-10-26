@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, s
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
+import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
 import { appMenuTemplate, NOTIFICATIONS_MENU_ID } from './menu';
 import { MrsService } from './mrs-service';
@@ -43,6 +44,7 @@ const trackers = new TrackersService({
 });
 
 const mrs = new MrsService(trackers, runCli);
+const jira = new JiraService(runCli, () => projects.load());
 const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), (url) => shell.openExternal(url));
 
 let quitting = false;
@@ -129,6 +131,41 @@ ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown,
 ipcMain.handle('tasks:details', (_event, selection: unknown, ref: unknown) => taskHandlers.details(selection, ref));
 ipcMain.handle('tasks:sessionDetails', (_event, ref: unknown) => taskHandlers.sessionDetails(ref));
 ipcMain.handle('tasks:open', (_event, arg: unknown) => taskHandlers.open(arg));
+ipcMain.handle('jira:status', () => jira.status());
+ipcMain.handle('jira:list', (_event, projectId: unknown, recheck: unknown) => {
+  if (typeof projectId !== 'string' || typeof recheck !== 'boolean') throw new Error('Некорректные аргументы jira:list');
+  return jira.list(projectId, recheck);
+});
+ipcMain.handle('jira:projects', (_event, recheck: unknown) => {
+  if (typeof recheck !== 'boolean') throw new Error('Некорректные аргументы jira:projects');
+  return jira.projects(recheck);
+});
+ipcMain.handle('jira:suggest', async (_event, repos: unknown) => {
+  if (!Array.isArray(repos)) throw new Error('Некорректные аргументы jira:suggest');
+  // Ветки читаются только у репозиториев сохранённых проектов (как git:branches); прочие пути молча пропускаются.
+  const names: string[] = [];
+  for (const repo of repos.slice(0, 20)) {
+    if (!projectRepo(repo)) continue;
+    const { local, remote } = await gitBranches(repo);
+    names.push(...local, ...remote);
+  }
+  return jira.suggest(names);
+});
+ipcMain.handle('jira:details', (_event, projectId: unknown, key: unknown) => {
+  if (typeof projectId !== 'string') throw new Error('Некорректные аргументы jira:details');
+  return jira.details(projectId, key);
+});
+ipcMain.handle('jira:open', async (_event, projectId: unknown, key: unknown) => {
+  if (typeof projectId !== 'string') throw new Error('Некорректные аргументы jira:open');
+  const res = await jira.url(projectId, key);
+  if ('error' in res) return { error: res.error };
+  try {
+    await shell.openExternal(res.url);
+    return {};
+  } catch (error) {
+    return { error: (error as Error).message || 'браузер не открылся' };
+  }
+});
 ipcMain.handle('mrs:list', (_event, projectId: unknown, filter: unknown, tracked: unknown, recheck: unknown) => {
   const args = validateMrListArgs(projectId, filter, tracked, recheck);
   if (!args) throw new Error('Некорректные аргументы mrs:list');

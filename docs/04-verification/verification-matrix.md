@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 85; с автотестом - 76, из них со smoke - 1; только smoke - 2; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 97; с автотестом - 86, из них со smoke - 5; только smoke - 4; ручная - 2; только осмотр и демонстрация - 5.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -26,7 +26,7 @@ date: 2026-10-26
 | FR-1007 | Отказ источника не скрывает остальные | 01-tasks-panel | автотест | `test/trackers.test.ts` |
 | FR-1008 | Пустые состояния панели | 01-tasks-panel | автотест | `test/model.test.ts`, `test/tasks-view.test.ts` |
 | FR-1009 | Раздел «Источники задач» диалога проекта | 01-tasks-panel | автотест | `test/model.test.ts`, `test/trackers.test.ts` |
-| FR-1010 | Включение источников и заглушка Jira | 01-tasks-panel | автотест | `test/stores.test.ts`, `test/trackers.test.ts` |
+| FR-1010 | Включение источников GitHub и GitLab | 01-tasks-panel | автотест | `test/stores.test.ts`, `test/trackers.test.ts` |
 | FR-1011 | «Начать» в репозитории задачи | 01-tasks-panel | автотест | `test/flow.test.ts` |
 | FR-1012 | Начальный промпт сессии задачи | 01-tasks-panel | автотест | `test/trackers.test.ts` |
 | FR-1013 | Повторное «Начать» | 01-tasks-panel | автотест | `test/flow.test.ts` |
@@ -98,3 +98,15 @@ date: 2026-10-26
 | FR-10002 | Фильтры и сортировка панелей переживают перезапуск | 10-ui-preferences | автотест | `test/prefs.test.ts`, `test/model.test.ts` |
 | FR-10003 | `Shift+Enter` - перевод строки в запросе | 10-ui-preferences | осмотр и демонстрация | - |
 | FR-10004 | Порядок репозиториев проекта | 10-ui-preferences | автотест | `test/reorder.test.ts`, `test/roots.test.ts` |
+| FR-11001 | Jira в свойствах проекта | 11-status-hub | автотест | `test/jira.test.ts` |
+| FR-11002 | Кнопка «Статус» и карточка | 11-status-hub | smoke | `scripts/smoke.mjs` |
+| FR-11003 | Сбор и обновление данных | 11-status-hub | smoke | `scripts/smoke.mjs` |
+| FR-11004 | Индикатор и счётчик | 11-status-hub | автотест | `test/status-model.test.ts` |
+| FR-11005 | Задачи Jira на мне: список и связь с MR | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `test/status-model.test.ts`, `scripts/smoke.mjs` |
+| FR-11006 | Детали задачи Jira и открытие в браузере | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |
+| FR-11007 | Мои MR/PR и MR на моё ревью | 11-status-hub | автотест | `test/status-model.test.ts` |
+| FR-11008 | Сессия по задаче Jira | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |
+| FR-11009 | Сессия по упавшему пайплайну, доработке и ревью из карточки | 11-status-hub | автотест | `test/jira.test.ts`, `test/status-model.test.ts` |
+| FR-11010 | Только чтение и безопасность аргументов | 11-status-hub | автотест | `test/jira.test.ts`, `test/static-guards.test.ts` |
+| FR-11011 | Отказы `jira-cli` и защита учётной записи | 11-status-hub | автотест | `test/jira.test.ts` |
+| FR-11012 | Выбор проектов Jira для проекта | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |

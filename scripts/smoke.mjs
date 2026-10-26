@@ -30,12 +30,14 @@ git(repo, 'add', 'a.txt');
 git(repo, 'commit', '-q', '-m', 'init');
 writeFileSync(join(repo, 'a.txt'), 'hello\nchanged\n');
 git(repo, 'worktree', 'add', '-q', '-b', 'smoke-wt', worktree);
+// Ветка с ключом проекта Jira: диалог проекта предложит SMK (FR-11012).
+git(repo, 'branch', 'smk-5-feature');
 // Smoke - проект с включённым GitHub (кнопки панели есть), Bare - тот же репозиторий без источников (кнопок нет, FR-1001).
 writeFileSync(
   join(userData, 'projects.json'),
   JSON.stringify({
     projects: [
-      { id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: true, gitlab: false } },
+      { id: 'p1', name: 'Smoke', description: '', repos: [repo], trackers: { github: true, gitlab: false }, jira: { enabled: true, projects: [] } },
       { id: 'p2', name: 'Bare', description: '', repos: [repo], trackers: { github: false, gitlab: false } },
     ],
     lastProjectId: 'p1',
@@ -49,6 +51,7 @@ writeFileSync(
   `#!/bin/sh
 printf '{"hook_event_name":"SessionStart","cwd":"%s"}\\n' "$PWD" >> "$CYBORG_EVENTS"
 echo "fake-claude ready"
+echo "ARGS: $*"
 while IFS= read -r line; do
   case "$line" in
     "cd "*) dir=\${line#cd }; printf '{"hook_event_name":"PostToolUse","cwd":"%s","tool_name":"EnterWorktree"}\\n' "$dir" >> "$CYBORG_EVENTS"; echo "moved";;
@@ -62,6 +65,30 @@ chmodSync(fakeClaude, 0o755);
 const fakeGh = join(fakeBin, 'gh');
 writeFileSync(fakeGh, '#!/bin/sh\necho "You are not logged in to any GitHub hosts." >&2\nexit 1\n');
 chmodSync(fakeGh, 0o755);
+
+// Подставной jira: вход есть, одна задача SMK-1 в работе; формы ответов - как у jira-cli 1.7.0 (`--raw`, `--plain`).
+const fakeJira = join(fakeBin, 'jira');
+writeFileSync(
+  fakeJira,
+  `#!/bin/sh
+case "$1" in
+  version) echo 'Version="1.7.0", GitCommit="smoke"';;
+  me) echo 'smoke@example.com';;
+  open) echo "https://jira.example/browse/$2";;
+  project) printf 'KEY\\tNAME\\t\\t\\tTYPE\\tLEAD\\nSMK\\tSmoke\\t\\t\\tsoftware\\tIvan\\nOTH\\tOther\\t\\t\\tsoftware\\tOlga\\n';;
+  issue)
+    if [ "$2" = list ]; then
+      case "$*" in
+        *--plain*) echo "SMK-1";;
+        *) echo '[{"key":"SMK-1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress"},"issueType":{"name":"Bug"},"priority":{"name":"High"},"assignee":{"displayName":"Я"},"updated":"2026-10-26T12:00:00.000+0300","labels":[],"description":"x"}}]';;
+      esac
+    else
+      echo '{"key":"SMK-1","self":"https://jira.example/rest/api/2/issue/1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Bug"},"description":"Описание из Jira","comment":{"total":1,"comments":[{"id":"1","author":{"displayName":"Коллега"},"body":"Комментарий из Jira"}]}}}'
+    fi;;
+esac
+`,
+);
+chmodSync(fakeJira, 0o755);
 
 const mac = process.platform === 'darwin';
 const commandModifier = mac ? 4 : 2; // CDP: Alt=1, Ctrl=2, Meta=4, Shift=8
@@ -214,9 +241,73 @@ async function main() {
   await ev('(() => { const s = document.querySelector("#project-select"); s.value = "p2"; s.dispatchEvent(new Event("change")); })()');
   await waitFor('открытая панель закрылась у проекта без источников', async () => !(await panelOpen()));
   await waitFor('у проекта без источников нет кнопок панели', async () => (await ev('document.querySelector("#tasks-toggle").hidden && document.querySelector("#mrs-toggle").hidden')) === true);
+  assert.equal(await ev('document.querySelector("#status-toggle").hidden'), true, 'у проекта без источников есть кнопка «Статус»');
   await ev('(() => { const s = document.querySelector("#project-select"); s.value = "p1"; s.dispatchEvent(new Event("change")); })()');
   await waitFor('кнопки вернулись с проектом с источником', async () => (await ev('document.querySelector("#tasks-toggle").hidden')) === false);
   log('панель задач: кнопка открывает и закрывает, сессия закрывает, без источников кнопок нет');
+
+  // FR-11012: выбор проектов Jira в свойствах проекта - список из `jira project list`, подсказка по веткам, ручной ключ, сохранение.
+  await ev('document.querySelector("#project-menu-open").click()');
+  await waitFor('меню проекта', async () => !(await ev('document.querySelector("#project-menu").hidden')));
+  await ev('[...document.querySelectorAll("#project-menu .menu-item")].find((e) => e.innerText.includes("Свойства")).click()');
+  await waitFor('диалог проекта открыт', async () => (await ev('document.querySelector("#project-dialog").open')) === true);
+  await waitFor('список проектов Jira в диалоге', async () => (await ev('document.querySelectorAll("#project-jira-list .jira-row").length')) === 2);
+  assert.match(await text('#project-jira-list'), /SMK\s+Smoke/, 'в списке нет проекта SMK с названием');
+  assert.match(await text('#project-jira-chosen'), /Не выбрано/, 'без выбора диалог не сказал про проект по умолчанию');
+  await waitFor('подсказка проекта по веткам репозитория', async () => /SMK · 1/.test(await text('#project-jira-suggest')));
+  await ev('document.querySelector("#project-jira-suggest button").click()');
+  assert.match(await text('#project-jira-chosen'), /SMK ×/, 'подсказка не выбрала проект');
+  await ev(`(() => { const f = document.querySelector("#project-jira-filter"); f.value = "oth"; f.dispatchEvent(new Event("input")); })()`);
+  assert.equal(await ev('document.querySelectorAll("#project-jira-list .jira-row").length'), 1, 'поиск не сузил список');
+  await ev(`(() => { const f = document.querySelector("#project-jira-filter"); f.value = "OTH"; f.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); })()`);
+  assert.match(await text('#project-jira-chosen'), /SMK ×\s*OTH ×/, 'введённый ключ не добавлен');
+  assert.ok(await ev('document.querySelector("#project-dialog").open'), 'Enter в поиске отправил форму');
+  // Предел проектов: Enter с лишним ключом его не добавляет, а сказанная ошибка не переживает снятие проекта и не блокирует «Сохранить».
+  const typeKey = (key) => ev(`(() => { const f = document.querySelector("#project-jira-filter"); f.value = ${JSON.stringify(key)}; f.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); })()`);
+  for (let i = 1; i <= 8; i++) await typeKey(`LIM${i}`);
+  await typeKey('OVER');
+  assert.doesNotMatch(await text('#project-jira-chosen'), /OVER/, 'одиннадцатый проект добавлен сверх предела');
+  assert.notEqual(await ev('document.querySelector("#project-jira-filter").validationMessage'), '', 'предел не назван');
+  for (let i = 1; i <= 8; i++) await ev(`[...document.querySelectorAll("#project-jira-chosen .chip-button")].find((b) => b.textContent === "LIM${i} ×").click()`);
+  assert.equal(await ev('document.querySelector("#project-jira-filter").validationMessage'), '', 'ошибка предела осталась после снятия проекта');
+  assert.ok(await ev('document.querySelector("#project-dialog form").checkValidity()'), 'ошибка предела блокирует «Сохранить»');
+  await ev('document.querySelector("#project-dialog button[value=save]").click()');
+  await waitFor('диалог закрыт сохранением', async () => (await ev('document.querySelector("#project-dialog").open')) === false);
+  await waitFor('выбранные проекты Jira сохранены', async () => (await ev('window.cyborg.loadProjects().then((s) => JSON.stringify(s.projects.find((p) => p.id === "p1").jira))')) === '{"enabled":true,"projects":["SMK","OTH"]}');
+  log('выбор проектов Jira: список, подсказка по веткам, поиск, ручной ключ, сохранение');
+
+  // FR-11002..FR-11008: кнопка «Статус» - карточка с задачей Jira, детали, закрытие, сессия по задаче с промптом из ключа.
+  const popoverOpen = async () => !(await ev('document.querySelector("#status-popover").hidden'));
+  const visibleTerminal = () => ev('(() => { const e = [...document.querySelectorAll(".xterm-rows")].find((x) => x.offsetParent); return e ? e.innerText : ""; })()');
+  assert.equal(await ev('document.querySelector("#status-toggle").hidden'), false, 'у проекта с источниками нет кнопки «Статус»');
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка статуса открыта кнопкой', popoverOpen);
+  await waitFor('задача Jira в карточке', async () => /SMK-1/.test(await text('#status-popover')));
+  assert.equal(await ev('[...document.querySelectorAll("#status-popover .status-link")].filter((e) => e.textContent === "SMK-1").length'), 1, 'задача двух выбранных проектов показана дважды');
+  assert.equal(await ev('document.querySelector("#status-toggle .status-dot").dataset.level'), 'unknown', 'без входа в gh уровень не unknown');
+  assert.match(await text('#status-popover'), /нет remote GitHub или GitLab/, 'карточка не объяснила, почему нет данных о MR');
+  await ev('[...document.querySelectorAll(".status-link")].find((e) => e.textContent === "SMK-1").click()');
+  await waitFor('детали задачи Jira', async () => /Описание из Jira/.test(await text('#status-popover')) && /Комментарий из Jira/.test(await text('#status-popover')));
+  assert.ok(await popoverOpen(), 'клик внутри карточки с перерисовкой закрыл её');
+  await ev('document.body.click()');
+  await waitFor('клик снаружи закрыл карточку', async () => !(await popoverOpen()));
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка открыта снова', popoverOpen);
+  await combo(0, 'Escape', 'Escape', 27);
+  await waitFor('Escape закрыл карточку', async () => !(await popoverOpen()));
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка открыта перед стартом', popoverOpen);
+  await ev('document.querySelector(".status-item .status-actions button").click()');
+  await waitFor('карточка закрылась при старте сессии', async () => !(await popoverOpen()));
+  await waitFor('вторая вкладка сессии по задаче Jira', async () => (await tabs()) === 2 && /SMK-1/.test(await text('#session-list > *:nth-child(2)')));
+  // Терминал переносит длинную строку аргументов по ширине окна (в CI она уже), поэтому пробелы и переносы при сравнении не учитываются.
+  await waitFor('промпт задачи Jira в аргументах claude', async () => (await visibleTerminal()).replace(/\s+/g, '').includes('ЗадачаJiraSMK-1:прочитайеё'));
+  await ev('document.querySelector("#status-toggle").click()');
+  await waitFor('карточка открыта после старта', popoverOpen);
+  await waitFor('у задачи с сессией кнопка «К сессии»', async () => (await text('.status-item .status-actions button')) === 'К сессии');
+  await ev('document.querySelector(".status-item .status-actions button").click()');
+  await waitFor('повторное действие вернуло к сессии без новой вкладки', async () => !(await popoverOpen()) && (await tabs()) === 2);
+  log('кнопка «Статус»: карточка с задачей Jira, детали, закрытие кликом и Escape, сессия по задаче, возврат к ней');
 
   // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».
   const stray = await ev(`(() => {
