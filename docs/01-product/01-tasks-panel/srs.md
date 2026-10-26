@@ -234,7 +234,9 @@ FR-1022, FR-1023; FR-1025 - кнопки и показ отказа; FR-1026 - �
   (допущение D-01 фичи 02).
 - **rationale:** reason - отдельная панель брифа; assumptions - D-01; relationships - сценарий 4; design
   constraints - нет.
-- **verification:** демонстрация - собранное приложение.
+- **verification:** испытание - `scripts/smoke.mjs` («панель задач: кнопка открывает и закрывает, сессия закрывает, без источников кнопок нет»:
+  кнопка открывает и закрывает панель, переход к сессии закрывает её, у проекта без источников кнопок нет, а открытая панель закрывается);
+  демонстрация - вкладки «Задачи» и «MR/PR», пояснение проекта без репозиториев в собранном приложении.
 - **класс:** Functions. **origin:** source.
 
 ### FR-1005 Сортировка
@@ -406,7 +408,9 @@ FR-1022, FR-1023; FR-1025 - кнопки и показ отказа; FR-1026 - �
 - **traced from:** BR-1002.
 - **источник:** цель, граница; BRD продукта, non-goal «восстановление сессий».
 - **rationale:** reason - non-goal продукта; assumptions - нет; relationships - нет; design constraints - нет.
-- **verification:** осмотр - в `projects.json` нет данных задач, `trackers.json` только читается.
+- **verification:** испытание - `test/static-guards.test.ts` («привязка задачи и MR к сессии только в памяти»: интерфейс пишет в хранилище окна
+  только известные настройки, главный процесс пишет на диск только проекты, их копию и настройки хуков); осмотр - в `projects.json` нет данных
+  задач, `trackers.json` только читается.
 - **класс:** Functions. **origin:** source.
 
 ### FR-1018 Данные задачи - текстом
@@ -418,7 +422,8 @@ FR-1022, FR-1023; FR-1025 - кнопки и показ отказа; FR-1026 - �
   текстом, не разметкой» и граница «Описание не рендерится как Markdown».
 - **rationale:** reason - название и описание задачи пишет кто угодно; assumptions - нет; relationships - FR-1021,
   FR-1023; design constraints - ADR-0002.
-- **verification:** осмотр - вывод через `textContent`, цвет метки - через стиль элемента, без `innerHTML`;
+- **verification:** испытание - `test/static-guards.test.ts` («данные задачи и MR - текстом»: в `src/renderer` нет `innerHTML`, `outerHTML`,
+  `insertAdjacentHTML`, `document.write`, `createContextualFragment`); осмотр - вывод через `textContent`, цвет метки - через стиль элемента;
   демонстрация - задача с `<b>` в названии и описании.
 - **класс:** Functions. **origin:** source.
 
@@ -547,7 +552,8 @@ FR-1022, FR-1023; FR-1025 - кнопки и показ отказа; FR-1026 - �
 - **источник:** решение прогона (числа не из постановки); `src/main/trackers.ts:87-88`.
 - **rationale:** reason - зависший CLI не держит панель бесконечно; assumptions - 64 МБ покрывают тысячи задач
   с `--jq`; relationships - нет; design constraints - нет.
-- **verification:** анализ - константы и обработка `timeout`/`overflow`.
+- **verification:** испытание - `test/cli-limits.test.ts` (`CLI_LIMITS` = 120 с и 64 МБ; раннер переводит превышение времени в `failure: timeout`, размера
+  ответа - в `overflow`; вызов в пределах без `failure`), `test/mrs.test.ts` и `test/trackers.test.ts` (текст отказа источника «120 с», «64 МБ»).
 - **класс:** Performance. **origin:** derived.
 
 ### NFR-1004 Время загрузки панели задач
