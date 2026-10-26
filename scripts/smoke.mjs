@@ -13,6 +13,7 @@ import { join, resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 const electronArgs = process.argv.slice(2);
 const TIMEOUT_MS = 20_000;
+const CDP_TIMEOUT_MS = 15_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'cyborg-smoke-')));
@@ -125,10 +126,15 @@ async function main() {
     const d = JSON.parse(m.data);
     if (d.id && pending.has(d.id)) pending.get(d.id)(d);
   };
+  // Без ответа на вызов DevTools (окно закрыто модальным диалогом, интерфейс завис) прогон падает с причиной, а не висит до таймаута job.
   const send = (method, params = {}) =>
-    new Promise((res) => {
+    new Promise((res, rej) => {
       const id = ++seq;
-      pending.set(id, res);
+      const timer = setTimeout(() => rej(new Error(`DevTools ${method}: нет ответа за ${CDP_TIMEOUT_MS / 1000} с`)), CDP_TIMEOUT_MS);
+      pending.set(id, (reply) => {
+        clearTimeout(timer);
+        res(reply);
+      });
       ws.send(JSON.stringify({ id, method, params }));
     });
   const ev = async (expression) => {
