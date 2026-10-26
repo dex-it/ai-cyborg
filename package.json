@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "measure": "node scripts/measure.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs",
+    "check:corpus": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-corpus.ts",
+    "corpus:matrix": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-corpus.ts --write-matrix",
     "postinstall": "electron-rebuild -f -w node-pty",
     "test": "node --test 'src/**/*.test.ts' && node scripts/test.mjs"
   },
