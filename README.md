@@ -96,8 +96,12 @@ Git-команды над чужими репозиториями выполня
 npm run build       # сборка в dist/
 npm run typecheck   # проверка типов
 npm test            # тесты (node --test)
+npm run smoke       # дымовой тест окна: сессия, клавиши, дерево (нужен дисплей)
 npm start           # сборка и запуск
 ```
+
+Каждый PR и пуш в `master` проверяет GitHub Actions (`.github/workflows/ci.yml`) на macOS и Linux: установка, сборка,
+типы, `npm test` и `npm run smoke`.
 
 Код: `src/main/` - главный процесс (сессии, git, трекеры), `src/renderer/` - интерфейс. Требования и решения
 лежат в `docs/`: BRD продукта, требования по фичам, ADR.
