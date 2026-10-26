@@ -1,0 +1,11 @@
+/* Акцент - синий контур значка Cyborg. */
+:root {
+  --sl-color-accent-low: #0e2a4d;
+  --sl-color-accent: #3794ff;
+  --sl-color-accent-high: #b8d8ff;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #d6e8ff;
+  --sl-color-accent: #0b63c9;
+  --sl-color-accent-high: #083f82;
+}
