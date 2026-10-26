@@ -1,2 +1,6 @@
 node_modules/
 dist/
+
+site/src/generated/
+site/public/favicon.svg
+site/.astro/
