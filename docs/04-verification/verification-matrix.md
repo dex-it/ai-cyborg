@@ -44,7 +44,7 @@ date: 2026-10-26
 | FR-1025 | Открытие задачи в системном браузере | 01-tasks-panel | автотест | `test/task-details.test.ts` |
 | FR-1026 | Повреждённый файл воркспейса не теряется | 01-tasks-panel | автотест | `test/workspace-text.test.ts`, `test/workspaces.test.ts`, `test/stores.test.ts` |
 | FR-1027 | Каналы файлов и git отвечают только по разрешённым каталогам | 01-tasks-panel | автотест | `test/allowed-paths.test.ts` |
-| FR-1028 | Воркспейс - файл проектов и его выбор при запуске | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `scripts/smoke.mjs` |
+| FR-1028 | Воркспейс - файл проектов и его выбор при запуске | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/launcher.test.ts`, `scripts/smoke.mjs` |
 | FR-1029 | Один воркспейс - один процесс, замок и «Недавние» | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-1030 | Окно первого запуска создаёт воркспейс | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/workspace-text.test.ts`, `scripts/smoke.mjs` |
 | FR-2001 | Источники MR - источники задач | 02-mr-view | автотест | `test/mrs.test.ts` |
