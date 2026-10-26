@@ -151,6 +151,8 @@ ipcMain.handle('dialog:pickDir', async (_event, defaultPath?: string) => {
 });
 ipcMain.handle('dialog:pickWorkspaceDir', async (_event, defaultPath?: unknown) => {
   const result = await dialog.showOpenDialog(win!, {
+    title: 'Папка файла воркспейса',
+    buttonLabel: 'Выбрать',
     properties: ['openDirectory', 'createDirectory'],
     defaultPath: typeof defaultPath === 'string' ? defaultPath : undefined,
   });
@@ -162,14 +164,19 @@ ipcMain.handle('workspace:info', () => ({
   home: os.homedir(),
   sep: path.sep,
 }));
+// Путь от интерфейса открывается, только если главный процесс сам предложил его ответом exists: иначе открытый чужой файл затирался бы первым сохранением.
+let offeredWorkspace: string | null = null;
 ipcMain.handle('workspace:create', async (_event, raw: unknown) => {
+  offeredWorkspace = null;
   const outcome = await createAndOpen(raw, openDeps);
+  if ('exists' in outcome) offeredWorkspace = canonicalWorkspace((raw as { file: string }).file);
   if ('error' in outcome || 'exists' in outcome) return outcome;
   await report(outcome.opened, '');
   return {};
 });
 ipcMain.handle('workspace:open', async (_event, file: unknown) => {
-  if (typeof file !== 'string') throw new Error('Некорректные аргументы workspace:open');
+  if (typeof file !== 'string' || offeredWorkspace === null || canonicalWorkspace(file) !== offeredWorkspace) throw new Error('Некорректные аргументы workspace:open');
+  offeredWorkspace = null;
   return report(await openWorkspaceFile(file, openDeps), file);
 });
 ipcMain.handle('projects:load', () => projects.load());
@@ -428,6 +435,8 @@ async function report(result: OpenResult, file: string): Promise<boolean> {
 async function chooseWorkspace(): Promise<void> {
   if (!win) return;
   const result = await dialog.showOpenDialog(win, {
+    title: 'Открыть воркспейс в новом окне',
+    buttonLabel: 'Открыть',
     properties: ['openFile'],
     filters: [{ name: 'Воркспейс Cyborg', extensions: ['json'] }],
   });

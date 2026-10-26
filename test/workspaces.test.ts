@@ -403,6 +403,7 @@ describe('открытие из меню', () => {
       request(file, { project: project({ name: ' ' }) }),
       request(file, { project: project({ repos: ['rel'] }) }),
       request('rel.json'),
+      request(path.join(dir, 'd.bashrc')),
     ]) {
       assert.ok('error' in (await createAndOpen(bad, d)));
     }
