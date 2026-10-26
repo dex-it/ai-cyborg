@@ -136,6 +136,21 @@ ipcMain.handle('jira:list', (_event, projectId: unknown, recheck: unknown) => {
   if (typeof projectId !== 'string' || typeof recheck !== 'boolean') throw new Error('Некорректные аргументы jira:list');
   return jira.list(projectId, recheck);
 });
+ipcMain.handle('jira:projects', (_event, recheck: unknown) => {
+  if (typeof recheck !== 'boolean') throw new Error('Некорректные аргументы jira:projects');
+  return jira.projects(recheck);
+});
+ipcMain.handle('jira:suggest', async (_event, repos: unknown) => {
+  if (!Array.isArray(repos)) throw new Error('Некорректные аргументы jira:suggest');
+  // Ветки читаются только у репозиториев сохранённых проектов (как git:branches); прочие пути молча пропускаются.
+  const names: string[] = [];
+  for (const repo of repos.slice(0, 20)) {
+    if (!projectRepo(repo)) continue;
+    const { local, remote } = await gitBranches(repo);
+    names.push(...local, ...remote);
+  }
+  return jira.suggest(names);
+});
 ipcMain.handle('jira:details', (_event, projectId: unknown, key: unknown) => {
   if (typeof projectId !== 'string') throw new Error('Некорректные аргументы jira:details');
   return jira.details(projectId, key);

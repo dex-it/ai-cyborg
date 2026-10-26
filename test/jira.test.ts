@@ -8,6 +8,7 @@ import {
   issueOfRaw,
   jiraListArgs,
   jiraOpenArgs,
+  jiraProjectsArgs,
   jiraPrompt,
   jiraProgressArgs,
   jiraViewArgs,
@@ -17,13 +18,16 @@ import {
   parseDetails,
   parseIssues,
   parseKeys,
+  parseProjects,
   problemOf,
   problemText,
+  suggestKeys,
+  timeOf,
   validateJiraStart,
 } from '../src/main/jira';
 import { JiraService } from '../src/main/jira-service';
 import { mrPrompt, validateSessionStart } from '../src/main/mrs';
-import { NO_JIRA, PROJECT_KEY, readJira, validateJira, type Project, type ProjectsState } from '../src/main/projects';
+import { MAX_JIRA_PROJECTS, NO_JIRA, PROJECT_KEY, readJira, validateJira, type Project, type ProjectsState } from '../src/main/projects';
 import type { CliResult, JiraRunner } from '../src/main/trackers';
 import { saveProjectsState, validateProjectsState } from '../src/main/trackers';
 
@@ -187,32 +191,38 @@ describe('Jira: настройки проекта', () => {
   it('из файла: нет объекта - null; enabled только true; неверный ключ - пустой', () => {
     assert.equal(readJira(undefined), null);
     assert.equal(readJira([]), null);
-    assert.deepEqual(readJira({ enabled: true, project: 'DEX' }), { enabled: true, project: 'DEX' });
-    assert.deepEqual(readJira({ enabled: 'true', project: 'DEX-1' }), { enabled: false, project: '' });
+    assert.deepEqual(readJira({ enabled: true, projects: ['DEX', 'sup', 'DEX'] }), { enabled: true, projects: ['DEX', 'SUP'] });
+    assert.deepEqual(readJira({ enabled: true, project: 'DEX' }), { enabled: true, projects: ['DEX'] }, 'прежнее поле project - один проект');
+    assert.deepEqual(readJira({ enabled: 'true', project: 'DEX-1' }), { enabled: false, projects: [] });
+    assert.deepEqual(readJira({ enabled: true, projects: ['OK', 7, '--raw', 'A B'] }), { enabled: true, projects: ['OK'] }, 'неверные ключи отбрасываются');
+    assert.equal(readJira({ enabled: true, projects: Array.from({ length: 30 }, (_, i) => `P${i}`) })!.projects.length, MAX_JIRA_PROJECTS);
   });
 
   it('при сохранении: нет поля - допустимо; неверная форма - отказ', () => {
     assert.equal(validateJira(undefined), undefined);
-    assert.deepEqual(validateJira({ enabled: false, project: '' }), { enabled: false, project: '' });
-    assert.deepEqual(validateJira({ enabled: true, project: 'dex', extra: 1 }), { enabled: true, project: 'dex' });
-    for (const bad of [null, 'x', [], { enabled: 'yes', project: '' }, { enabled: true }, { enabled: true, project: '-p' }, { enabled: true, project: 'A B' }]) {
+    assert.deepEqual(validateJira({ enabled: false, projects: [] }), { enabled: false, projects: [] });
+    assert.deepEqual(validateJira({ enabled: true, projects: ['dex', 'SUP', 'DEX'], extra: 1 }), { enabled: true, projects: ['DEX', 'SUP'] }, 'верхний регистр, без повторов');
+    assert.deepEqual(validateJira({ enabled: true, project: 'dex' }), { enabled: true, projects: ['DEX'] }, 'прежняя форма принимается');
+    assert.deepEqual(validateJira({ enabled: true, project: '' }), { enabled: true, projects: [] });
+    const many = Array.from({ length: MAX_JIRA_PROJECTS + 1 }, (_, i) => `P${i}`);
+    for (const bad of [null, 'x', [], { enabled: 'yes', projects: [] }, { enabled: true }, { enabled: true, project: '-p' }, { enabled: true, project: 'A B' }, { enabled: true, projects: 'DEX' }, { enabled: true, projects: ['DEX', '-p'] }, { enabled: true, projects: [7] }, { enabled: true, projects: many }]) {
       assert.equal(validateJira(bad), null, JSON.stringify(bad));
     }
   });
 
   it('состояние проектов: jira проходит, лишнее не переносится, неверное отклоняет всё', () => {
     const base = { id: 'p', name: 'P', description: '', repos: ['/a'], trackers: { github: true, gitlab: false } };
-    const withJira = validateProjectsState({ projects: [{ ...base, jira: { enabled: true, project: 'DEX', token: 'секрет' } }], lastProjectId: null })!;
-    assert.deepEqual(withJira.projects[0].jira, { enabled: true, project: 'DEX' });
+    const withJira = validateProjectsState({ projects: [{ ...base, jira: { enabled: true, projects: ['DEX'], token: 'секрет' } }], lastProjectId: null })!;
+    assert.deepEqual(withJira.projects[0].jira, { enabled: true, projects: ['DEX'] });
     assert.equal('jira' in validateProjectsState({ projects: [base], lastProjectId: null })!.projects[0], false, 'нет поля - остаётся без него');
-    assert.equal(validateProjectsState({ projects: [{ ...base, jira: { enabled: true, project: '--raw' } }], lastProjectId: null }), null);
+    assert.equal(validateProjectsState({ projects: [{ ...base, jira: { enabled: true, projects: ['--raw'] } }], lastProjectId: null }), null);
   });
 
   it('сохранение отклоняет неверный ключ проекта и ничего не пишет', () => {
     let saved: ProjectsState | null = null;
     const store = { load: () => ({ projects: [], lastProjectId: null }), save: (s: ProjectsState) => void (saved = s) };
     const base = { id: 'p', name: 'P', description: '', repos: ['/a'], trackers: { github: false, gitlab: false } };
-    assert.throws(() => saveProjectsState({ projects: [{ ...base, jira: { enabled: true, project: 'a b' } }], lastProjectId: null }, store, { resetAuth() {} }));
+    assert.throws(() => saveProjectsState({ projects: [{ ...base, jira: { enabled: true, projects: ['a b'] } }], lastProjectId: null }, store, { resetAuth() {} }));
     assert.equal(saved, null);
   });
 });
@@ -243,7 +253,7 @@ describe('Jira: старт сессии', () => {
 
 // ---------- сервис ----------
 
-const project: Project = { id: 'p1', name: 'P', description: '', repos: ['/w/a'], trackers: { github: false, gitlab: false }, jira: { enabled: true, project: 'DEX' } };
+const project: Project = { id: 'p1', name: 'P', description: '', repos: ['/w/a'], trackers: { github: false, gitlab: false }, jira: { enabled: true, projects: ['DEX'] } };
 const projects = (...list: Project[]) => (): ProjectsState => ({ projects: list, lastProjectId: null });
 
 function service(respond: (args: string[]) => CliResult | Promise<CliResult>, ...list: Project[]) {
@@ -284,7 +294,7 @@ describe('Jira: сервис', () => {
   });
 
   it('проект без Jira или без включения - отказ без запуска; проекта нет - тоже', async () => {
-    const off = { ...project, jira: { enabled: false, project: '' } };
+    const off = { ...project, jira: { enabled: false, projects: [] } };
     const none = { ...project, jira: undefined };
     for (const p of [off, none]) {
       const { svc, calls } = service(() => ok('[]'), p);
@@ -395,8 +405,137 @@ describe('Jira: сервис', () => {
   });
 });
 
+// ---------- несколько проектов Jira ----------
+
+const multi: Project = { ...project, jira: { enabled: true, projects: ['DEX', 'SUP'] } };
+
+describe('Jira: проекты проекта', () => {
+  it('таблица jira project list: ключ и название, заголовок и пустые колонки пропущены', () => {
+    const table = 'KEY\tNAME\t\t\t\tTYPE\tLEAD\nAO\tA&A Oil\t\t\t\t\tMikhail\nACI\tACI\t\t\t\t\tСергей\nSUP\tТехническая поддержка\tsoftware\tИван\n\nмусор с пробелом\n--flag\n';
+    assert.deepEqual(parseProjects(table), [
+      { key: 'AO', name: 'A&A Oil' },
+      { key: 'ACI', name: 'ACI' },
+      { key: 'SUP', name: 'Техническая поддержка' },
+    ]);
+    assert.deepEqual(parseProjects(''), []);
+    assert.deepEqual(parseProjects('\u001b[1mKEY\tNAME\u001b[0m\nab\tlower\n'), [{ key: 'AB', name: 'lower' }]);
+    assert.deepEqual(jiraProjectsArgs(), ['project', 'list']);
+  });
+
+  it('подсказки: ключи из имён веток, только известные проекты, частые первыми', () => {
+    const known = new Set(['DEX', 'SUP', 'MDM']);
+    const branches = ['main', 'feature/dex-12-csv', 'DEX-13_fix', 'fix/SUP-7', 'chore/utf-8', 'release/v2-1', 'feature/xdex-1', 'dex-12-and-dex-13', 'mdm-1/sup-2'];
+    assert.deepEqual(suggestKeys(branches, known), [
+      { key: 'DEX', count: 3 },
+      { key: 'SUP', count: 2 },
+      { key: 'MDM', count: 1 },
+    ]);
+    assert.deepEqual(suggestKeys(branches, new Set()), []);
+    assert.deepEqual(suggestKeys([], known), []);
+  });
+
+  it('время jira-cli', () => {
+    assert.equal(timeOf('2026-10-25T12:30:00.000+0300'), Date.parse('2026-10-25T12:30:00.000+03:00'));
+    assert.equal(timeOf('вчера'), 0);
+  });
+
+  it('несколько проектов: запрос и ключи «в работе» на каждый с -p, задачи слиты по давности, повторы убраны', async () => {
+    const stamp = (n: number) => `2026-10-${20 + n}T10:00:00.000+0300`;
+    const { svc, calls } = service((args) => {
+      if (args.includes('--plain')) return ok('');
+      const key = args[args.indexOf('-p') + 1];
+      if (key === 'DEX') return ok(JSON.stringify([listed('DEX-1', { updated: stamp(1) }), listed('DEX-2', { updated: stamp(5) }), listed('SUP-9', { updated: stamp(3) })]));
+      return ok(JSON.stringify([listed('SUP-9', { updated: stamp(3) }), listed('SUP-8', { updated: stamp(4) })]));
+    }, multi);
+    const res = await svc.list('p1', false);
+    assert.deepEqual(res.issues.map((i) => i.key), ['DEX-2', 'SUP-8', 'SUP-9', 'DEX-1'], 'свежие первыми, SUP-9 один раз');
+    assert.equal(res.notes, undefined);
+    assert.deepEqual(
+      calls.filter((a) => a.includes('--raw')).map((a) => a.at(-1)),
+      ['DEX', 'SUP'],
+      'по запросу на проект',
+    );
+    assert.equal(calls.filter((a) => a.includes('--plain')).length, 2);
+  });
+
+  it('общий предел: сверх пятидесяти задач срезаются, список помечен как неполный', async () => {
+    const { svc } = service((args) => {
+      if (args.includes('--plain')) return ok('');
+      const key = args[args.indexOf('-p') + 1];
+      return ok(JSON.stringify(Array.from({ length: 40 }, (_, i) => listed(`${key}-${i + 1}`))));
+    }, multi);
+    const res = await svc.list('p1', false);
+    assert.equal(res.issues.length, JIRA_LIMIT);
+    assert.equal(res.truncated, true);
+  });
+
+  it('один проект не ответил, другой ответил: список показан, причина названа с ключом', async () => {
+    const { svc } = service((args) => {
+      if (args.includes('--plain')) return ok('');
+      return args.at(-1) === 'DEX' ? fail('project does not exist') : ok(JSON.stringify([listed('SUP-1')]));
+    }, multi);
+    const res = await svc.list('p1', false);
+    assert.deepEqual(res.issues.map((i) => i.key), ['SUP-1']);
+    assert.equal(res.error, undefined);
+    assert.match(res.notes![0], /^DEX: jira-cli отказал: project does not exist/);
+  });
+
+  it('все проекты не ответили: ошибка первого с ключом; отказ входа остановит повторы', async () => {
+    const { svc, calls } = service(() => fail('Unauthorized'), multi);
+    const res = await svc.list('p1', false);
+    assert.equal(res.problem, 'auth');
+    assert.match(res.error!, /^(DEX|SUP): /);
+    const before = calls.length;
+    await svc.list('p1', false);
+    assert.equal(calls.length, before, 'вход не принят - jira не вызывается');
+  });
+
+  it('детали задачи идут с -p её проекта, если он выбран; чужой префикс - без -p', async () => {
+    const { svc, calls } = service((args) => {
+      if (args[1] === 'list') return ok(JSON.stringify([listed('SUP-9'), listed('ZZZ-1')]));
+      if (args[1] === 'view') return ok(JSON.stringify({ ...viewed, key: args[2] }));
+      return ok('');
+    }, multi);
+    await svc.list('p1', false);
+    await svc.details('p1', 'SUP-9');
+    await svc.details('p1', 'ZZZ-1');
+    const views = calls.filter((a) => a[1] === 'view');
+    assert.deepEqual(views[0].slice(-2), ['-p', 'SUP']);
+    assert.ok(!views[1].includes('-p'), 'проект ZZZ в настройках не выбран');
+  });
+
+  it('список проектов: разбор, кэш до recheck, отказ входа блокирует', async () => {
+    let calls = 0;
+    const table = 'KEY\tNAME\tTYPE\tLEAD\nDEX\tDex\tsoftware\tИ\nSUP\tSupport\tsoftware\tО\n';
+    const { svc } = service((args) => {
+      if (args[0] === 'project') {
+        calls++;
+        return ok(table);
+      }
+      return ok('[]');
+    });
+    const first = await svc.projects(false);
+    assert.ok('projects' in first);
+    assert.deepEqual(first.projects.map((p) => p.key), ['DEX', 'SUP']);
+    await svc.projects(false);
+    assert.equal(calls, 1, 'второй вызов из кэша');
+    await svc.projects(true);
+    assert.equal(calls, 2, 'recheck сбрасывает кэш');
+    const denied = await service(() => fail('Unauthorized')).svc.projects(false);
+    assert.ok('problem' in denied && denied.problem === 'auth');
+    assert.ok('problem' in (await service(() => ({ code: null, stdout: '', stderr: '', missing: true })).svc.projects(false)));
+  });
+
+  it('подсказки сервиса: известные проекты из списка; без списка - пусто', async () => {
+    const table = 'KEY\tNAME\nDEX\tDex\nSUP\tSupport\n';
+    const { svc } = service((args) => (args[0] === 'project' ? ok(table) : ok('[]')));
+    assert.deepEqual(await svc.suggest(['dex-1-a', 'utf-8', 'feature/SUP-2', 'sup-3']), [{ key: 'SUP', count: 2 }, { key: 'DEX', count: 1 }]);
+    assert.deepEqual(await service(() => fail('Unauthorized')).svc.suggest(['dex-1']), []);
+  });
+});
+
 describe('Jira: пустые настройки', () => {
   it('NO_JIRA - выключено и без ключа', () => {
-    assert.deepEqual(NO_JIRA, { enabled: false, project: '' });
+    assert.deepEqual(NO_JIRA, { enabled: false, projects: [] });
   });
 });

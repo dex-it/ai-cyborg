@@ -1,21 +1,22 @@
 import fs from 'node:fs';
+import { MAX_JIRA_PROJECTS, PROJECT_KEY } from './jira-keys';
 import { writeJsonAtomic } from './jsonfile';
+
+export { MAX_JIRA_PROJECTS, PROJECT_KEY } from './jira-keys';
 
 export interface TrackerSettings {
   github: boolean;
   gitlab: boolean;
 }
 
-/** Jira проекта (FR-11001, ADR-0013): включена ли и ключ проекта для `jira -p`; пустой ключ - проект, сохранённый `jira init`. */
+/** Jira проекта (FR-11001, FR-11012, ADR-0013): включена ли и какие проекты Jira показываются; пусто - проект, сохранённый `jira init`. */
 export interface JiraSettings {
   enabled: boolean;
-  project: string;
+  /** Ключи проектов Jira в верхнем регистре, без повторов, не больше MAX_JIRA_PROJECTS. */
+  projects: string[];
 }
 
-export const NO_JIRA: JiraSettings = { enabled: false, project: '' };
-
-/** Ключ проекта Jira в том виде, в каком он попадает в аргумент `-p`: ничего, кроме букв, цифр и «_». */
-export const PROJECT_KEY = /^[A-Za-z][A-Za-z0-9_]*$/;
+export const NO_JIRA: JiraSettings = { enabled: false, projects: [] };
 
 export interface Project {
   id: string;
@@ -40,21 +41,41 @@ export function readTrackers(value: unknown): TrackerSettings | null {
   return { github: raw.github === true, gitlab: raw.gitlab === true };
 }
 
-/** Поле Jira из файла: не обычный объект - null (поле считается отсутствующим); неверный ключ проекта читается как пустой. */
+/** Ключи из поля: строки по форме, в верхнем регистре, без повторов; null - что-то не по форме либо больше предела. */
+function keysOf(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_JIRA_PROJECTS) return null;
+  const keys: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !PROJECT_KEY.test(item)) return null;
+    const key = item.toUpperCase();
+    if (!keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
+/** Поле Jira из файла: не обычный объект - null (поле считается отсутствующим); прежнее поле `project` читается как один проект, неверные ключи отбрасываются. */
 export function readJira(value: unknown): JiraSettings | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
-  return { enabled: raw.enabled === true, project: typeof raw.project === 'string' && PROJECT_KEY.test(raw.project) ? raw.project : '' };
+  const listed = Array.isArray(raw.projects) ? raw.projects.filter((k) => typeof k === 'string' && PROJECT_KEY.test(k)).slice(0, MAX_JIRA_PROJECTS) : null;
+  const projects = listed ?? (typeof raw.project === 'string' && PROJECT_KEY.test(raw.project) ? [raw.project] : []);
+  return { enabled: raw.enabled === true, projects: [...new Set((projects as string[]).map((k) => k.toUpperCase()))] };
 }
 
-/** Jira проекта при сохранении: нет поля - допустимо (выключена); есть - булев enabled и ключ проекта пустой либо верный; иначе false. */
+/** Jira проекта при сохранении: нет поля - допустимо (выключена); есть - булев enabled и ключи по форме (прежнее `project` - как один); иначе null. */
 export function validateJira(value: unknown): JiraSettings | null | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const { enabled, project } = value as Record<string, unknown>;
-  if (typeof enabled !== 'boolean' || typeof project !== 'string') return null;
-  if (project !== '' && !PROJECT_KEY.test(project)) return null;
-  return { enabled, project };
+  const { enabled, projects, project } = value as Record<string, unknown>;
+  if (typeof enabled !== 'boolean') return null;
+  if (projects !== undefined) {
+    const keys = keysOf(projects);
+    return keys ? { enabled, projects: keys } : null;
+  }
+  if (typeof project !== 'string') return null;
+  if (project === '') return { enabled, projects: [] };
+  const keys = keysOf([project]);
+  return keys ? { enabled, projects: keys } : null;
 }
 
 /**

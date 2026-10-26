@@ -6,6 +6,7 @@
 // `issue view --raw` - тело REST как есть (комментарии с `author`, `self`). Разбор следует обоим видам; формы сверены
 // модом dex-jira-tracker на jira-cli 1.7.0 и Jira Server 9.2 (на живой Jira Server 9.2 Cyborg прогнан 26.10.2026; Cloud и Data Center вживую не проверялись - D-11 фичи 11).
 
+import { PROJECT_KEY } from './jira-keys';
 import type { CliResult } from './trackers';
 
 export const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/;
@@ -65,6 +66,21 @@ export interface JiraListResult {
   truncated: boolean;
   problem?: JiraProblem;
   error?: string;
+  /** Проекты, по которым запрос не удался, когда по другим он удался: «KEY: причина». */
+  notes?: string[];
+}
+
+export interface JiraProject {
+  key: string;
+  name: string;
+}
+
+export type JiraProjectsResult = { projects: JiraProject[] } | { problem: JiraProblem; error: string };
+
+/** Ключ проекта Jira, найденный в ветках репозиториев, и сколько веток его называют. */
+export interface JiraSuggestion {
+  key: string;
+  count: number;
 }
 
 export type JiraDetailsResult = { details: JiraDetails } | { problem: JiraProblem; error: string };
@@ -161,6 +177,40 @@ export function parseDetails(stdout: string): JiraDetails | null {
   return { issue, comments, total: typeof block.total === 'number' ? block.total : comments.length };
 }
 
+/**
+ * `jira project list`: таблица через табуляцию (KEY, NAME, TYPE, LEAD; пустые колонки добиты табами), флагов --plain и --raw у команды нет.
+ * Нужны ключ и название; строка заголовка и строки без ключа по форме пропускаются.
+ */
+export function parseProjects(stdout: string): JiraProject[] {
+  const out: JiraProject[] = [];
+  for (const line of clean(stdout).split('\n')) {
+    const cells = line.split('\t').map((cell) => cell.trim()).filter((cell) => cell !== '');
+    const key = cells[0] ?? '';
+    if (!PROJECT_KEY.test(key) || (key === 'KEY' && cells[1] === 'NAME')) continue;
+    out.push({ key: key.toUpperCase(), name: cells[1] ?? '' });
+  }
+  return out;
+}
+
+const BRANCH_KEY = /(?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_]*)-\d+(?![0-9])/g;
+
+/** Проекты Jira, чьи ключи стоят в именах веток (`feature/dex-12-fix`): только те, что есть в known (иначе `utf-8` стал бы «проектом UTF»); частые первыми. */
+export function suggestKeys(branches: readonly string[], known: ReadonlySet<string>): JiraSuggestion[] {
+  const count = new Map<string, number>();
+  for (const branch of branches) {
+    const seen = new Set<string>();
+    for (const match of branch.matchAll(BRANCH_KEY)) seen.add(match[1].toUpperCase());
+    for (const key of seen) if (known.has(key)) count.set(key, (count.get(key) ?? 0) + 1);
+  }
+  return [...count].map(([key, n]) => ({ key, count: n })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+/** Время из jira-cli (`+0300` без двоеточия) в миллисекунды; не разобралось - 0. */
+export function timeOf(value: string): number {
+  const ms = Date.parse(value.replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
 // ---------- аргументы ----------
 
 const projectArgs = (project: string): string[] => (project === '' ? [] : ['-p', project]);
@@ -188,6 +238,8 @@ export function parseKeys(stdout: string): Set<string> {
 export const jiraViewArgs = (key: string, project: string): string[] => [
   'issue', 'view', key, '--raw', '--comments', String(DETAIL_COMMENTS), ...projectArgs(project),
 ];
+
+export const jiraProjectsArgs = (): string[] => ['project', 'list'];
 
 export const jiraOpenArgs = (key: string, project: string): string[] => ['open', key, '--no-browser', ...projectArgs(project)];
 

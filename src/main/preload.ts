@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DirEntry } from './files';
 import type { Branches } from './git';
 import type { HistoryEntry } from './history';
-import type { JiraDetailsResult, JiraListResult, JiraStatus } from './jira';
+import type { JiraDetailsResult, JiraListResult, JiraProjectsResult, JiraStatus, JiraSuggestion } from './jira';
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsProblem, ProjectsState } from './projects';
 import type { TaskDetailsResult } from './task-details';
@@ -29,6 +29,8 @@ const api = {
   openTask: (ref: TaskRef): Promise<{ error?: string }> => ipcRenderer.invoke('tasks:open', ref),
   jiraStatus: (): Promise<JiraStatus> => ipcRenderer.invoke('jira:status'),
   listJira: (projectId: string, recheck: boolean): Promise<JiraListResult> => ipcRenderer.invoke('jira:list', projectId, recheck),
+  jiraProjects: (recheck: boolean): Promise<JiraProjectsResult> => ipcRenderer.invoke('jira:projects', recheck),
+  jiraSuggest: (repos: string[]): Promise<JiraSuggestion[]> => ipcRenderer.invoke('jira:suggest', repos),
   jiraDetails: (projectId: string, key: string): Promise<JiraDetailsResult> => ipcRenderer.invoke('jira:details', projectId, key),
   openJira: (projectId: string, key: string): Promise<{ error?: string }> => ipcRenderer.invoke('jira:open', projectId, key),
   listMrs: (projectId: string, filter: MrFilter, tracked: MrRef[], recheck: boolean): Promise<MrListResult> =>
