@@ -225,7 +225,7 @@ async function main() {
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(new File(['x'], 'x.txt'));
       const event = new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true });
-      document.querySelector('#status-bar').dispatchEvent(event);
+      document.querySelector('#side-tabs').dispatchEvent(event);
       result[type] = { prevented: event.defaultPrevented, effect: dataTransfer.dropEffect };
     }
     return result;
