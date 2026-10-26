@@ -82,7 +82,7 @@ README со значком, навигацией и разделами; сайт
 - **rationale:** reason - справка шире README; assumptions - версии Astro 7.3.8 и Starlight 0.42.6 как у ai-kit;
   relationships - FR-6003; design constraints - новых зависимостей приложения нет, зависимости сайта в `site/` с точными
   версиями.
-- **verification:** испытание - `npm run build && npm run verify` в `site/` (22 страницы, 921 ссылка, ошибок нет),
+- **verification:** испытание - `npm run build && npm run verify` в `site/` (22 страницы, 924 ссылки, ошибок нет),
   `npm run check`; демонстрация - просмотр собранных страниц.
 - **класс:** Functions. **origin:** source.
 
