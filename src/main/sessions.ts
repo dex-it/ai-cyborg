@@ -113,6 +113,8 @@ export class SessionManager {
       watcher: fs.watch(eventsFile, () => this.readEvents(session)),
     };
     this.sessions.set(id, session);
+    // kqueue (macOS) взводит наблюдателя на следующем витке цикла: запись между spawn и взводом событие не даёт и иначе осталась бы непрочитанной.
+    setImmediate(() => this.readEvents(session));
     proc.onData((data) => this.emit('session:data', { id, data }));
     proc.onExit(({ exitCode }) => {
       session.watcher.close();
