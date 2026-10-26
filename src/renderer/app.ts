@@ -19,6 +19,7 @@ import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './
 import { TreeView, type TreeRoot } from './tree';
 import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize } from './font-size';
+import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 
 interface FileTab {
   viewer: FileViewer;
@@ -54,6 +55,9 @@ interface Session {
 }
 
 const api = window.cyborg;
+const mac = isMac(api.platform);
+const commandKey = (event: ModifierState): boolean => hasCommandKey(event, mac);
+const newSessionShortcut = shortcut(mac, 'Shift', 'N');
 const sidebar = byId('sidebar');
 const projectSelect = byId<HTMLSelectElement>('project-select');
 const treeEl = byId('tree');
@@ -61,6 +65,7 @@ const treeTitle = byId('tree-title');
 const treeMeta = byId('tree-meta');
 const sessionList = byId('session-list');
 const newSessionButton = byId<HTMLButtonElement>('new-session');
+newSessionButton.title = `Новая сессия Claude Code (${newSessionShortcut})`;
 const sessionsEl = byId('sessions');
 const empty = byId('empty');
 const repoMenu = byId('repo-menu');
@@ -299,7 +304,7 @@ function showNoSession(): void {
   tree?.setRoots(project!.repos.map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' })));
   void renderProjectTree(false);
   empty.replaceChildren(
-    ...(projectHint() ?? ['Сессий нет.', '«+ CC» или Ctrl+Shift+N — запустить Claude Code в репозитории проекта.']).map((text) =>
+    ...(projectHint() ?? ['Сессий нет.', `«+ CC» или ${newSessionShortcut} — запустить Claude Code в репозитории проекта.`]).map((text) =>
       el('p', '', text),
     ),
   );
@@ -450,12 +455,13 @@ function createTerminal(id: number): Terminal {
       return false;
     }
     if (event.type !== 'keydown') return true;
-    if (event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
+    // На macOS Cmd+C/V выполняют пункты меню Electron (Copy/Paste): xterm копирует выделение и принимает вставку сам.
+    if (!mac && isClipboardKey(event, 'KeyC')) {
       const selection = term.getSelection();
       if (selection) void navigator.clipboard.writeText(selection);
       return false;
     }
-    if (event.ctrlKey && event.shiftKey && event.code === 'KeyV') {
+    if (!mac && isClipboardKey(event, 'KeyV')) {
       void navigator.clipboard.readText().then((text) => term.paste(text));
       return false;
     }
@@ -556,7 +562,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   else stripTab.hidden = true;
 }
 
-/** Зона броска пути: терминал и вкладка Claude. Файл ОС и строка дерева вставляются через term.paste, как Ctrl+Shift+V. */
+/** Зона броска пути: терминал и вкладка Claude. Файл ОС и строка дерева вставляются через term.paste, как вставка с клавиатуры. */
 function bindPathDrop(s: Session, target: HTMLElement): void {
   target.addEventListener('dragover', (event) => {
     if (s.exited || !event.dataTransfer || !acceptsDrop(event.dataTransfer.types)) return;
@@ -919,12 +925,12 @@ window.addEventListener(
   'keydown',
   (event) => {
     if (event.key === 'Escape') repoMenu.hidden = projectMenu.hidden = true;
-    if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key === '0') {
+    if (commandKey(event) && !event.shiftKey && !event.altKey && event.key === '0') {
       event.preventDefault();
       event.stopPropagation();
       setFontSize(DEFAULT_FONT_SIZE);
     }
-    if (event.ctrlKey && event.shiftKey && event.code === 'KeyN') {
+    if (commandKey(event) && event.shiftKey && event.code === 'KeyN') {
       event.preventDefault();
       event.stopPropagation();
       requestSession();
@@ -951,11 +957,11 @@ function zoomTree(): void {
 }
 zoomTree();
 
-// В capture до xterm: иначе Ctrl+колесо прокрутит историю терминала.
+// В capture до xterm: иначе колесо с клавишей команд прокрутит историю терминала.
 window.addEventListener(
   'wheel',
   (event) => {
-    if (!event.ctrlKey) return;
+    if (!commandKey(event)) return;
     event.preventDefault();
     event.stopPropagation();
     setFontSize(stepFontSize(fontSize, event.deltaY));
