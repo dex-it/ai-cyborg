@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/icon.png" alt="Cyborg" width="128" height="128">
+  <img src="assets/icon.svg" alt="AICyborg" width="128" height="128">
 </p>
 
-<h1 align="center">Cyborg</h1>
+<h1 align="center">AICyborg</h1>
 
 <p align="center">
   Одно окно для нескольких сессий Claude Code.
