@@ -1,5 +1,6 @@
 // Замер времени загрузки панели на реальном проекте: node scripts/measure.mjs [имя проекта, по умолчанию Upcore].
-// Читает projects.json и trackers.json из CYBORG_USERDATA (по умолчанию ~/.config/cyborg), ничего не пишет:
+// Читает projects.json и trackers.json из CYBORG_USERDATA (по умолчанию каталог данных Electron: ~/Library/Application Support/cyborg
+// на macOS, $XDG_CONFIG_HOME/cyborg или ~/.config/cyborg на Linux), ничего не пишет:
 // бандл собирается во временный каталог вне репозитория и удаляется.
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -15,7 +16,9 @@ import { gitRemotes } from './src/main/git';
 import { MrsService } from './src/main/mrs-service';
 import { createCliRunner, TrackerSettingsStore, TrackersService } from './src/main/trackers';
 
-const userData = process.env.CYBORG_USERDATA || path.join(process.env.HOME || '', '.config', 'cyborg');
+const home = process.env.HOME || '';
+const configHome = process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support') : process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+const userData = process.env.CYBORG_USERDATA || path.join(configHome, 'cyborg');
 const name = process.argv[2] || 'Upcore';
 const fail = (message) => { console.error(message); process.exit(1); };
 

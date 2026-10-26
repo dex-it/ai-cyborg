@@ -441,7 +441,7 @@ function makeTab(className: string, label: string, onClose?: () => void): HTMLEl
 
 function createTerminal(id: number): Terminal {
   const term = new Terminal({
-    fontFamily: "'JetBrains Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
+    fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
     fontSize,
     cursorBlink: true,
     scrollback: 10000,
