@@ -1,15 +1,28 @@
 # Экшены в workflow закреплены по SHA, а зависимости сайта - точными версиями: без Dependabot они не обновятся.
+# Раз в месяц и одним PR на экосистему: обновления сайта не засоряют список PR репозитория.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     commit-message:
       prefix: "CI"
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /site
     schedule:
-      interval: weekly
+      interval: monthly
     commit-message:
       prefix: "Сайт"
+    open-pull-requests-limit: 1
+    groups:
+      site:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # @astrojs/check допускает только TypeScript 5 и 6 (peer-зависимость): с 7 установка падает.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
