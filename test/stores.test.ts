@@ -76,6 +76,118 @@ describe('ProjectStore: пути репозиториев', () => {
   });
 });
 
+describe('ProjectStore: повреждённый файл (ADR-0004, п.4)', () => {
+  const at = new Date('2026-10-26T08:15:30.123Z');
+  const make = (now: () => Date = () => at) => new ProjectStore(path.join(dir, 'projects.json'), undefined, now);
+  const copies = () => fs.readdirSync(dir).filter((name) => name.startsWith('projects.json.corrupt-')).sort();
+  const empty: ProjectsState = { projects: [], lastProjectId: null };
+  // Невалидный UTF-8 в середине: копия должна совпасть с файлом по байтам, а не по тексту.
+  const garbage = Buffer.concat([Buffer.from('{"projects":[{"id":"1","name":"Важный'), Buffer.from([0xff, 0xfe]), Buffer.from('"')]);
+
+  it('нет файла - пустой перечень, замечаний и копий нет', () => {
+    const store = make();
+    assert.deepEqual(store.load(), empty);
+    assert.equal(store.problem(), null);
+    assert.deepEqual(fs.readdirSync(dir), []);
+  });
+
+  it('исправный файл - замечаний нет', () => {
+    const store = make();
+    store.save(empty);
+    assert.deepEqual(store.load(), empty);
+    assert.equal(store.problem(), null);
+    assert.deepEqual(copies(), []);
+  });
+
+  it('повреждённый JSON: пустой перечень, копия с теми же байтами, исходный файл цел', () => {
+    const file = path.join(dir, 'projects.json');
+    fs.writeFileSync(file, garbage);
+    const store = make();
+    assert.deepEqual(store.load(), empty);
+    assert.deepEqual(copies(), ['projects.json.corrupt-20261026T081530']);
+    const copy = path.join(dir, copies()[0]);
+    assert.ok(fs.readFileSync(copy).equals(garbage));
+    assert.ok(fs.readFileSync(file).equals(garbage));
+    const problem = store.problem();
+    assert.equal(problem?.kind, 'corrupt');
+    assert.equal(problem?.copy, copy);
+    assert.ok(problem?.detail);
+  });
+
+  for (const [name, text] of [
+    ['корень - массив', '[]'],
+    ['корень - null', 'null'],
+    ['корень - число', '7'],
+    ['пустой файл', ''],
+    ['нет поля projects', '{}'],
+    ['projects не массив', '{"projects":{}}'],
+    ['проект не объект', '{"projects":[1]}'],
+    ['проект null', '{"projects":[null]}'],
+  ]) {
+    it(`неверная форма (${name}) - как повреждение`, () => {
+      fs.writeFileSync(path.join(dir, 'projects.json'), text);
+      const store = make();
+      assert.deepEqual(store.load(), empty);
+      assert.equal(store.problem()?.kind, 'corrupt');
+      assert.equal(fs.readFileSync(path.join(dir, copies()[0]), 'utf8'), text);
+    });
+  }
+
+  it('многократное чтение того же файла копий не плодит', () => {
+    fs.writeFileSync(path.join(dir, 'projects.json'), garbage);
+    const store = make();
+    for (let i = 0; i < 5; i++) store.load();
+    assert.equal(copies().length, 1);
+  });
+
+  it('файл изменился и снова повреждён - новая копия, прежняя не тронута; одна секунда - суффикс, не перезапись', () => {
+    const file = path.join(dir, 'projects.json');
+    const store = make();
+    fs.writeFileSync(file, '{one');
+    store.load();
+    fs.writeFileSync(file, '{two');
+    store.load();
+    assert.deepEqual(copies(), ['projects.json.corrupt-20261026T081530', 'projects.json.corrupt-20261026T081530-1']);
+    assert.equal(fs.readFileSync(path.join(dir, copies()[0]), 'utf8'), '{one');
+    assert.equal(fs.readFileSync(path.join(dir, copies()[1]), 'utf8'), '{two');
+  });
+
+  it('старт приложения: save поверх повреждённого файла не теряет исходные байты', () => {
+    const file = path.join(dir, 'projects.json');
+    fs.writeFileSync(file, garbage);
+    const store = make();
+    store.save(store.load());
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), empty);
+    assert.ok(fs.readFileSync(path.join(dir, copies()[0])).equals(garbage));
+    // после замены файл исправен, но замечание остаётся на всё время работы: интерфейс спрашивает его после первых сохранений
+    assert.deepEqual(store.load(), empty);
+    assert.equal(store.problem()?.kind, 'corrupt');
+    assert.equal(copies().length, 1);
+  });
+
+  const canChmod = process.platform !== 'win32' && process.getuid?.() !== 0;
+  it('файл не читается (права): замечание unreadable, save отказывает, файл не тронут', { skip: canChmod ? false : 'нужны POSIX-права и не root: chmod 000 не закрывает файл от root и в Windows' }, () => {
+    const file = path.join(dir, 'projects.json');
+    fs.writeFileSync(file, '{"projects":[]}');
+    fs.chmodSync(file, 0o000);
+    try {
+      const store = make();
+      assert.deepEqual(store.load(), empty);
+      assert.equal(store.problem()?.kind, 'unreadable');
+      assert.equal(store.problem()?.detail, 'EACCES');
+      assert.throws(() => store.save(empty), /не прочитан/);
+      assert.deepEqual(copies(), []);
+      fs.chmodSync(file, 0o600);
+      assert.equal(fs.readFileSync(file, 'utf8'), '{"projects":[]}');
+      // доступ вернули - чтение и запись снова работают
+      assert.deepEqual(store.load(), empty);
+      assert.doesNotThrow(() => store.save(empty));
+    } finally {
+      fs.chmodSync(file, 0o600);
+    }
+  });
+});
+
 describe('ProjectStore: источники задач проекта', () => {
   const base = { id: '1', name: 'n', description: 'd', repos: ['/a'] };
   const write = (projects: object[]) => fs.writeFileSync(path.join(dir, 'projects.json'), JSON.stringify({ projects, lastProjectId: null }));
