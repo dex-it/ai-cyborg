@@ -4,7 +4,7 @@ import { byId } from './dom';
 import { createJsonEditor, type JsonEditor } from './viewer';
 
 export interface ConfigEditorDeps {
-  /** Начало id элементов диалога: `<prefix>-dialog`, `-editor`, `-problems`, `-error`, `-save`, `-cancel`. */
+  /** Начало id элементов диалога: `<prefix>-dialog`, `-editor`, `-problems`, `-error`, `-save`, `-cancel`, `-reveal`. */
   prefix: string;
   /** Текст для редактора: действующий набор. */
   load(): Promise<string>;
@@ -14,6 +14,8 @@ export interface ConfigEditorDeps {
   problems(): readonly string[];
   /** Записано: потребитель перечитывает файл. */
   saved(): void;
+  /** Файл в приложении системы по умолчанию. */
+  reveal(): Promise<void>;
 }
 
 export function initConfigEditor(deps: ConfigEditorDeps): { open(): Promise<void> } {
@@ -54,6 +56,7 @@ export function initConfigEditor(deps: ConfigEditorDeps): { open(): Promise<void
   }
 
   saveButton.addEventListener('click', () => void save());
+  byId(`${deps.prefix}-reveal`).addEventListener('click', () => void deps.reveal());
   byId(`${deps.prefix}-cancel`).addEventListener('click', () => {
     if (discardable()) dialog.close();
   });

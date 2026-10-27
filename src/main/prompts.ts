@@ -60,7 +60,7 @@ export interface ParsedPrompts {
 }
 
 /**
- * Поле `prompts` файла воркспейса. Негодная запись пропускается, причина - в problems; запись с id, которого нет, и лишнее поле называются.
+ * Поле файла промптов `prompts.json` в userData. Негодная запись пропускается, причина - в problems; запись с id, которого нет, и лишнее поле называются.
  * Подстановка, которой у промпта нет (`{mr_ulr}`), - ошибка: в запрос к модели ушёл бы литерал.
  */
 export function parsePrompts(raw: unknown): ParsedPrompts {
@@ -153,11 +153,11 @@ export function savePromptsText(text: unknown, store: { savePrompts(prompts: Rec
  */
 export function promptTemplate(id: PromptId, raw: unknown): string {
   const parsed = parsePrompts(raw);
-  if (raw !== undefined && !isRecord(raw)) throw new Error(`${parsed.problems[0]}. Исправьте файл воркспейса или меню «Воркспейс → Промпты кнопок…».`);
+  if (raw !== undefined && !isRecord(raw)) throw new Error(`${parsed.problems[0]}. Исправьте файл промптов или меню «Воркспейс → Промпты кнопок…».`);
   const own = parsed.prompts[id];
   if (own) return own.text;
   const problem = parsed.problems.find((p) => p.startsWith(`Промпт «${id}»`));
-  if (problem) throw new Error(`${problem}. Исправьте файл воркспейса или меню «Воркспейс → Промпты кнопок…».`);
+  if (problem) throw new Error(`${problem}. Исправьте файл промптов или меню «Воркспейс → Промпты кнопок…».`);
   return DEFAULT_PROMPTS[id].text;
 }
 

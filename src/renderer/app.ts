@@ -31,6 +31,7 @@ import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize } from './font-size';
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
+import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 
 interface FileTab {
   viewer: FileViewer;
@@ -478,12 +479,21 @@ async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
   treeEl.scrollTop = scroll;
 }
 
-async function showPreview(path: string, root: TreeRoot): Promise<void> {
-  closePreview();
+function fileHeader(path: string, root: TreeRoot): HTMLElement {
   const rel = path.startsWith(`${root.path}/`) ? path.slice(root.path.length + 1) : path;
   const header = el('div', 'file-header');
-  header.append(el('span', 'file-root', root.label), el('span', '', ` / ${rel}`));
-  header.title = path;
+  const name = el('span', 'file-name', ` / ${rel}`);
+  name.title = path;
+  const reveal = el('button', 'file-reveal', 'Открыть в системе');
+  reveal.title = 'Открыть файл приложением системы по умолчанию';
+  reveal.addEventListener('click', () => void api.openPath(path));
+  header.append(el('span', 'file-root', root.label), name, reveal);
+  return header;
+}
+
+async function showPreview(path: string, root: TreeRoot): Promise<void> {
+  closePreview();
+  const header = fileHeader(path, root);
   const close = el('button', 'close', '×');
   close.title = 'Закрыть';
   close.addEventListener('click', () => closePreview());
@@ -581,6 +591,8 @@ function makeTab(className: string, label: string, onClose?: () => void): HTMLEl
   return tab;
 }
 
+const linkOpeners: LinkOpeners = { openPath: (path) => void api.openPath(path), openUrl: (url) => void api.openUrl(url) };
+
 function createTerminal(id: number): Terminal {
   const term = new Terminal({
     fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
@@ -589,7 +601,9 @@ function createTerminal(id: number): Terminal {
     // Claude Code сам рисует выделение фоном ANSI blue, не меняя цвет текста - без поправки текст сливается с фоном.
     minimumContrastRatio: 4.5,
     theme: terminalTheme(),
+    linkHandler: osc8Handler(linkOpeners),
   });
+  term.registerLinkProvider(termLinkProvider(term, linkOpeners));
   term.onData((data) => {
     // Прерывание хода Stop-хук не шлёт; ложное снятие (Esc закрыл подсказку) вернёт следующий PostToolUse.
     if (data === '\x1b' || data === '\x03') findSession(id)?.stripTab.classList.remove('busy');
@@ -802,10 +816,7 @@ function openFile(s: Session, path: string, root: TreeRoot): void {
     return;
   }
   const pane = el('div', 'pane file');
-  const rel = path.startsWith(`${root.path}/`) ? path.slice(root.path.length + 1) : path;
-  const header = el('div', 'file-header');
-  header.append(el('span', 'file-root', root.label), el('span', '', ` / ${rel}`));
-  header.title = path;
+  const header = fileHeader(path, root);
   const body = el('div', 'file-body');
   pane.append(header, body);
   s.innerPanes.append(pane);

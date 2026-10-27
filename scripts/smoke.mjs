@@ -484,17 +484,17 @@ async function main() {
   await setPrompts({ ...shown, 'jira.start': { text: 'Смоук-промпт {jira_key}', description: 'для проверки' } });
   await ev('document.querySelector("#prompts-save").click()');
   await waitFor('диалог промптов закрыт сохранением', async () => (await ev('document.querySelector("#prompts-dialog").open')) === false);
-  const afterSave = JSON.parse(readFileSync(legacyFile, 'utf8'));
-  assert.equal(afterSave.prompts['jira.start'].text, 'Смоук-промпт {jira_key}', 'промпт не лёг в файл воркспейса');
-  assert.deepEqual(afterSave.commands, beforePrompts.commands, 'запись промптов затёрла кнопки');
-  assert.deepEqual(afterSave.projects, beforePrompts.projects, 'запись промптов затёрла проекты');
+  const promptsFile = join(userData, 'prompts.json');
+  const afterSave = JSON.parse(readFileSync(promptsFile, 'utf8'));
+  assert.equal(afterSave['jira.start'].text, 'Смоук-промпт {jira_key}', 'промпт не лёг в общий файл промптов');
+  assert.deepEqual(JSON.parse(readFileSync(legacyFile, 'utf8')), beforePrompts, 'запись промптов тронула файл воркспейса');
   assert.match(await startedWith('SMK-3'), /Смоук-промпт SMK-3/, 'правка промпта не дошла до первого сообщения сессии');
   // Негодная запись, правленная руками, не заменяется встроенной молча: сессия не стартует и называет причину.
-  writeFileSync(legacyFile, JSON.stringify({ ...afterSave, prompts: { 'jira.start': { text: '-p {jira_key}' } } }));
+  writeFileSync(promptsFile, JSON.stringify({ 'jira.start': { text: '-p {jira_key}' } }));
   const refused = await ev(`window.cyborg.createSession(${JSON.stringify(repo)}, [], { jira: { key: "SMK-4" } }).then(() => "стартовала", (error) => String(error))`);
   assert.match(refused, /text не может начинаться с «-»/, 'негодный промпт из файла не назван');
   assert.ok(!readFileSync(fakeArgsLog, 'utf8').includes('SMK-4'), 'сессия с негодным промптом стартовала');
-  writeFileSync(legacyFile, JSON.stringify(afterSave));
+  writeFileSync(promptsFile, JSON.stringify(afterSave));
   log('промпты кнопок: действующий набор в Monaco, проверка, правка доходит до сессии, негодный промпт не стартует молча');
 
   // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».

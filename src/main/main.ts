@@ -6,6 +6,8 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, s
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { saveCommandsText } from './commands';
 import { savePromptsText } from './prompts';
+import { PromptStore } from './prompt-store';
+import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
@@ -58,7 +60,8 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
 });
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
-type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands' | 'loadPrompts' | 'savePrompts'>;
+const prompts = new PromptStore(path.join(userData, 'prompts.json'));
+type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
 // Инстанс без воркспейса (отмена окна первого запуска): проектов нет, писать некуда.
 const noWorkspace: Projects = {
   load: () => ({ projects: [], lastProjectId: null }),
@@ -68,10 +71,6 @@ const noWorkspace: Projects = {
   problem: () => null,
   loadCommands: () => undefined,
   saveCommands: () => {
-    throw new Error('Воркспейс не открыт');
-  },
-  loadPrompts: () => undefined,
-  savePrompts: () => {
     throw new Error('Воркспейс не открыт');
   },
 };
@@ -151,6 +150,9 @@ function createWindow(bounds?: Electron.Rectangle): void {
   win.on('close', (event) => {
     if (!quitting && !confirmEndSessions()) event.preventDefault();
   });
+  // Ссылки открываются браузером системы через url:open, а не окном Electron с preload и доступом к каналам.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event) => event.preventDefault());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
@@ -198,12 +200,25 @@ ipcMain.handle('projects:problem', () => {
 ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
 ipcMain.handle('commands:load', () => projects.loadCommands());
 ipcMain.handle('commands:save', (_event, text: unknown) => saveCommandsText(text, projects, process.platform === 'darwin'));
-ipcMain.handle('prompts:load', () => projects.loadPrompts());
-ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, projects));
+ipcMain.handle('prompts:load', () => prompts.read());
+ipcMain.handle('path:open', async (_event, file: unknown) => {
+  const target = openablePath(file, os.homedir());
+  if ('error' in target) await tell({ type: 'warning', message: target.error });
+  else await showInSystemApp(target.path);
+});
+ipcMain.handle('url:open', async (_event, url: unknown) => {
+  const target = webUrl(url);
+  if (target) await shell.openExternal(target);
+});
+ipcMain.handle('config:reveal', (_event, kind: unknown) => {
+  const file = kind === 'prompts' ? prompts.file : kind === 'commands' ? current.file : null;
+  if (file) return showInSystemApp(file);
+});
+ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, prompts));
 ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?: unknown) => {
   if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
   if (start === undefined) return sessions.create(cwd as string, addDirs as string[]);
-  const prompt = validateSessionStart(start, projects.loadPrompts());
+  const prompt = validateSessionStart(start, prompts.load());
   if (!prompt) throw new Error('Некорректный старт сессии');
   return sessions.create(cwd as string, addDirs as string[], prompt);
 });
@@ -364,6 +379,17 @@ const fail = (reason: string): void => {
 
 function quitWithConfirm(): void {
   if (confirmEndSessions()) app.quit();
+}
+
+const tell = (options: Electron.MessageBoxOptions) => (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
+
+async function showInSystemApp(file: string): Promise<void> {
+  if (!fs.existsSync(file)) {
+    await tell({ type: 'info', message: `Файла ${file} ещё нет`, detail: 'Действуют встроенные значения. Сохраните их в редакторе, чтобы файл появился.' });
+    return;
+  }
+  const error = await shell.openPath(file);
+  if (error) await tell({ type: 'error', message: `Не удалось открыть ${file}`, detail: error });
 }
 
 function rebuildMenu(): void {
