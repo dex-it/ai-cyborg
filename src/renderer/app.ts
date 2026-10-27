@@ -14,6 +14,7 @@ import { windowTitle } from './title';
 import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
 import { initSourcesSection } from './sources';
 import { CommandBars, type CommandTarget } from './command-bar';
+import { pickPr } from './command-values';
 import { initCommandEditor } from './command-editor';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
@@ -714,16 +715,16 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   else stripTab.hidden = true;
 }
 
-/** PR/MR сессии: из которого она начата, иначе единственный открытый свой PR/MR ветки сессии. */
+/** PR/MR сессии: из которого она начата, иначе открытый PR/MR ветки сессии среди всех PR/MR проекта (свой приоритетнее чужого). */
 async function prOfSession(s: Session, branch: string | null): Promise<string> {
   if (s.mr) return s.mr.url;
   if (!branch) throw new Error('у сессии нет ветки git');
-  const list = await api.listMrs(s.project.id, 'author', [], false);
+  const list = await api.listMrs(s.project.id, 'all', [], false);
   if (list.error) throw new Error(`не удалось получить PR/MR: ${list.error}`);
   if (!list.enabled.github && !list.enabled.gitlab) throw new Error('в проекте не включены GitHub и GitLab: PR/MR не найти');
-  const found = list.mrs.filter((mr) => mr.state === 'open' && mr.sourceBranch === branch && mr.repos.includes(s.repo));
-  if (found.length === 1) return found[0].url;
-  throw new Error(found.length ? `у ветки ${branch} открытых PR/MR: ${found.length}, подставить нечего однозначно` : `у ветки ${branch} нет открытого PR/MR от вас`);
+  const picked = pickPr(list.mrs, branch, s.repo);
+  if ('reason' in picked) throw new Error(picked.reason);
+  return picked.url;
 }
 
 /** Подстановки кнопок-команд (FR-12003): ветка - git сессии сейчас, PR - начальный либо найденный по ветке, задача - из которой начата сессия. */

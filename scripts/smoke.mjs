@@ -14,7 +14,8 @@ const root = resolve(import.meta.dirname, '..');
 const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const electronArgs = process.argv.slice(2);
 const TIMEOUT_MS = 20_000;
-const CDP_TIMEOUT_MS = 15_000;
+// Вызов DevTools под нагрузкой машины (свопинг, чужие процессы, Monaco при первом показе) отвечает дольше 15 с: на CI и на ноутбуке это давало случайные падения.
+const CDP_TIMEOUT_MS = 30_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'cyborg-smoke-')));
