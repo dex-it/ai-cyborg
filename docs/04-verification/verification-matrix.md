@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 109; с автотестом - 96, из них со smoke - 13; только smoke - 6; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 111; с автотестом - 97, из них со smoke - 13; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -122,3 +122,5 @@ date: 2026-10-26
 | FR-12004 | Сочетание клавиш кнопки | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `scripts/smoke.mjs` |
 | FR-12005 | Набор кнопок и проверка файла | 12-command-buttons | автотест | `test/commands.test.ts`, `test/commands-store.test.ts` |
 | FR-12006 | Правка набора в Monaco и подхват без перезапуска | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/commands-store.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-12007 | Инструкция сессии и разбор предложений модели | 12-command-buttons | автотест | `test/suggestions.test.ts`, `src/main/sessions.test.ts`, `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
+| FR-12008 | Предложенные кнопки на полосе | 12-command-buttons | smoke | `scripts/smoke.mjs` |
