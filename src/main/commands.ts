@@ -12,6 +12,8 @@ export interface CommandButton {
 export const MAX_COMMANDS = 30;
 export const LABEL_MAX = 40;
 export const TEXT_MAX = 2000;
+/** Предел текста файла кнопок, принимаемого главным процессом от интерфейса. */
+export const MAX_COMMANDS_TEXT = 200_000;
 
 /** Кнопки по умолчанию, общие для всех воркспейсов: фразы, которыми Claude Code понимает типовое действие. */
 export const DEFAULT_COMMANDS: readonly CommandButton[] = [
@@ -175,6 +177,19 @@ export function checkCommandsText(text: string, mac: boolean): { ok: true; comma
 }
 
 export const commandsToText = (raw: unknown): string => JSON.stringify(Array.isArray(raw) ? raw : [], null, 2);
+
+/** Запись из редактора: текст проверяется заново (интерфейсу не доверяют), ошибка проверки или записи - в ответе, а не исключением. */
+export function saveCommandsText(text: unknown, store: { saveCommands(commands: unknown[]): void }, mac: boolean): { error?: string } {
+  if (typeof text !== 'string' || text.length > MAX_COMMANDS_TEXT) return { error: 'Некорректный текст кнопок' };
+  const checked = checkCommandsText(text, mac);
+  if (!checked.ok) return { error: checked.error };
+  try {
+    store.saveCommands(checked.commands);
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+  return {};
+}
 
 // ---------- подстановки ----------
 

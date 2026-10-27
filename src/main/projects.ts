@@ -179,7 +179,37 @@ export class ProjectStore {
 
   save(state: ProjectsState): void {
     if (this.unreadable) throw new Error(`Файл проектов не прочитан (${this.lastProblem?.detail}), запись затёрла бы его`);
-    writeJsonAtomic(this.file, state);
+    // Кнопки команд (фича 12) принадлежат своему каналу: интерфейс их не держит, а запись проектов их не теряет.
+    const commands = this.readFileObject()?.commands;
+    writeJsonAtomic(this.file, commands === undefined ? state : { ...state, commands });
+  }
+
+  /** Поле `commands` файла воркспейса как записано; нет файла, он повреждён или поля нет - undefined. */
+  loadCommands(): unknown {
+    return this.readFileObject()?.commands;
+  }
+
+  /** Пишет только `commands`, остальное в файле (проекты, прочие поля) остаётся. Повреждённый и не прочитанный файл не затирается. */
+  saveCommands(commands: unknown[]): void {
+    if (this.unreadable) throw new Error(`Файл проектов не прочитан (${this.lastProblem?.detail}), запись затёрла бы его`);
+    let base: Record<string, unknown>;
+    try {
+      base = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+      if (typeof base !== 'object' || base === null || Array.isArray(base)) throw new SyntaxError('корень файла не объект');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') base = { projects: [], lastProjectId: null };
+      else throw new Error(`Файл воркспейса не разобран (${(error as Error).message}): исправьте его, кнопки записаны не были`);
+    }
+    writeJsonAtomic(this.file, { ...base, commands });
+  }
+
+  private readFileObject(): Record<string, unknown> | null {
+    try {
+      const parsed: unknown = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Копия байт повреждённого файла рядом с ним; существующие копии не перезаписываются. Те же байты - прежняя копия. */
