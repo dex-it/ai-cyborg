@@ -587,7 +587,11 @@ function createTerminal(id: number): Terminal {
     minimumContrastRatio: 4.5,
     theme: terminalTheme(),
   });
-  term.onData((data) => api.input(id, data));
+  term.onData((data) => {
+    // Прерывание хода Stop-хук не шлёт; ложное снятие (Esc закрыл подсказку) вернёт следующий PostToolUse.
+    if (data === '\x1b' || data === '\x03') findSession(id)?.stripTab.classList.remove('busy');
+    api.input(id, data);
+  });
   term.attachCustomKeyEventHandler((event) => {
     // Claude Code понимает ESC+CR как перевод строки; keypress гасится, иначе xterm шлёт по нему свой \r и промпт уходит.
     if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey) {
@@ -844,6 +848,7 @@ api.on<{ id: number; cwd: string }>('session:cwd', async ({ id, cwd }) => {
 let refreshTimer: number | undefined;
 api.on<{ id: number; event?: string }>('session:activity', ({ id, event }) => {
   if (event === 'UserPromptSubmit') notifier.dismiss(id);
+  if (event === 'UserPromptSubmit' || event === 'PostToolUse') findSession(id)?.stripTab.classList.add('busy');
   if (active?.id !== id) return;
   const session = active;
   clearTimeout(refreshTimer);
@@ -854,6 +859,7 @@ api.on<boolean>('notifications:toggle', (enabled) => notifier.setEnabled(enabled
 
 api.on<{ id: number; reason: string }>('session:waiting', ({ id, reason }) => {
   const session = findSession(id);
+  session?.stripTab.classList.remove('busy');
   if (session) notifier.waiting(id, `${sessionTitle(session)} · ${session.project.name}`, reason, session === active && document.hasFocus());
 });
 
@@ -875,6 +881,7 @@ api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
   if (!session) return;
   session.exited = true;
   commandBars.refresh(session.command);
+  session.stripTab.classList.remove('busy');
   notifier.dismiss(id);
   session.term.write(`\r\n\x1b[2m[сессия завершена, код ${exitCode}]\x1b[0m\r\n`);
   updateSessionLabels(session);
