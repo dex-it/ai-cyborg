@@ -77,6 +77,10 @@ chmodSync(fakeClaude, 0o755);
 const fakeGh = join(fakeBin, 'gh');
 writeFileSync(fakeGh, '#!/bin/sh\necho "You are not logged in to any GitHub hosts." >&2\nexit 1\n');
 chmodSync(fakeGh, 0o755);
+// Сессия стартует через `$SHELL -lc`, а login-профиль (на Ubuntu - ~/.profile) ставит ~/.local/bin с настоящим claude впереди подставного.
+const fakeShell = join(fakeBin, 'shell');
+writeFileSync(fakeShell, '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n');
+chmodSync(fakeShell, 0o755);
 
 // Подставной jira: вход есть, одна задача SMK-1 в работе; формы ответов - как у jira-cli 1.7.0 (`--raw`, `--plain`).
 const fakeJira = join(fakeBin, 'jira');
@@ -191,7 +195,8 @@ async function launch(dataDir, args = [], cwd = root) {
   const electron = join(root, 'node_modules', '.bin', 'electron');
   const proc = spawn(electron, [root, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
     cwd,
-    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, FAKE_SUGGEST: fakeSuggest, FAKE_ARGS_LOG: fakeArgsLog },
+    // Смоук, запущенный из сессии Cyborg, унаследовал бы её CYBORG_CWD, и относительный --workspace считался бы не от cwd.
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CYBORG_'))), PATH: `${fakeBin}:${process.env.PATH}`, SHELL: fakeShell, FAKE_SUGGEST: fakeSuggest, FAKE_ARGS_LOG: fakeArgsLog },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';

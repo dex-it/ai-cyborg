@@ -80,6 +80,8 @@ const PARENT_SESSION_VARS = [
 function sessionEnv(extra: Record<string, string>): Record<string, string> {
   const env = { ...(process.env as Record<string, string>) };
   for (const name of PARENT_SESSION_VARS) delete env[name];
+  // Каталог вызова лаунчера: в сессии он перебил бы cwd относительного --workspace у запущенного из неё Cyborg.
+  delete env.CYBORG_CWD;
   return { ...env, ...extra };
 }
 
