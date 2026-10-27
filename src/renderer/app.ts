@@ -722,7 +722,7 @@ async function prOfSession(s: Session, branch: string | null): Promise<string> {
   throw new Error(found.length ? `у ветки ${branch} открытых PR/MR: ${found.length}, подставить нечего однозначно` : `у ветки ${branch} нет открытого PR/MR от вас`);
 }
 
-/** Подстановки кнопок-команд (FR-12004): ветка - git сессии сейчас, PR - начальный либо найденный по ветке, задача - из которой начата сессия. */
+/** Подстановки кнопок-команд (FR-12003): ветка - git сессии сейчас, PR - начальный либо найденный по ветке, задача - из которой начата сессия. */
 async function commandValues(s: Session, needs: Placeholder[]): Promise<PlaceholderValues> {
   const values: PlaceholderValues = {};
   const branch = needs.includes('branch') || needs.includes('pr') ? await api.gitBranch(s.root) : null;
