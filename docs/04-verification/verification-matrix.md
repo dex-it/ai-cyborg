@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 103; с автотестом - 92, из них со smoke - 10; только smoke - 4; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 109; с автотестом - 96, из них со smoke - 13; только smoke - 6; ручная - 2; только осмотр и демонстрация - 5.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -116,3 +116,9 @@ date: 2026-10-26
 | FR-11010 | Только чтение и безопасность аргументов | 11-status-hub | автотест | `test/jira.test.ts`, `test/static-guards.test.ts` |
 | FR-11011 | Отказы `jira-cli` и защита учётной записи | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11012 | Выбор проектов Jira для проекта | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |
+| FR-12001 | Полоса кнопок под терминалом сессии | 12-command-buttons | smoke | `scripts/smoke.mjs` |
+| FR-12002 | Отправка текста кнопки | 12-command-buttons | smoke | `scripts/smoke.mjs` |
+| FR-12003 | Подстановки `{branch}`, `{pr}`, `{task}` | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `scripts/smoke.mjs` |
+| FR-12004 | Сочетание клавиш кнопки | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `scripts/smoke.mjs` |
+| FR-12005 | Набор кнопок и проверка файла | 12-command-buttons | автотест | `test/commands.test.ts`, `test/commands-store.test.ts` |
+| FR-12006 | Правка набора в Monaco и подхват без перезапуска | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/commands-store.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
