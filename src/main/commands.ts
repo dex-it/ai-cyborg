@@ -162,7 +162,7 @@ export function mergeCommands(defaults: readonly CommandButton[], extra: readonl
   return { commands, problems };
 }
 
-/** Текст для редактора и проверка того, что из него вернулось; любая замеченная проблема - отказ, файл не пишется. */
+/** Текст для редактора и проверка того, что из него вернулось; любая замеченная проблема - отказ, файл не пишется. Сочетания должны годиться на обеих системах. */
 export function checkCommandsText(text: string, mac: boolean): { ok: true; commands: unknown[] } | { ok: false; error: string } {
   let raw: unknown;
   try {
@@ -172,7 +172,12 @@ export function checkCommandsText(text: string, mac: boolean): { ok: true; comma
   }
   if (!Array.isArray(raw)) return { ok: false, error: 'Нужен массив кнопок: [ { "label": ..., "text": ... } ]' };
   const parsed = parseCommands(raw, mac);
-  const problems = [...parsed.problems, ...mergeCommands(DEFAULT_COMMANDS, parsed.commands, mac).problems];
+  // Файл переносят между системами: сочетание, которое годится только здесь (CmdOrCtrl+K на macOS), там получило бы замечание.
+  const elsewhere = parsed.commands.flatMap((button) => {
+    const other = button.hotkey ? parseHotkey(button.hotkey, !mac) : null;
+    return other && 'error' in other ? [`«${button.label}»: сочетание ${button.hotkey} не годится на ${mac ? 'Linux и Windows' : 'macOS'}: ${other.error}`] : [];
+  });
+  const problems = [...parsed.problems, ...elsewhere, ...mergeCommands(DEFAULT_COMMANDS, parsed.commands, mac).problems];
   return problems.length ? { ok: false, error: problems.join('\n') } : { ok: true, commands: raw };
 }
 
