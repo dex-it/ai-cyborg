@@ -108,6 +108,8 @@ interface Corpus {
   headings: Map<string, { feature: string; file: string; heading: Heading }>;
   decisions: Map<string, Set<string>>;
   productBr: Heading[];
+  /** Истории фичи: `docs/01-product/NN-слаг/stories/ST-NNNNN-*.md`, критерии с метками `[FR-NNNN]`. */
+  stories: Doc[];
 }
 
 function loadCorpus(root: string): Corpus {
@@ -120,6 +122,12 @@ function loadCorpus(root: string): Corpus {
       if (exists(root, file)) docs.push(load(root, file));
     }
   }
+  const stories = features.flatMap((dir) =>
+    listDir(root, `docs/01-product/${dir}/stories`)
+      .filter((name) => /^ST-\d+.*\.md$/.test(name))
+      .sort()
+      .map((name) => load(root, `docs/01-product/${dir}/stories/${name}`)),
+  );
   const adrs = listDir(root, 'docs/03-architecture/adr')
     .filter((name) => name.endsWith('.md'))
     .sort()
@@ -140,11 +148,11 @@ function loadCorpus(root: string): Corpus {
     if (doc.file === 'docs/01-product/brd.md') productBr = hs;
     for (const heading of hs) if (!index.has(heading.id)) index.set(heading.id, { feature, file: doc.file, heading });
   }
-  return { features, docs, adrs, headings: index, decisions, productBr };
+  return { features, docs, adrs, headings: index, decisions, productBr, stories };
 }
 
 function checkFrontMatter(corpus: Corpus, out: Finding[]): void {
-  for (const doc of [...corpus.docs, ...corpus.adrs]) {
+  for (const doc of [...corpus.docs, ...corpus.adrs, ...corpus.stories]) {
     if (!doc.text.startsWith('---\n')) {
       out.push({ rule: 'front-matter', file: doc.file, message: 'нет front matter' });
       continue;
@@ -188,6 +196,37 @@ function checkUnits(corpus: Corpus, out: Finding[]): void {
       if (first) out.push({ rule: 'unit', file: doc.file, message: `${h.id} заведён повторно (первый раз - ${first})` });
       else seen.set(h.id, doc.file);
       if (featureOfNumber(h.number) !== dir[1]) out.push({ rule: 'unit', file: doc.file, message: `${h.id} не из диапазона фичи ${dir[1]}` });
+    }
+  }
+}
+
+/** Истории: id по имени файла и фиче, метки `[FR-NNNN]` ведут на требования своей фичи, у фичи с историями каждое требование закрыто критерием. */
+function checkStories(corpus: Corpus, out: Finding[]): void {
+  const covered = new Map<string, Set<string>>();
+  for (const story of corpus.stories) {
+    const feature = /docs\/01-product\/(\d\d)-/.exec(story.file)?.[1] ?? '';
+    const id = story.front.id ?? '';
+    if (!/^ST-\d+$/.test(id) || !path.basename(story.file).startsWith(`${id}-`)) {
+      out.push({ rule: 'story', file: story.file, message: `id «${id}» не вида ST-NNNNN либо не совпадает с началом имени файла` });
+    } else if (featureOfNumber(Number(id.slice(3))) !== feature) {
+      out.push({ rule: 'story', file: story.file, message: `${id} не из диапазона фичи ${feature}` });
+    }
+    const labels = [...story.text.matchAll(/\[((?:N?FR)-\d+)\]/g)].map((m) => m[1]);
+    if (!labels.length) out.push({ rule: 'story', file: story.file, message: 'ни один критерий не несёт метки [FR-NNNN]' });
+    const seen = covered.get(feature) ?? new Set<string>();
+    covered.set(feature, seen);
+    for (const label of new Set(labels)) {
+      const unit = corpus.headings.get(label);
+      if (!unit) out.push({ rule: 'story', file: story.file, message: `метка [${label}]: такого требования нет в корпусе` });
+      else if (unit.feature !== feature) out.push({ rule: 'story', file: story.file, message: `метка [${label}]: требование из другой фичи` });
+      else seen.add(label);
+    }
+  }
+  for (const [feature, labels] of covered) {
+    for (const unit of corpus.headings.values()) {
+      if (unit.feature === feature && unit.heading.kind !== 'BR' && !labels.has(unit.heading.id)) {
+        out.push({ rule: 'story', file: unit.file, message: `${unit.heading.id}: у фичи есть истории, но ни один критерий его не закрывает` });
+      }
     }
   }
 }
@@ -280,6 +319,11 @@ function checkCounters(root: string, corpus: Corpus, out: Finding[]): void {
     if (entry.file === 'docs/01-product/brd.md') bump('BR', entry.heading.number);
     else bump(`${entry.feature}.${entry.heading.kind}`, entry.heading.number);
   }
+  for (const story of corpus.stories) {
+    const feature = /docs\/01-product\/(\d\d)-/.exec(story.file)?.[1] ?? '';
+    const number = Number(/^ST-(\d+)/.exec(story.front.id ?? '')?.[1] ?? 0);
+    if (number) bump(`${feature}.ST`, number);
+  }
   for (const adr of corpus.adrs) bump('ADR', Number(/^ADR-(\d+)/.exec(adr.front.id ?? '')?.[1] ?? 0));
   bump('feature', Math.max(0, ...corpus.features.map((f) => Number(featureOf(f)))));
   for (const [key, max] of maxima) {
@@ -371,6 +415,7 @@ export function checkCorpus(root: string): Finding[] {
   checkAdrs(corpus, out);
   checkUnits(corpus, out);
   checkRequirements(root, corpus, out);
+  checkStories(corpus, out);
   checkReferences(root, corpus, out);
   checkCounters(root, corpus, out);
   checkMatrix(root, out);

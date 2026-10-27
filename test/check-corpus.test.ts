@@ -213,3 +213,53 @@ describe('check-corpus: каждое нарушение - находка', () =>
     assert.deepEqual(checkCorpus(root), []);
   });
 });
+
+describe('check-corpus: истории с критериями приёмки', () => {
+  const STORY = 'docs/01-product/01-first/stories/ST-1001-action.md';
+  const story = (ac: string, extra = 'id: ST-1001'): string => `${front(`${extra}\nfeature: 01-first\norigin: derived`)}# ST-1001 Действие\n\n## Acceptance Criteria\n\n${ac}\n`;
+  const withStory = (ac: string, extra?: string): void => {
+    validCorpus();
+    put(STORY, story(ac, extra));
+    put('docs/.req_counter/01.ST', '1001\n');
+    regenerate();
+  };
+  it('история с критерием, закрывающим каждое требование фичи, проходит', () => {
+    withStory('- **AC-1.** Дано: а. Когда: б. Тогда: в. [FR-1001]');
+    assert.deepEqual(checkCorpus(root), []);
+  });
+  it('метка на несуществующее требование - находка', () => {
+    withStory('- **AC-1.** Тогда: в. [FR-1001] [FR-1999]');
+    expectFinding('story', 'FR-1999');
+  });
+  it('метка на требование другой фичи - находка', () => {
+    withStory('- **AC-1.** Тогда: в. [FR-1001]');
+    put('docs/01-product/02-second/srs.md', `${front('feature: 02-second')}# SRS\n\n### FR-2001 Другое\n\n- **Требование:** х.\n- **traced from:** BR-001.\n- **verification:** испытание - \`test/a.test.ts\`.\n`);
+    put('docs/.req_counter/02.FR', '2001\n');
+    put('docs/.req_counter/feature', '2\n');
+    put(STORY, story('- **AC-1.** Тогда: в. [FR-1001] [FR-2001]'));
+    regenerate();
+    expectFinding('story', 'требование из другой фичи');
+  });
+  it('у фичи с историями требование без критерия - находка', () => {
+    withStory('- **AC-1.** Тогда: в. [FR-1001]');
+    change(SRS, '## 13. Usability', '### FR-1002 Ещё\n\n- **Требование:** ещё.\n- **traced from:** BR-1001.\n- **verification:** испытание - `test/a.test.ts`.\n\n## 13. Usability');
+    put('docs/.req_counter/01.FR', '1002\n');
+    regenerate();
+    expectFinding('story', 'FR-1002: у фичи есть истории, но ни один критерий его не закрывает');
+  });
+  it('критерии без меток - находка', () => {
+    withStory('- **AC-1.** Тогда: в.');
+    expectFinding('story', 'ни один критерий не несёт метки');
+  });
+  it('id не совпадает с именем файла либо с диапазоном фичи - находка', () => {
+    withStory('- **AC-1.** Тогда: в. [FR-1001]', 'id: ST-1002');
+    expectFinding('story', 'не совпадает с началом имени файла');
+    withStory('- **AC-1.** Тогда: в. [FR-1001]', 'id: ST-2001');
+    expectFinding('story', 'не совпадает с началом имени файла');
+  });
+  it('счётчик ST расходится с корпусом - находка', () => {
+    withStory('- **AC-1.** Тогда: в. [FR-1001]');
+    put('docs/.req_counter/01.ST', '1000\n');
+    expectFinding('counter', 'счётчик 1000, в корпусе последний номер 1001');
+  });
+});
