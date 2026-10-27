@@ -30,6 +30,8 @@ describe('Кнопки: сочетания клавиш', () => {
     assert.equal(ok(parseHotkey('CmdOrCtrl+Shift+M', false)).ctrl, true);
     assert.equal(ok(parseHotkey('Alt+F5', false)).code, 'F5');
     assert.equal(ok(parseHotkey('Option+7', true)).code, 'Digit7');
+    assert.deepEqual(ok(parseHotkey('F2', false)), { ctrl: false, alt: false, shift: false, meta: false, code: 'F2' });
+    assert.equal(ok(parseHotkey('Shift+F3', true)).shift, true);
   });
 
   it('сочетание сверяется по коду клавиши и точному набору модификаторов', () => {
@@ -52,6 +54,7 @@ describe('Кнопки: сочетания клавиш', () => {
     assert.match((parseHotkey('Cmd+Shift+N', true) as { error: string }).error, /занято приложением/);
     assert.match((parseHotkey('Ctrl+Shift+V', false) as { error: string }).error, /занято приложением/);
     assert.ok(!('error' in parseHotkey('Ctrl+Shift+N', true)), 'на macOS Ctrl+Shift+N свободно');
+    assert.match((parseHotkey('F11', false) as { error: string }).error, /занято приложением/);
   });
 });
 
@@ -139,6 +142,7 @@ describe('Кнопки: встроенные и из воркспейса', () =
       assert.equal(parseCommands([b], true).problems.length, 0, b.label);
     }
     assert.equal(DEFAULT_COMMANDS.find((b) => b.text.includes('{pr}'))?.submit, false, 'кнопка с PR не отправляется сама');
+    assert.deepEqual(DEFAULT_COMMANDS.map((b) => b.hotkey), ['F1', 'F2', 'F3', 'F4']);
   });
 });
 
