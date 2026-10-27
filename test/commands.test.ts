@@ -285,3 +285,31 @@ describe('Кнопки: подстановки', () => {
     assert.equal(expandCommand('{task}', { task: 'DEX-123' }).ok, true);
   });
 });
+
+describe('Кнопки команд: замечания проверки', () => {
+  it('повтор подписи встроенной кнопки называется: вторая запись не попадает на полосу, молча терять её нельзя', () => {
+    const text = JSON.stringify([{ label: 'Сливай', text: 'a' }, { label: 'сливай', text: 'b' }, { label: 'Своя', text: 'c' }]);
+    const checked = checkCommandsText(text, true);
+    assert.equal(checked.ok, false);
+    assert.match((checked as { error: string }).error, /«Сливай»: подпись встроенной кнопки повторена/);
+    const merged = mergeCommands(DEFAULT_COMMANDS, parseCommands(JSON.parse(text), true).commands, true);
+    assert.equal(merged.commands.find((c) => c.label === 'Сливай')?.text, 'a');
+    assert.equal(merged.problems.length, 1);
+  });
+
+  it('повтор подписи своей кнопки замечанием не становится: обе показываются', () => {
+    const text = JSON.stringify([{ label: 'Своя', text: 'a' }, { label: 'Своя', text: 'b' }]);
+    assert.equal(checkCommandsText(text, true).ok, true);
+  });
+
+  it('символы направления текста, C1 и разделители строк в подписи и тексте - ошибка кнопки', () => {
+    for (const bad of ['‮', '⁧', '\u009b', ' ']) {
+      for (const field of ['label', 'text']) {
+        const parsed = parseCommands([{ label: 'A', text: 'a', [field]: `x${bad}y` }], true);
+        assert.equal(parsed.commands.length, 0, `${field} ${bad.charCodeAt(0).toString(16)}`);
+        assert.equal(parsed.problems.length, 1);
+      }
+    }
+    assert.equal(parseCommands([{ label: '👨‍💻 Код', text: 'a' }], true).commands.length, 1, 'ZWJ в эмодзи допустим');
+  });
+});

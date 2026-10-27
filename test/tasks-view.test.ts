@@ -203,6 +203,65 @@ describe('TasksView: проводка', () => {
     assert.ok(t.barChips().every((c) => !c.disabled));
   });
 
+  const failedResult = (selection: number) => ({
+    tasks: [], sources: [{ kind: 'github', host: 'github.com', path: 'o/r', error: 'нет сети' }], tracked: [], enabled: { github: true, gitlab: false }, selection,
+  });
+
+  it('фоновая выборка, на которой упали все источники, снимок не стирает и не повторяется до конца TTL; «Обновить» ошибку показывает', async () => {
+    const t = await setup();
+    const at = t.view.loadedAt();
+    assert.ok(at !== null);
+    t.setList(failedResult(2));
+    await t.view.refresh(false, 'timer');
+    assert.ok(t.root.text().includes('#1') && t.root.text().includes('#2'), 'список остался');
+    assert.ok(!t.root.text().includes('нет сети'));
+    assert.equal(t.view.loadedAt(), at, 'время снимка не изменилось');
+    const before = calls.list;
+    await t.view.refresh(false, 'timer');
+    assert.equal(calls.list, before, 'повтор раньше TTL не уходит в канал');
+    await t.view.refresh(false, 'reload');
+    assert.ok(t.root.text().includes('нет сети'), 'по «Обновить» ошибка показана');
+  });
+
+  it('ответ-неудача не считается снимком: открытие панели выберет заново, фон его не опрашивает', async () => {
+    const t = await setup(failedResult(1) as any);
+    assert.equal(t.view.loadedAt(), null);
+    assert.ok(t.root.text().includes('нет сети'));
+  });
+
+  it('частичный отказ (упал один источник из двух) заменяет снимок', async () => {
+    const t = await setup();
+    const partial = {
+      ...result(2, mk(3, ['bug'])),
+      sources: [{ kind: 'github', host: 'github.com', path: 'o/r' }, { kind: 'gitlab', host: 'gitlab.com', path: 'g/p', error: 'нет сети' }],
+    };
+    t.setList(partial);
+    await t.view.refresh(false, 'timer');
+    assert.ok(t.root.text().includes('#3') && !t.root.text().includes('#1'));
+    assert.notEqual(t.view.loadedAt(), null);
+  });
+
+  it('фон не пересоздаёт строки, пока ответ равен снимку; изменившийся ответ их заменяет', async () => {
+    const t = await setup();
+    const row = t.rowOf(1);
+    let release!: (r: unknown) => void;
+    impl.list = () => new Promise((r) => { release = r; });
+    const pending = t.view.refresh(false, 'timer');
+    assert.equal(t.rowOf(1), row, 'в начале выборки строки на месте');
+    assert.ok(t.root.text().includes('Обновление…'), 'кнопка показывает выборку');
+    release(result(5, mk(1, ['bug']), mk(2, ['ui'])));
+    await pending;
+    assert.equal(t.rowOf(1), row, 'ответ равен снимку: строки те же');
+    assert.ok(t.root.text().includes('Обновить') && !t.root.text().includes('Обновление…'));
+    t.setList(result(6, mk(1, ['bug']), mk(2, ['ui']), mk(3, ['ui'])));
+    await t.view.refresh(false, 'timer');
+    assert.notEqual(t.rowOf(1), row, 'ответ изменился: строки пересозданы');
+    assert.ok(t.root.text().includes('#3'));
+    t.rowOf(1).click();
+    await t.flush();
+    assert.deepEqual(calls.details.at(-1), { selection: 6, number: 1 }, 'описание берётся с номером нового ответа');
+  });
+
   it('смена проекта очищает полосу меток', async () => {
     const t = await setup();
     t.view.onProjectChanged();
