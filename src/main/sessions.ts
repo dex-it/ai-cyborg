@@ -3,6 +3,7 @@ import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs } from './claude-args.ts';
+import { parseSuggestions } from './suggestions.ts';
 import { writeJsonAtomic } from './jsonfile.ts';
 import { isAlive } from './pid.ts';
 
@@ -79,6 +80,8 @@ const PARENT_SESSION_VARS = [
 function sessionEnv(extra: Record<string, string>): Record<string, string> {
   const env = { ...(process.env as Record<string, string>) };
   for (const name of PARENT_SESSION_VARS) delete env[name];
+  // Каталог вызова лаунчера: в сессии он перебил бы cwd относительного --workspace у запущенного из неё Cyborg.
+  delete env.CYBORG_CWD;
   return { ...env, ...extra };
 }
 
@@ -222,6 +225,10 @@ export class SessionManager {
         this.emit('session:cwd', { id: session.id, cwd: event.cwd });
       }
       this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
+      if (event.hook_event_name === 'Stop') {
+        const buttons = parseSuggestions(event.last_assistant_message);
+        if (buttons.length) this.emit('session:suggest', { id: session.id, buttons });
+      }
       clearTimeout(session.stopTimer);
       const reason = waitingReason(event);
       if (!reason) continue;

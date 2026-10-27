@@ -7,6 +7,7 @@
 // модом dex-jira-tracker на jira-cli 1.7.0 и Jira Server 9.2 (на живой Jira Server 9.2 Cyborg прогнан 26.10.2026; Cloud и Data Center вживую не проверялись - D-11 фичи 11).
 
 import { PROJECT_KEY } from './jira-keys';
+import { DEFAULT_PROMPTS, fillPrompt } from './prompts';
 import type { CliResult } from './trackers';
 
 export const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/;
@@ -274,8 +275,7 @@ export function problemText(problem: JiraProblem, reason: string): string {
 // ---------- сессия ----------
 
 /** Начальный промпт сессии по задаче: только ключ, без названия и описания (чужой текст в промпт не попадает). */
-export const jiraPrompt = (key: string): string =>
-  `Задача Jira ${key}: прочитай её (jira issue view ${key} --comments 5), разберись в постановке и предложи план работ. Код не правь, пока я не подтвержу план.`;
+export const jiraPrompt = (key: string, template: string = DEFAULT_PROMPTS['jira.start'].text): string => fillPrompt(template, { jira_key: key });
 
 /** Аргумент session:create: `{ jira: { key } }`; null - ключ не по форме. */
 export function validateJiraStart(value: unknown): string | null {

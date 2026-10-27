@@ -95,6 +95,20 @@ test('SessionManager читает события: смена cwd, активно
   assert.ok(events.some((e) => e.channel === 'session:exit'));
 });
 
+test('SessionManager не передаёт сессии CYBORG_CWD лаунчера', (t) => {
+  const prev = process.env.CYBORG_CWD;
+  process.env.CYBORG_CWD = '/launcher/cwd';
+  t.after(() => (prev === undefined ? delete process.env.CYBORG_CWD : (process.env.CYBORG_CWD = prev)));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  let env: Record<string, string> = {};
+  const manager = new SessionManager(userData, () => {}, ((_file: string, _args: string[], opts: { env: Record<string, string> }) => ((env = opts.env), fakePty())) as any);
+  t.after(() => manager.killAll());
+  manager.create(os.tmpdir(), []);
+  assert.equal('CYBORG_CWD' in env, false);
+  assert.ok(env.CYBORG_EVENTS && env.CYBORG_SETTINGS);
+});
+
 test('SessionManager считает только работающие сессии', (t) => {
   const { manager } = managerIn(t);
   assert.equal(manager.count(), 0);
@@ -198,4 +212,23 @@ test('SessionManager: запрос разрешения объявляется �
   manager.kill(id);
   await new Promise((r) => setTimeout(r, 250));
   assert.equal(events.filter((e) => e.channel === 'session:waiting').length, 1);
+});
+
+test('SessionManager: хвост ответа на Stop с кнопками уходит событием session:suggest, без кнопок события нет', async (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager, eventsDir } = managerIn(t, events, 60_000);
+  const id = manager.create(os.tmpdir(), []);
+  const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
+  const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
+  const activity = () => events.filter((e) => e.channel === 'session:activity').length;
+  append({ hook_event_name: 'Stop', last_assistant_message: 'готово' });
+  await until(() => activity() === 1);
+  assert.equal(events.filter((e) => e.channel === 'session:suggest').length, 0);
+  append(
+    { hook_event_name: 'PostToolUse', last_assistant_message: 'Готово.\n<!-- cyborg-buttons: [{"label":"A","text":"a"}] -->' },
+    { hook_event_name: 'Stop', last_assistant_message: 'Готово.\n<!-- cyborg-buttons: [{"label":"Тест","text":"напиши тест","submit":true}] -->' },
+  );
+  await until(() => activity() === 3);
+  assert.deepEqual(events.filter((e) => e.channel === 'session:suggest').map((e) => e.payload), [{ id, buttons: [{ label: 'Тест', text: 'напиши тест', submit: true }] }]);
+  manager.kill(id);
 });
