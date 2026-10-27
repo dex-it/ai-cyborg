@@ -27,7 +27,7 @@ quality-checks: входных записей нет
 ## 4. Product perspective
 
 Часть окна рядом с терминалом сессии. Текст уходит тем же каналом ввода, что клавиатура (`session:input`); набор лежит в файле воркспейса
-(ADR-0014 п.13), меню «Воркспейс» - из фичи `10-ui-preferences`.
+(ADR-0015), меню «Воркспейс» - из фичи `10-ui-preferences`.
 
 ## 5. Product functions
 
@@ -143,7 +143,7 @@ FR-12001..FR-12004 (полоса, отправка, подстановки, со
 - **traced from:** BR-12002.
 - **источник:** Issue #26, «Кнопка», «Конфиг»; код `parseCommands`, `mergeCommands`, `ProjectStore.loadCommands`, `saveCommands`, `save`;
   D-02, D-03, D-10.
-- **rationale:** reason - набор у каждого свой и живёт в файле воркспейса; assumptions - D-03, D-10; relationships - FR-12006, ADR-0014 п.13;
+- **rationale:** reason - набор у каждого свой и живёт в файле воркспейса; assumptions - D-03, D-10; relationships - FR-12006, ADR-0015;
   design constraints - безмолвных fallback нет: негодное названо в замечаниях.
 - **verification:** испытание - `test/commands.test.ts` («Кнопки: разбор commands», «встроенные и из воркспейса»: пределы, `submit` по
   умолчанию, пропуск негодной, лишнее поле, замена одноимённой, повтор сочетания), `test/commands-store.test.ts` («ProjectStore: кнопки
@@ -160,7 +160,7 @@ FR-12001..FR-12004 (полоса, отправка, подстановки, со
   (правка файла снаружи подхватывается так же); полоса перерисовывается, только если поле изменилось.
 - **traced from:** BR-12002.
 - **источник:** Issue #26, «Конфиг», «Готово, когда»; код `initCommandEditor`, `createJsonEditor`, `saveCommandsText`, `reloadCommands`, `appMenuTemplate`; D-04, D-09.
-- **rationale:** reason - править набор без выхода из окна и без перезапуска; assumptions - D-04, D-09; relationships - FR-12005, ADR-0014 п.13;
+- **rationale:** reason - править набор без выхода из окна и без перезапуска; assumptions - D-04, D-09; relationships - FR-12005, ADR-0015;
   design constraints - интерфейсу не доверяют: проверка и запись в главном процессе; пишется только поле `commands` файла воркспейса.
 - **verification:** испытание - `test/commands.test.ts` («Кнопки: проверка текста редактора»), `test/commands-store.test.ts` («saveCommandsText»: проверка
   повторяется в главном процессе, отказ записи в ответе), `test/menu.test.ts` («Кнопки команд…» недоступны без воркспейса); демонстрация -
@@ -178,11 +178,11 @@ FR-12001..FR-12004 (полоса, отправка, подстановки, со
 
 ## 15. Logical database requirements
 
-Поле файла воркспейса `commands: [{label, text, submit?, hotkey?}]` (FR-12005, ADR-0014 п.13); прочие поля файла остаются как есть.
+Поле файла воркспейса `commands: [{label, text, submit?, hotkey?}]` (FR-12005, ADR-0015); прочие поля файла остаются как есть.
 
 ## 16. Design constraints
 
-Ввод в сессию - тем же каналом, что клавиатура; файл воркспейса - ADR-0014; изоляция интерфейса - ADR-0002: проверка и запись в главном процессе.
+Решения фичи и их обоснования - ADR-0015: ввод в сессию тем же каналом, что клавиатура; набор в файле воркспейса (ADR-0014); изоляция интерфейса - ADR-0002: проверка и запись в главном процессе.
 
 ## 17. Standards compliance
 
