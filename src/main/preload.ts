@@ -32,6 +32,12 @@ const api = {
   saveCommands: (text: string): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text),
   loadPrompts: (): Promise<{ raw: unknown; problem?: string }> => ipcRenderer.invoke('prompts:load'),
   savePrompts: (text: string): Promise<{ error?: string }> => ipcRenderer.invoke('prompts:save', text),
+  /** Файл кнопок (файл воркспейса) или промптов - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
+  /** Путь из вывода сессии - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
+  openPath: (file: string): Promise<void> => ipcRenderer.invoke('path:open', file),
+  /** http(s)-ссылка - в браузере системы; иные схемы главный процесс отбрасывает. */
+  openUrl: (url: string): Promise<void> => ipcRenderer.invoke('url:open', url),
+  revealConfig: (kind: 'commands' | 'prompts'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
   createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', cwd, addDirs, start),
   listHistory: (projectId: string): Promise<HistoryEntry[]> => ipcRenderer.invoke('history:list', projectId),

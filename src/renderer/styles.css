@@ -734,6 +734,19 @@ select:disabled {
   font-weight: 600;
 }
 
+.file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-reveal {
+  flex: none;
+  padding: 2px 8px;
+  font: 12px system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
 .file-body {
   flex: 1;
   min-height: 0;

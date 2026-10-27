@@ -13,4 +13,4 @@ export interface CommandEditorDeps {
 }
 
 export const initCommandEditor = (deps: CommandEditorDeps): { open(): Promise<void> } =>
-  initConfigEditor({ prefix: 'commands', load: async () => commandsToText(await api.loadCommands()), save: (text) => api.saveCommands(text), ...deps });
+  initConfigEditor({ prefix: 'commands', load: async () => commandsToText(await api.loadCommands()), save: (text) => api.saveCommands(text), reveal: () => api.revealConfig('commands'), ...deps });

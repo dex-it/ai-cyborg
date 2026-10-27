@@ -17,6 +17,7 @@ export const initPromptEditor = (): { open(): Promise<void> } =>
       return promptsToText(raw);
     },
     save: (text) => api.savePrompts(text),
+    reveal: () => api.revealConfig('prompts'),
     problems: () => problems,
     saved: () => {
       problems = [];
