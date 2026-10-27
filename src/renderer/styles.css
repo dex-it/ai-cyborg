@@ -1751,6 +1751,17 @@ label.disabled .hint {
   border-style: dashed;
 }
 
+/* Кнопки, предложенные моделью: оттенок акцента и маркер ✦, чтобы отличались от заданных заранее (нейтральных) не только цветом. */
+.command-button.suggested {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  color: var(--accent);
+}
+
+.command-button.suggested:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg-raised));
+}
+
 .command-hotkey {
   color: var(--fg-dim);
   font-size: 11px;

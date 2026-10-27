@@ -129,10 +129,12 @@
       <form method="dialog">
         <h2>Кнопки команд</h2>
         <p class="hint">
-          Дополнения к встроенным кнопкам (Сливай, Сделай PR, Мердж, Приберись): кнопка с тем же <code>label</code> заменяет встроенную.
-          Поля: <code>label</code>, <code>text</code> (одна строка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
-          только вставка), <code>hotkey</code> (<code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>). В <code>text</code> работают
-          <code>{branch}</code>, <code>{pr}</code>, <code>{task}</code>. Файл воркспейса перечитывается сам.
+          Действующий набор: встроенные кнопки (Сливай, Сделай PR, Мердж, Приберись) и ваши. Что здесь записано, то и сохранится в файле воркспейса.
+          Кнопка с тем же <code>label</code>, что у встроенной, заменяет её. Поля: <code>label</code>, <code>text</code> (одна строка),
+          <code>description</code> (что делает кнопка - подсказка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
+          только вставка), <code>hotkey</code> (<code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>), <code>disabled</code>
+          (<code>true</code> - скрыть кнопку; так отключается и встроенная). В <code>text</code> работают <code>{branch}</code>, <code>{pr}</code>,
+          <code>{task}</code>. Файл воркспейса перечитывается сам.
         </p>
         <div id="commands-editor"></div>
         <div id="commands-problems" class="dialog-note" hidden></div>
