@@ -95,6 +95,20 @@ test('SessionManager читает события: смена cwd, активно
   assert.ok(events.some((e) => e.channel === 'session:exit'));
 });
 
+test('SessionManager не передаёт сессии CYBORG_CWD лаунчера', (t) => {
+  const prev = process.env.CYBORG_CWD;
+  process.env.CYBORG_CWD = '/launcher/cwd';
+  t.after(() => (prev === undefined ? delete process.env.CYBORG_CWD : (process.env.CYBORG_CWD = prev)));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  let env: Record<string, string> = {};
+  const manager = new SessionManager(userData, () => {}, ((_file: string, _args: string[], opts: { env: Record<string, string> }) => ((env = opts.env), fakePty())) as any);
+  t.after(() => manager.killAll());
+  manager.create(os.tmpdir(), []);
+  assert.equal('CYBORG_CWD' in env, false);
+  assert.ok(env.CYBORG_EVENTS && env.CYBORG_SETTINGS);
+});
+
 test('SessionManager считает только работающие сессии', (t) => {
   const { manager } = managerIn(t);
   assert.equal(manager.count(), 0);
