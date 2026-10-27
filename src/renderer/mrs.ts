@@ -2,11 +2,11 @@ import type { Mr, MrFilter, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Project } from '../main/projects';
 import { el } from './dom';
 import { readChoice, writePref } from './prefs';
-import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
+import { keepKnownDetails, MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
-import { keepSnapshotOnError, RefreshGate, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
-import { sortByKey, sourceLabel, type SortKey } from './task-model';
+import { keepSnapshotOnError, RefreshGate, sameSnapshot, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
+import { fetchFailed, sortByKey, sourceLabel, type SortKey } from './task-model';
 
 /** Сессия, начатая из MR: панелю нужно знать только, жива ли она. */
 export interface OpenMrSession {
@@ -121,21 +121,24 @@ export class MrsView implements PanelView {
       this.render();
       return;
     }
-    this.render();
+    // Снимок на экране не перерисовывается: фон не должен сбивать фокус и выделение текста, меняется только кнопка.
+    if (this.result) this.syncReload();
+    else this.render();
     let held = false;
     await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), trigger }, {
       listed: (list, pending) => {
-        if (keepSnapshotOnError(trigger, !!this.result && !this.result.error, list.error)) {
+        const failed = fetchFailed(list);
+        if (keepSnapshotOnError(trigger, !!this.result && !fetchFailed(this.result), failed)) {
           this.failedAt = Date.now();
-          this.render();
+          this.syncReload();
           return;
         }
         this.failedAt = null;
-        this.snapshotAt = Date.now();
+        this.snapshotAt = failed ? null : Date.now();
         // Снимок на экране не меняется на строки с «…»: список ляжет вместе с деталями.
         if (keep && this.result && list.detailsId !== null) {
           held = true;
-          this.render();
+          this.syncReload();
           return;
         }
         this.result = list;
@@ -144,21 +147,29 @@ export class MrsView implements PanelView {
         this.render();
       },
       detailed: (result) => {
-        const before = new Map(this.result?.mrs.map((m) => [m.key, mrActionVisible(m)]));
-        this.result = result;
+        const old = this.result;
+        const before = new Map(old?.mrs.map((m) => [m.key, mrActionVisible(m)]));
+        const shown = trigger === 'timer' ? keepKnownDetails(result, old) : result;
+        const same = trigger === 'timer' && !!old && sameSnapshot(old, shown);
+        this.result = shown;
         this.pending.clear();
-        this.host.applyStatuses(result);
+        this.host.applyStatuses(shown);
         // Признак замечаний GitHub приходит с деталями: строки строятся заново, только если от него зависит кнопка.
-        if (held || result.mrs.some((m) => before.get(m.key) !== mrActionVisible(m))) this.render();
-        else this.metas.fill(result);
+        if (same) this.syncReload();
+        else if (held || shown.mrs.some((m) => before.get(m.key) !== mrActionVisible(m))) this.render();
+        else this.metas.fill(shown);
       },
     });
   }
 
-  private render(): void {
+  private syncReload(): void {
     this.reload.disabled = this.gate.loading;
     this.reload.textContent = this.gate.loading ? 'Обновление…' : 'Обновить';
     this.reload.title = this.snapshotAt === null ? '' : `Снимок от ${new Date(this.snapshotAt).toLocaleTimeString('ru')}`;
+  }
+
+  private render(): void {
+    this.syncReload();
     const hint = this.host.projectHint();
     if (hint || !this.host.project()) {
       this.body.replaceChildren(...(hint ?? ['Проекта нет.']).map((text) => el('p', 'tasks-note', text)));

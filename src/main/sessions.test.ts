@@ -232,3 +232,30 @@ test('SessionManager: хвост ответа на Stop с кнопками ух
   assert.deepEqual(events.filter((e) => e.channel === 'session:suggest').map((e) => e.payload), [{ id, buttons: [{ label: 'Тест', text: 'напиши тест', submit: true }] }]);
   manager.kill(id);
 });
+
+test('SessionManager: предложение снимается, когда модель снова работает без запроса человека; без предложения лишних событий нет', async (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager, eventsDir } = managerIn(t, events, 60_000);
+  const id = manager.create(os.tmpdir(), []);
+  const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
+  const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
+  const activity = () => events.filter((e) => e.channel === 'session:activity').length;
+  const suggests = () => events.filter((e) => e.channel === 'session:suggest').map((e) => e.payload.buttons.length);
+  append({ hook_event_name: 'PostToolUse' }, { hook_event_name: 'Notification', notification_type: 'permission_prompt' });
+  await until(() => activity() === 2);
+  assert.deepEqual(suggests(), [], 'предложения не было - снимать нечего');
+  const stop = { hook_event_name: 'Stop', last_assistant_message: 'Готово.\n<!-- cyborg-buttons: [{"label":"Да","text":"продолжай","submit":true}] -->' };
+  append(stop, { hook_event_name: 'Notification', notification_type: 'idle_prompt' });
+  await until(() => activity() === 4);
+  assert.deepEqual(suggests(), [1], 'idle_prompt повторяет Stop и предложение не снимает');
+  append({ hook_event_name: 'PostToolUse' }, { hook_event_name: 'PostToolUse' });
+  await until(() => activity() === 6);
+  assert.deepEqual(suggests(), [1, 0], 'работа модели сняла предложение один раз');
+  append(stop, { hook_event_name: 'UserPromptSubmit' }, { hook_event_name: 'PostToolUse' });
+  await until(() => activity() === 9);
+  assert.deepEqual(suggests(), [1, 0, 1], 'запрос человека снимает интерфейс, повторного снятия из главного процесса нет');
+  append(stop, { hook_event_name: 'Notification', notification_type: 'permission_prompt' });
+  await until(() => activity() === 11);
+  assert.deepEqual(suggests(), [1, 0, 1, 1, 0], 'запрос разрешения снял предложение');
+  manager.kill(id);
+});

@@ -40,6 +40,16 @@ export const sourceLabel = (s: SourceResult): string => {
   return s.path ? `${name} ${s.host === 'github.com' ? '' : `${s.host}/`}${s.path}` : name;
 };
 
+/**
+ * Выборка не удалась целиком: ошибка верхнего уровня (отказ канала, проект не найден) либо каждый источник с адресом ответил ошибкой
+ * (нет сети, выход из gh, лимит). Частичный отказ не провал: ответ заменяет снимок, ошибка упавшего источника видна в списке.
+ */
+export function fetchFailed(result: { error?: string; sources: SourceResult[] }): boolean {
+  if (result.error) return true;
+  const real = result.sources.filter((s) => s.path);
+  return real.length > 0 && real.every((s) => !!s.error);
+}
+
 export type EmptyView = 'disabled' | 'no-remotes' | 'none';
 
 /** Чем заполнить панель, когда записей нет: null - показывать список. */

@@ -1,7 +1,7 @@
 // Промпты кнопок запуска сессий (фича 12): первое сообщение сессии из «Ревью», «Доработать», «CI», «Взять в работу» и сессии по задаче Jira.
 // Чистый файл без Node: проверку при записи и сборку текста делает главный процесс, действующий набор для редактора - интерфейс.
 
-import { TEXT_MAX } from './commands';
+import { CONTROL, TEXT_MAX } from './commands';
 
 export type PromptId = 'mr.review' | 'mr.rework' | 'mr.ci' | 'task.start' | 'jira.start';
 
@@ -47,7 +47,6 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptId, Required<PromptTemplate>
 
 /** Описания встроенных промптов называют подстановки, поэтому длиннее описаний кнопок полосы. */
 export const PROMPT_DESCRIPTION_MAX = 400;
-const CONTROL = /[\u0000-\u001f\u007f]/;
 const ANY_PLACEHOLDER = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 const KNOWN_FIELDS = new Set(['text', 'description']);
 
