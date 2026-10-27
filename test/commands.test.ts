@@ -158,6 +158,19 @@ describe('Кнопки: проверка текста редактора', () =>
     assert.match((dup as { error: string }).error, /уже у кнопки «A»/);
   });
 
+  it('сочетание, годное только на этой системе, не записывается: файл переносят между системами', () => {
+    const cmd = (hotkey: string) => JSON.stringify([{ label: 'A', text: 'a', hotkey }]);
+    const onMac = checkCommandsText(cmd('CmdOrCtrl+K'), true);
+    assert.match((onMac as { error: string }).error, /«A»: сочетание CmdOrCtrl\+K не годится на Linux и Windows: нужен Alt или Cmd/);
+    assert.match((checkCommandsText(cmd('CmdOrCtrl+K'), false) as { error: string }).error, /hotkey: нужен Alt или Cmd/, 'на Linux та же ошибка названа самим разбором');
+    assert.match((checkCommandsText(cmd('Ctrl+Shift+N'), true) as { error: string }).error, /не годится на Linux и Windows: сочетание занято приложением/);
+    assert.match((checkCommandsText(cmd('Cmd+Shift+N'), false) as { error: string }).error, /не годится на macOS: сочетание занято приложением/);
+    for (const portable of ['Alt+S', 'CmdOrCtrl+Shift+M', 'Ctrl+Shift+K', 'Cmd+K']) {
+      assert.equal(checkCommandsText(cmd(portable), true).ok, true, `mac: ${portable}`);
+      assert.equal(checkCommandsText(cmd(portable), false).ok, true, `linux: ${portable}`);
+    }
+  });
+
   it('текст редактора для пустого и отсутствующего поля - пустой массив', () => {
     assert.equal(commandsToText(undefined), '[]');
     assert.equal(commandsToText('x'), '[]');
