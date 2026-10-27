@@ -40,6 +40,8 @@ interface Bar {
 }
 
 const SAID_MS = 8000;
+/** Пауза между текстом и Enter: достаточно, чтобы они дошли до сессии разными записями (Claude Code 2.1.311, проверено через pty). */
+const SUBMIT_DELAY_MS = 150;
 
 /** Поле ввода, куда сочетание клавиш не вмешивается; помощник xterm - это сам терминал. */
 const typingIn = (target: EventTarget | null): boolean =>
@@ -136,7 +138,16 @@ export class CommandBars {
         this.say(target, `${button.label}: ${out.reason}`, true);
         return;
       }
-      this.deps.send(target.id, button.submit ? `${out.text}\r` : out.text);
+      this.deps.send(target.id, out.text);
+      if (button.submit) {
+        // Enter отдельной записью: пакет «текст и Enter» TUI вправе принять за вставку, где Enter - перевод строки, а не отправка.
+        await new Promise((resolve) => window.setTimeout(resolve, SUBMIT_DELAY_MS));
+        if (target.isExited()) {
+          this.say(target, `${button.label}: сессия завершилась, Enter не отправлен`, true);
+          return;
+        }
+        this.deps.send(target.id, '\r');
+      }
       this.say(target, null);
       target.focus();
     } catch (error) {
