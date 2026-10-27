@@ -134,7 +134,8 @@
           <code>description</code> (что делает кнопка - подсказка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
           только вставка), <code>hotkey</code> (<code>F5</code>, <code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>), <code>disabled</code>
           (<code>true</code> - скрыть кнопку; так отключается и встроенная). В <code>text</code> работают <code>{branch}</code>, <code>{pr}</code>,
-          <code>{task}</code>. Файл воркспейса перечитывается сам.
+          <code>{task}</code>. Встроенную кнопку, удалённую из списка, редактор вернёт при следующем открытии (скройте её через <code>disabled</code>), порядок
+          встроенных кнопок не меняется. Файл воркспейса перечитывается сам.
         </p>
         <pre class="commands-example">[
   { "label": "Тесты", "text": "прогони тесты", "submit": true, "hotkey": "F5" },

@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Task, TasksResult, TrackersStatus } from '../src/main/trackers';
 import type { Mr, MrListResult } from '../src/main/mrs';
-import { applyMrDetails, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
+import { applyMrDetails, keepKnownDetails, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrSessionLabel, mrStatusText, mrTooltip } from '../src/renderer/mr-model';
 import {
   availableLabels, cycleLabel, descriptionText, DescriptionStore, detailsLines, filterByLabels, labelEmpty, labelInk, parseLabelFilter,
   requireLabel, serializeLabelFilter, type LabelFilter,
 } from '../src/renderer/task-model';
-import { authLines, hasSources, sortByKey, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
+import { authLines, fetchFailed, hasSources, sortByKey, emptyView, findTask, sessionLabel, sortTasks, sourceLabel, statusText, taskTooltip } from '../src/renderer/task-model';
 
 const task = (n: number, over: Partial<Task> = {}): Task => ({
   kind: 'github', host: 'github.com', path: 'o/r', number: n, key: `github:github.com/o/r#${n}`, title: `T${n}`, state: 'open',
@@ -272,5 +272,30 @@ describe('DescriptionStore', () => {
     assert.equal(s.begin('k'), null);
     s.forgetError('k');
     assert.notEqual(s.begin('k'), null);
+  });
+});
+
+describe('fetchFailed: выборка не удалась целиком', () => {
+  const src = (path: string, error?: string) => ({ kind: 'github' as const, host: 'github.com', path, ...(error ? { error } : {}) });
+  it('ошибка верхнего уровня, либо у каждого источника с адресом ошибка; частичный отказ и пустой набор - нет', () => {
+    assert.equal(fetchFailed({ error: 'Проект не найден', sources: [] }), true);
+    assert.equal(fetchFailed({ sources: [src('o/a', 'нет сети'), src('o/b', 'таймаут')] }), true);
+    assert.equal(fetchFailed({ sources: [src('o/a', 'нет сети'), src('o/b')] }), false, 'частичный отказ: ответ заменяет снимок');
+    assert.equal(fetchFailed({ sources: [] }), false, 'источников нет - это не отказ');
+    assert.equal(fetchFailed({ sources: [src('', 'нет remote')] }), false, 'запись без адреса не источник');
+  });
+});
+
+describe('keepKnownDetails: фоновое обновление не затирает известные детали', () => {
+  const mr = (key: string, extra: Partial<Mr> = {}) => ({ key, pipeline: null, approvals: null, comments: null, ...extra }) as unknown as Mr;
+  const list = (mrs: Mr[], tracked: Mr[] = []) => ({ mrs, tracked, sources: [], enabled: { github: true, gitlab: false }, detailsId: null, awaiting: [] }) as unknown as MrListResult;
+  it('пустые поля берутся из прежнего снимка по ключу, пришедшие значения остаются новыми', () => {
+    const prev = list([mr('a', { pipeline: 'ok', approvals: '1/2', comments: true }), mr('b', { pipeline: 'ok' })], [mr('t', { pipeline: 'run' })]);
+    const next = list([mr('a'), mr('b', { pipeline: 'failed' }), mr('c')]);
+    const kept = keepKnownDetails(next, prev);
+    assert.deepEqual(kept.mrs.map((m) => [m.key, m.pipeline, m.approvals, m.comments]), [['a', 'ok', '1/2', true], ['b', 'failed', null, null], ['c', null, null, null]]);
+    assert.deepEqual(kept.tracked.map((m) => m.key), ['t'], 'не пришли MR вне списка - прежние');
+    assert.equal(keepKnownDetails(next, null), next, 'снимка нет - ответ как есть');
+    assert.deepEqual(keepKnownDetails(list([mr('a')], [mr('n')]), prev).tracked.map((m) => m.key), ['n'], 'пришедшие MR вне списка новее прежних');
   });
 });

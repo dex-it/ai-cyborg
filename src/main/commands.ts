@@ -29,7 +29,11 @@ export const DEFAULT_COMMANDS: readonly CommandButton[] = [
 ];
 
 const KNOWN_FIELDS = new Set(['label', 'text', 'submit', 'hotkey', 'description', 'disabled']);
-const CONTROL = /[\u0000-\u001f\u007f]/;
+/**
+ * Управляющие символы: C0 и C1 (в том числе U+009B, 8-битный CSI), разделители строк U+2028 и U+2029 и переопределения направления текста
+ * (U+202A-202E, U+2066-2069): последние маскируют подпись и текст в подсказке кнопки. Нули ширины и ZWJ допустимы (эмодзи).
+ */
+export const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
 // ---------- сочетания клавиш ----------
 
@@ -157,6 +161,8 @@ export function mergeCommands(defaults: readonly CommandButton[], extra: readonl
   // Скрытая кнопка не занимает сочетание и не попадает на полосу.
   const merged = all.filter((button) => !button.disabled);
   const problems: string[] = [];
+  // Вторая запись с подписью встроенной кнопки не попадает на полосу: молча терять её нельзя.
+  for (const d of defaults) if (extra.filter((e) => sameLabel(e.label, d.label)).length > 1) problems.push(`«${d.label}»: подпись встроенной кнопки повторена, действует первая запись`);
   const taken = new Map<string, string>();
   const commands = merged.map((button) => {
     if (!button.hotkey) return button;

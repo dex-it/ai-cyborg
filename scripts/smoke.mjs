@@ -51,7 +51,7 @@ const fakeArgsLog = join(fakeBin, 'args.log');
 const fakeSuggest = join(fakeBin, 'suggest.json');
 writeFileSync(
   fakeSuggest,
-  JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'Готово.\n\n<!-- cyborg-buttons: [{"label":"Отправь","text":"отправь это","submit":true},{"label":"Вставь","text":"вставь это"},{"label":"Лишняя","text":"лишняя"}] -->' }) + '\n',
+  JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'Готово.\n\n<!-- cyborg-buttons: [{"label":"Оболочка","text":"!echo pwned","submit":true},{"label":"Отправь","text":"отправь это","submit":true},{"label":"Вставь","text":"вставь это"},{"label":"Лишняя","text":"лишняя"}] -->' }) + '\n',
 );
 // Подставной claude: SessionStart при старте, по строке `cd <dir>` - событие с новым cwd, строка, оканчивающаяся на `suggest`, - ответ с кнопками, на `ask` - запрос человека (вставленный без Enter текст остаётся в строке ввода), остальной ввод эхом.
 const fakeClaude = join(fakeBin, 'claude');
@@ -433,7 +433,7 @@ async function main() {
   await barButton('Предложи');
   await waitFor('подставной claude получил «suggest»', async () => (await squeezed()).includes('suggested'));
   await waitFor('предложенные моделью кнопки на полосе', async () => (await barButtons()).includes('✦ Вставь'));
-  assert.deepEqual((await barButtons()).filter((label) => label.startsWith('✦')), ['✦ Отправь', '✦ Вставь'], 'предложенных кнопок не две: предел не сработал');
+  assert.deepEqual((await barButtons()).filter((label) => label.startsWith('✦')), ['✦ Отправь', '✦ Вставь'], 'предложенных кнопок не две: предел не сработал либо реплика с «!» не отброшена');
   const paint = (label) => ev(`getComputedStyle([...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)})).backgroundColor`);
   assert.notEqual(await paint('✦ Вставь'), await paint('Сливай'), 'предложенная кнопка того же цвета, что заданная');
   assert.equal(await paint('Предложи'), await paint('Сливай'), 'заданные заранее кнопки разных цветов');

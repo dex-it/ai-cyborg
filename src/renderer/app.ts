@@ -716,10 +716,15 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   updateSessionLabels(session);
   for (const chunk of pendingData.get(id) ?? []) term.write(chunk);
   pendingData.delete(id);
-  if (project !== owner) stripTab.hidden = true;
-  // Начатая из открытой панели сессия не уводит с панели: пользователь идёт по задачам дальше.
-  else if (start && panel.isOpen) {
+  // Невидимая сессия не получает fit до активации: pty стартует 120x40, а xterm скрыт и остаётся 80x24, поэтому размеры выравниваются сразу.
+  const alignHidden = (): void => api.resize(id, term.cols, term.rows);
+  if (project !== owner) {
+    stripTab.hidden = true;
+    alignHidden();
+  } else if (start && panel.isOpen) {
+    // Начатая из открытой панели сессия не уводит с панели: пользователь идёт по задачам дальше.
     if (!active) activateSession(session, true);
+    else alignHidden();
     panel.repaint();
   } else activateSession(session);
 }
