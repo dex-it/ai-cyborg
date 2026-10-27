@@ -8,9 +8,23 @@ import type { ProjectsProblem, ProjectsState } from './projects';
 import type { TaskDetailsResult } from './task-details';
 import type { TaskRef, TasksResult, TrackersStatus } from './trackers';
 
+export interface WorkspaceInfo {
+  file: string | null;
+  name: string | null;
+  home: string;
+  sep: string;
+}
+
+export type WorkspaceCreateReply = { error?: string; exists?: true };
+
 const api = {
   platform: process.platform,
   pickDir: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir', defaultPath),
+  pickWorkspaceDir: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickWorkspaceDir', defaultPath),
+  workspaceInfo: (): Promise<WorkspaceInfo> => ipcRenderer.invoke('workspace:info'),
+  createWorkspace: (request: unknown): Promise<WorkspaceCreateReply> => ipcRenderer.invoke('workspace:create', request),
+  openWorkspace: (file: string): Promise<boolean> => ipcRenderer.invoke('workspace:open', file),
+  projectSelected: (selected: boolean): void => ipcRenderer.send('project:selected', selected),
   loadProjects: (): Promise<ProjectsState> => ipcRenderer.invoke('projects:load'),
   projectsProblem: (): Promise<ProjectsProblem | null> => ipcRenderer.invoke('projects:problem'),
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),

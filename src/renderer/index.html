@@ -12,9 +12,6 @@
       <aside id="sidebar">
         <div id="project-bar">
           <select id="project-select" title="Проект"></select>
-          <button id="project-menu-open" class="icon-button" title="Проект" aria-label="Меню проекта">
-            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></svg>
-          </button>
         </div>
         <div id="side-tabs" role="tablist">
           <button id="side-files" class="side-tab active" role="tab" title="Дерево файлов">Файлы</button>
@@ -48,7 +45,6 @@
 
     <div id="status-popover" class="popover" role="dialog" aria-label="Статус проекта" tabindex="-1" hidden></div>
     <div id="repo-menu" class="menu" hidden></div>
-    <div id="project-menu" class="menu" hidden></div>
 
     <dialog id="project-dialog">
       <form method="dialog">
@@ -93,6 +89,38 @@
           <span class="spacer"></span>
           <button value="cancel" formnovalidate>Отмена</button>
           <button value="save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="workspace-dialog">
+      <form method="dialog">
+        <h2>Новый воркспейс</h2>
+        <label class="field">
+          <span>Имя воркспейса</span>
+          <input id="workspace-name" required autocomplete="off" />
+        </label>
+        <div class="field">
+          <span>Файл</span>
+          <div class="field-row">
+            <input id="workspace-file" required autocomplete="off" />
+            <button type="button" id="workspace-pick-dir">Папка…</button>
+          </div>
+        </div>
+        <label class="field">
+          <span>Первый проект</span>
+          <input id="workspace-project" required autocomplete="off" placeholder="Название проекта" />
+        </label>
+        <div class="field">
+          <span>Репозитории</span>
+          <ul id="workspace-repos" class="repo-list"></ul>
+          <button type="button" id="workspace-add-repo">Добавить репозиторий…</button>
+        </div>
+        <div id="workspace-error" class="dialog-error" role="alert" hidden></div>
+        <footer>
+          <span class="spacer"></span>
+          <button type="button" id="workspace-cancel">Отмена</button>
+          <button type="button" id="workspace-create" class="primary" disabled>Создать</button>
         </footer>
       </form>
     </dialog>

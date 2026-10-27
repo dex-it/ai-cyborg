@@ -956,7 +956,8 @@ dialog h2 {
   color: var(--fg-faint);
 }
 
-#project-repos {
+#project-repos,
+#workspace-repos {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -965,7 +966,8 @@ dialog h2 {
   border-radius: var(--radius);
 }
 
-#project-repos li {
+#project-repos li,
+#workspace-repos li {
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-rows: auto auto;
@@ -973,35 +975,42 @@ dialog h2 {
   border-bottom: 1px solid var(--border);
 }
 
-#project-repos li:last-child {
+#project-repos li:last-child,
+#workspace-repos li:last-child {
   border-bottom: none;
 }
 
-#project-repos li[draggable='true'] {
+#project-repos li[draggable='true'],
+#workspace-repos li[draggable='true'] {
   cursor: grab;
 }
 
-#project-repos li.dragging {
+#project-repos li.dragging,
+#workspace-repos li.dragging {
   opacity: 0.5;
 }
 
-#project-repos li.drop-target {
+#project-repos li.drop-target,
+#workspace-repos li.drop-target {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-#project-repos li .icon-button {
+#project-repos li .icon-button,
+#workspace-repos li .icon-button {
   grid-row: 1 / 3;
   grid-column: 2;
   align-self: center;
 }
 
-#project-repos li.hint {
+#project-repos li.hint,
+#workspace-repos li.hint {
   display: block;
   color: var(--fg-dim);
 }
 
-#project-add-repo {
+#project-add-repo,
+#workspace-add-repo {
   align-self: flex-start;
 }
 
@@ -1676,4 +1685,20 @@ label.disabled .hint {
   * {
     transition: none !important;
   }
+}
+
+.field-row {
+  display: flex;
+  gap: 6px;
+}
+
+.field-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dialog-error {
+  margin-bottom: 12px;
+  color: var(--danger, #d13438);
+  font-size: 12px;
 }

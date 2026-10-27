@@ -45,7 +45,7 @@ quality-checks: входных записей нет
 ## 7. Limitations
 
 - Новых npm-зависимостей нет; API трекеров - через установленные `gh`/`glab` (цель, граница).
-- Проект в `projects.json` несёт поле `trackers` из двух флагов (ADR-0004 п.6), MR своих полей не добавляет.
+- Проект в файле воркспейса несёт поле `trackers` из двух флагов (ADR-0014 п.6), MR своих полей не добавляет.
 - Git - только читающие команды (ADR-0005 п.3); GraphQL - только читающий запрос деталей MR GitLab (FR-1016, D-28).
 
 ## 8. Assumptions and dependencies
@@ -306,7 +306,7 @@ quality-checks: входных записей нет
 - **traced from:** BR-2002.
 - **источник:** цель, критерий 19; BRD продукта, non-goal «восстановление сессий»; конвенция FR-1015.
 - **rationale:** reason - non-goal продукта; assumptions - нет; relationships - нет; design constraints - нет.
-- **verification:** испытание - `test/static-guards.test.ts` («привязка задачи и MR к сессии только в памяти»); осмотр - в `projects.json` нет данных MR,
+- **verification:** испытание - `test/static-guards.test.ts` («привязка задачи и MR к сессии только в памяти»); осмотр - в файле воркспейса нет данных MR,
   `trackers.json` только читается.
 - **класс:** Functions. **origin:** source.
 
@@ -369,7 +369,7 @@ quality-checks: входных записей нет
 
 ## 15. Logical database requirements
 
-Новых данных на диске нет: флаги источников - поле `trackers` проекта (ADR-0004 п.6), данные MR живут только в памяти.
+Новых данных на диске нет: флаги источников - поле `trackers` проекта (ADR-0014 п.6), данные MR живут только в памяти.
 
 ## 16. Design constraints
 
