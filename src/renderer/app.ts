@@ -711,8 +711,12 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   updateSessionLabels(session);
   for (const chunk of pendingData.get(id) ?? []) term.write(chunk);
   pendingData.delete(id);
-  if (project === owner) activateSession(session);
-  else stripTab.hidden = true;
+  if (project !== owner) stripTab.hidden = true;
+  // Начатая из открытой панели сессия не уводит с панели: пользователь идёт по задачам дальше.
+  else if (start && panel.isOpen) {
+    if (!active) activateSession(session, true);
+    panel.repaint();
+  } else activateSession(session);
 }
 
 /** PR/MR сессии: из которого она начата, иначе открытый PR/MR ветки сессии среди всех PR/MR проекта (свой приоритетнее чужого). */
@@ -778,6 +782,7 @@ function closeSession(s: Session, force: boolean): void {
     if (next) activateSession(next, panel.isOpen);
     else showNoSession();
   }
+  panel.repaint();
 }
 
 function openFile(s: Session, path: string, root: TreeRoot): void {
