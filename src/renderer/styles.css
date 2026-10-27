@@ -1702,3 +1702,54 @@ label.disabled .hint {
   color: var(--danger, #d13438);
   font-size: 12px;
 }
+
+/* ---------- кнопки-команды под терминалом (фича 12) ---------- */
+
+.command-bar {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-side);
+  border-top: 1px solid var(--border);
+}
+
+.command-buttons {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.command-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.command-button.no-submit {
+  border-style: dashed;
+}
+
+.command-hotkey {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.command-notice {
+  max-width: 45%;
+  padding-top: 5px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.command-notice.warn {
+  color: var(--danger);
+}

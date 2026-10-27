@@ -1,6 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { HistoryEntry } from '../main/history';
+import type { Placeholder, PlaceholderValues } from '../main/commands';
 import type { JiraIssue } from '../main/jira';
 import type { Project, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
@@ -12,6 +13,7 @@ import { moveItem } from './reorder';
 import { windowTitle } from './title';
 import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
 import { initSourcesSection } from './sources';
+import { CommandBars, type CommandTarget } from './command-bar';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
@@ -59,6 +61,8 @@ interface Session {
   files: FileTab[];
   activeFile: FileTab | null;
   tree: TreeView;
+  /** Полоса кнопок-команд этой сессии (фича 12). */
+  command: CommandTarget;
 }
 
 const api = window.cyborg;
@@ -87,6 +91,11 @@ const sideFiles = byId<HTMLButtonElement>('side-files');
 const sideHistory = byId<HTMLButtonElement>('side-history');
 const taskSessions = new TaskSessionRegistry<Session>();
 const startGuard = new StartGuard();
+const commandBars = new CommandBars({
+  mac,
+  send: (id, data) => api.input(id, data),
+  layout: () => requestAnimationFrame(() => active && fitSession(active)),
+});
 
 let state: ProjectsState = { projects: [], lastProjectId: null };
 let workspaceFile: string | null = null;
@@ -679,7 +688,14 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
       (path, treeRoot) => openFile(session, path, treeRoot),
       () => void renderTree(session, false),
     ),
+    command: {
+      id,
+      isExited: () => session.exited,
+      values: (needs) => commandValues(session, needs),
+      focus: () => session.term.focus(),
+    },
   };
+  container.append(commandBars.attach(session.command));
   stripTab.addEventListener('click', () => activateSession(session));
   claudeTab.addEventListener('click', () => showInner(session, null));
   bindPathDrop(session, termPane);
@@ -691,6 +707,28 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   pendingData.delete(id);
   if (project === owner) activateSession(session);
   else stripTab.hidden = true;
+}
+
+/** PR/MR сессии: из которого она начата, иначе единственный открытый свой PR/MR ветки сессии. */
+async function prOfSession(s: Session, branch: string | null): Promise<string> {
+  if (s.mr) return s.mr.url;
+  if (!branch) throw new Error('у сессии нет ветки git');
+  const list = await api.listMrs(s.project.id, 'author', [], false);
+  if (list.error) throw new Error(`не удалось получить PR/MR: ${list.error}`);
+  if (!list.enabled.github && !list.enabled.gitlab) throw new Error('в проекте не включены GitHub и GitLab: PR/MR не найти');
+  const found = list.mrs.filter((mr) => mr.state === 'open' && mr.sourceBranch === branch && mr.repos.includes(s.repo));
+  if (found.length === 1) return found[0].url;
+  throw new Error(found.length ? `у ветки ${branch} открытых PR/MR: ${found.length}, подставить нечего однозначно` : `у ветки ${branch} нет открытого PR/MR от вас`);
+}
+
+/** Подстановки кнопок-команд (FR-12004): ветка - git сессии сейчас, PR - начальный либо найденный по ветке, задача - из которой начата сессия. */
+async function commandValues(s: Session, needs: Placeholder[]): Promise<PlaceholderValues> {
+  const values: PlaceholderValues = {};
+  const branch = needs.includes('branch') || needs.includes('pr') ? await api.gitBranch(s.root) : null;
+  if (needs.includes('branch')) values.branch = branch;
+  if (needs.includes('task')) values.task = s.jira ? s.jira.key : (s.task?.url ?? null);
+  if (needs.includes('pr')) values.pr = await prOfSession(s, branch);
+  return values;
 }
 
 /** Зона броска пути: терминал и вкладка Claude. Файл ОС и строка дерева вставляются через term.paste, как вставка с клавиатуры. */
@@ -721,6 +759,7 @@ function closeSession(s: Session, force: boolean): void {
   if (!s.exited && !force && !confirm('Сессия Claude Code ещё работает. Завершить её?')) return;
   if (!s.exited) api.kill(s.id);
   notifier.dismiss(s.id);
+  commandBars.detach(s.command);
   s.term.dispose();
   for (const f of s.files) f.viewer.dispose();
   s.stripTab.remove();
@@ -834,6 +873,7 @@ api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
   const session = findSession(id);
   if (!session) return;
   session.exited = true;
+  commandBars.refresh(session.command);
   notifier.dismiss(id);
   session.term.write(`\r\n\x1b[2m[сессия завершена, код ${exitCode}]\x1b[0m\r\n`);
   updateSessionLabels(session);
@@ -1101,6 +1141,7 @@ document.addEventListener('click', (event) => {
 window.addEventListener(
   'keydown',
   (event) => {
+    if (commandBars.handleKey(event, active && !panel.isOpen ? active.command : null)) return;
     if (event.key === 'Escape') repoMenu.hidden = true;
     if (commandKey(event) && !event.shiftKey && !event.altKey && event.key === '0') {
       event.preventDefault();
@@ -1169,12 +1210,19 @@ splitter.addEventListener('mousedown', (down) => {
   window.addEventListener('mouseup', up);
 });
 
+// Кнопки-команды живут в файле воркспейса: правка в нём (редактором Cyborg или чужим) подхватывается без перезапуска (FR-12006).
+function reloadCommands(): Promise<void> {
+  return api.loadCommands().then((raw) => commandBars.setConfig(raw));
+}
+window.addEventListener('focus', () => void reloadCommands());
+
 void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, loaded]) => {
   workspaceFile = info.file;
   workspaceName = info.name;
   workspaceHome = info.home;
   workspaceSep = info.sep;
   state = loaded;
+  void reloadCommands();
   const problem = await api.projectsProblem();
   selectProject(state.projects.find((p) => p.id === state.lastProjectId) ?? state.projects[0] ?? null, false);
   if (problem) alert(projectsProblemText(problem, workspaceFile));
