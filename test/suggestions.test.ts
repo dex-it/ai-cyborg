@@ -13,9 +13,14 @@ describe('Кнопки от модели: разбор хвоста ответа
     assert.deepEqual(parseSuggestions(`<!-- cyborg-buttons:[{"label":"A","text":"a","description":"д"}]-->`), [{ label: 'A', text: 'a', submit: false, description: 'д' }]);
   });
 
-  it('Enter, сочетание и отключение от модели не принимаются: поля отбрасываются', () => {
+  it('submit принимается как у кнопок файла; сочетание и отключение от модели не принимаются: поля отбрасываются', () => {
     const [one] = parseSuggestions(tail(JSON.stringify([{ ...button, submit: true, hotkey: 'Alt+S', disabled: true, extra: 1 }])));
-    assert.deepEqual(one, { ...button, submit: false });
+    assert.deepEqual(one, { ...button, submit: true });
+    assert.deepEqual(parseSuggestions(tail(JSON.stringify([{ ...button, submit: false }]))), [{ ...button, submit: false }]);
+  });
+
+  it('submit не булево - кнопка отбрасывается, а не отправляет текст', () => {
+    for (const submit of ['true', 1, null, [], {}]) assert.deepEqual(parseSuggestions(tail(JSON.stringify([{ ...button, submit }]))), [], JSON.stringify(submit));
   });
 
   it('комментарий не в конце ответа (процитированный из файла) не в счёт; нужен самый последний', () => {
@@ -45,7 +50,8 @@ describe('Кнопки от модели: разбор хвоста ответа
 
   it(`не больше ${SUGGEST_MAX} кнопок, повтор подписи (без учёта регистра) отбрасывается`, () => {
     const many = Array.from({ length: 9 }, (_, i) => ({ label: `К${i}`, text: `т${i}` }));
-    assert.deepEqual(parseSuggestions(tail(JSON.stringify(many))).map((b) => b.label), ['К0', 'К1', 'К2', 'К3']);
+    assert.equal(SUGGEST_MAX, 2);
+    assert.deepEqual(parseSuggestions(tail(JSON.stringify(many))).map((b) => b.label), ['К0', 'К1']);
     assert.deepEqual(parseSuggestions(tail(JSON.stringify([{ label: 'A', text: '1' }, { label: 'a', text: '2' }]))).map((b) => b.text), ['1']);
   });
 
@@ -62,6 +68,8 @@ describe('Кнопки от модели: инструкция сессии', ()
   it('инструкция называет формат и условие «не очевидно - не пиши», она в системном промте сессии', () => {
     assert.match(SUGGEST_PROMPT, /<!-- cyborg-buttons: \[\{"label"/);
     assert.match(SUGGEST_PROMPT, /не пиши ничего/);
+    assert.match(SUGGEST_PROMPT, /"submit":true/);
+    assert.match(SUGGEST_PROMPT, /1-2 следующих/);
     assert.ok(SESSION_PROMPT.endsWith(SUGGEST_PROMPT));
     assert.deepEqual(claudeArgs([]).slice(0, 2), ['--append-system-prompt', SESSION_PROMPT]);
   });

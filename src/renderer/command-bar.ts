@@ -101,11 +101,11 @@ export class CommandBars {
     this.deps.layout();
   }
 
-  /** Кнопки, предложенные моделью, вместо прежних; пустой набор убирает их. Enter они не отправляют никогда, что бы ни пришло. */
+  /** Кнопки, предложенные моделью, вместо прежних; пустой набор убирает их. `submit` берётся как проверил главный процесс (parseSuggestions); сочетаний у них нет. */
   suggest(target: CommandTarget, buttons: readonly CommandButton[]): void {
     const bar = this.bars.get(target);
     if (!bar || (!bar.suggested.length && !buttons.length)) return;
-    bar.suggested = buttons.map((button) => ({ label: button.label, text: button.text, submit: false, ...(button.description ? { description: button.description } : {}) }));
+    bar.suggested = buttons.map((button) => ({ label: button.label, text: button.text, submit: button.submit, ...(button.description ? { description: button.description } : {}) }));
     this.render(target);
     this.deps.layout();
   }
@@ -183,7 +183,7 @@ export class CommandBars {
         button.hotkey ?? '',
         button.description ?? '',
         button.text,
-        button.submit ? '' : '(текст вставляется без Enter)',
+        button.submit ? (suggested ? '(нажатие отправит текст с Enter)' : '') : '(текст вставляется без Enter)',
       ]
         .filter(Boolean)
         .join('\n');
