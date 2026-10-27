@@ -32,6 +32,36 @@ function detectLanguage(monaco: typeof Monaco, path: string): string {
   return lang?.id ?? 'plaintext';
 }
 
+export interface JsonEditor {
+  getValue(): string;
+  focus(): void;
+  dispose(): void;
+}
+
+/** Редактируемый JSON для диалога кнопок команд: тот же Monaco, тема и размер шрифта, что у просмотра файлов; Cmd/Ctrl+S зовёт onSave. */
+export async function createJsonEditor(body: HTMLElement, value: string, onSave: () => void): Promise<JsonEditor> {
+  const monaco = await loadMonaco();
+  const editor = monaco.editor.create(body, {
+    value,
+    language: 'json',
+    theme: monacoTheme(),
+    automaticLayout: true,
+    fontSize,
+    scrollBeyondLastLine: false,
+    minimap: { enabled: false },
+    tabSize: 2,
+  });
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, onSave);
+  return {
+    getValue: () => editor.getValue(),
+    focus: () => editor.focus(),
+    dispose: () => {
+      editor.getModel()?.dispose();
+      editor.dispose();
+    },
+  };
+}
+
 /** Просмотр одного файла; содержимое перечитывается с диска при каждом показе, изменённый против HEAD - сравнением. */
 export class FileViewer {
   private editor?: Monaco.editor.IStandaloneCodeEditor;

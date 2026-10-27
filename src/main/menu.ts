@@ -4,6 +4,7 @@ import path from 'node:path';
 export const NOTIFICATIONS_MENU_ID = 'notifications';
 export const PROJECT_NEW_MENU_ID = 'project-new';
 export const PROJECT_PROPERTIES_MENU_ID = 'project-properties';
+export const COMMANDS_MENU_ID = 'commands-edit';
 
 /** Подпись пункта «Недавних»: домашний каталог - «~». */
 export function recentLabel(file: string, home: string): string {
@@ -20,6 +21,7 @@ export interface WorkspaceMenu {
   openRecent(file: string): void;
   newProject(): void;
   editProject(): void;
+  editCommands(): void;
 }
 
 /**
@@ -29,7 +31,7 @@ export interface WorkspaceMenu {
  * окно, инструменты разработчика. Выход - не роль, а `quit`: вызывающий сначала спрашивает подтверждение, пока идут сессии.
  * Окна настроек нет, поэтому выключатель уведомлений о ждущих сессиях живёт в «Вид»; состояние галочки выставляет интерфейс.
  * Подписи заданы явно: стандартные роли Electron подписывает по-английски независимо от языка системы.
- * «Воркспейс» ведёт воркспейсами и проектами: проект выбирается на панели, а создаётся и правится отсюда.
+ * «Воркспейс» ведёт воркспейсами и проектами: проект выбирается на панели, а создаётся и правится отсюда; там же правка кнопок команд.
  */
 export function appMenuTemplate(
   platform: NodeJS.Platform,
@@ -97,6 +99,8 @@ export function appMenuTemplate(
       { type: 'separator' },
       { id: PROJECT_NEW_MENU_ID, label: 'Новый проект', enabled: workspace.hasWorkspace, click: () => workspace.newProject() },
       { id: PROJECT_PROPERTIES_MENU_ID, label: 'Свойства проекта', enabled: workspace.hasProject, click: () => workspace.editProject() },
+      { type: 'separator' },
+      { id: COMMANDS_MENU_ID, label: 'Кнопки команд…', enabled: workspace.hasWorkspace, click: () => workspace.editCommands() },
     ],
   };
   const viewMenu: MenuItemConstructorOptions = {

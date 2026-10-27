@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell } from 'electron';
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
+import { saveCommandsText } from './commands';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
@@ -55,7 +56,7 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
 });
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
-type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem'>;
+type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
 // Инстанс без воркспейса (отмена окна первого запуска): проектов нет, писать некуда.
 const noWorkspace: Projects = {
   load: () => ({ projects: [], lastProjectId: null }),
@@ -63,6 +64,10 @@ const noWorkspace: Projects = {
     throw new Error('Воркспейс не открыт');
   },
   problem: () => null,
+  loadCommands: () => undefined,
+  saveCommands: () => {
+    throw new Error('Воркспейс не открыт');
+  },
 };
 // Воркспейс выбирается в whenReady; замыкания ниже читают переменную при вызове.
 let projects: Projects = noWorkspace;
@@ -185,6 +190,8 @@ ipcMain.handle('projects:problem', () => {
   return projects.problem();
 });
 ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
+ipcMain.handle('commands:load', () => projects.loadCommands());
+ipcMain.handle('commands:save', (_event, text: unknown) => saveCommandsText(text, projects, process.platform === 'darwin'));
 ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?: unknown) => {
   if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
   if (start === undefined) return sessions.create(cwd as string, addDirs as string[]);
@@ -362,6 +369,7 @@ function rebuildMenu(): void {
     openRecent: (file) => void openRecent(file),
     newProject: () => win?.webContents.send('menu:project', 'new'),
     editProject: () => win?.webContents.send('menu:project', 'edit'),
+    editCommands: () => win?.webContents.send('menu:commands'),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
