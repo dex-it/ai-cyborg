@@ -568,6 +568,16 @@ select:disabled {
   background: var(--session);
 }
 
+.tab.session.busy .icon {
+  animation: session-busy 1s ease-in-out infinite alternate;
+}
+
+@keyframes session-busy {
+  to {
+    opacity: 0.2;
+  }
+}
+
 .tab.session.active {
   background: var(--bg);
   color: var(--fg);
@@ -1684,6 +1694,11 @@ label.disabled .hint {
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
+  }
+
+  .tab.session.busy .icon {
+    animation: none;
+    opacity: 0.5;
   }
 }
 
