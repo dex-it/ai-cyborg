@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import type { MrListResult } from '../src/main/mrs';
 import { refreshMrs, type MrRefreshApi } from '../src/renderer/mr-refresh';
 import { MrMetaSlots, mrMeta } from '../src/renderer/mr-model';
-import { debounce, decideStart, fetchTasks, recheckFor, refreshOnPanelEvent, RefreshGate, SNAPSHOT_TTL_MS, snapshotStale, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger, type Timers } from '../src/renderer/task-flow';
+import { debounce, decideStart, fetchTasks, keepSnapshotOnError, recheckFor, refreshOnPanelEvent, RefreshGate, SNAPSHOT_TTL_MS, snapshotStale, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger, type Timers } from '../src/renderer/task-flow';
 
 type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
 const sess = (project: string, key: string): S => ({ project: { id: project }, task: { key } });
@@ -236,6 +236,13 @@ describe('проводка выборки', () => {
     assert.equal(snapshotStale(null, 0), true);
     assert.equal(snapshotStale(0, SNAPSHOT_TTL_MS - 1), false);
     assert.equal(snapshotStale(0, SNAPSHOT_TTL_MS), true);
+  });
+
+  it('ошибка фоновой выборки не стирает снимок; открытие, вкладка, фильтр, «Обновить» и выборка без снимка ошибку показывают', () => {
+    assert.equal(keepSnapshotOnError('timer', true, 'сеть'), true);
+    assert.equal(keepSnapshotOnError('timer', true, undefined), false, 'ответ без ошибки заменяет снимок');
+    assert.equal(keepSnapshotOnError('timer', false, 'сеть'), false, 'снимка нет - показать ошибку');
+    for (const t of ['open', 'tab', 'filter', 'project', 'reload'] as RefreshTrigger[]) assert.equal(keepSnapshotOnError(t, true, 'сеть'), false, t);
   });
 
   it('дебаунс сливает серию вызовов в один', () => {

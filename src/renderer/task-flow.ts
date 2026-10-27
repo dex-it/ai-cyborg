@@ -73,6 +73,13 @@ export const SNAPSHOT_TTL_MS = 5 * 60_000;
 export const SNAPSHOT_TICK_MS = 30_000;
 export const RELOAD_DEBOUNCE_MS = 300;
 
+/**
+ * Фоновая выборка ответила ошибкой, а снимок без ошибки есть: снимок остаётся на экране (сеть моргнула - список не пропадает),
+ * повтор - не раньше TTL от неудачи. Открытие, вкладка, фильтр и «Обновить» показывают ошибку: человек ждал ответа.
+ */
+export const keepSnapshotOnError = (trigger: RefreshTrigger, hasSnapshot: boolean, error: string | undefined): boolean =>
+  trigger === 'timer' && hasSnapshot && !!error;
+
 /** null - снимка нет. */
 export const snapshotStale = (at: number | null, now: number, ttl = SNAPSHOT_TTL_MS): boolean => at === null || now - at >= ttl;
 

@@ -3,7 +3,7 @@ import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { el } from './dom';
 import { readChoice, readPref, writePref } from './prefs';
 import type { PanelView } from './panel';
-import { fetchTasks, RefreshGate, wireRefresh, type RefreshTrigger } from './task-flow';
+import { fetchTasks, keepSnapshotOnError, RefreshGate, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
 import {
   availableLabels,
   cycleLabel,
@@ -59,6 +59,8 @@ export class TasksView implements PanelView {
   private readonly gate = new RefreshGate();
   private result: TasksResult | null = null;
   private snapshotAt: number | null = null;
+  /** Когда фоновая выборка не удалась, а прежний снимок остался: повтор не раньше TTL. */
+  private failedAt: number | null = null;
   /** Задачи последнего ответа: полоса меток не исчезает и не теряет цвета, пока идёт повторная загрузка. */
   private labelSource: Task[] = [];
   private sortKey: SortKey = 'updated';
@@ -107,6 +109,7 @@ export class TasksView implements PanelView {
     this.gate.cancel();
     this.result = null;
     this.snapshotAt = null;
+    this.failedAt = null;
     this.labelSource = [];
     this.expanded.clear();
     this.openErrors.clear();
@@ -222,6 +225,7 @@ export class TasksView implements PanelView {
   }
 
   async refresh(force = false, trigger: RefreshTrigger = 'open'): Promise<void> {
+    if (trigger === 'timer' && !snapshotStale(this.failedAt, Date.now())) return;
     const token = this.gate.begin(force);
     if (token === null) return;
     const project = this.host.project();
@@ -243,6 +247,12 @@ export class TasksView implements PanelView {
       result = { tasks: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message };
     }
     if (!this.gate.finish(token)) return;
+    if (keepSnapshotOnError(trigger, !!this.result && !this.result.error, result.error)) {
+      this.failedAt = Date.now();
+      this.render();
+      return;
+    }
+    this.failedAt = null;
     this.result = result;
     this.snapshotAt = Date.now();
     // Описания привязаны к выборке ответа: «Обновить» сбрасывает их с приходом новой, а не до неё.
