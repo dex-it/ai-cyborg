@@ -180,14 +180,13 @@ export class CommandBars {
       node.disabled = exited;
       node.title = [
         suggested ? 'Предложено моделью' : '',
+        button.hotkey ?? '',
         button.description ?? '',
         button.text,
         button.submit ? '' : '(текст вставляется без Enter)',
-        button.hotkey ?? '',
       ]
         .filter(Boolean)
         .join('\n');
-      if (button.hotkey) node.append(el('span', 'command-hotkey', button.hotkey));
       node.addEventListener('click', () => void this.run(target, button));
       return node;
     };

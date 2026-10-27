@@ -16,6 +16,7 @@ export interface WorkspaceMenu {
   home: string;
   hasWorkspace: boolean;
   hasProject: boolean;
+  replace(): void;
   open(): void;
   create(): void;
   openRecent(file: string): void;
@@ -31,7 +32,7 @@ export interface WorkspaceMenu {
  * окно, инструменты разработчика. Выход - не роль, а `quit`: вызывающий сначала спрашивает подтверждение, пока идут сессии.
  * Окна настроек нет, поэтому выключатель уведомлений о ждущих сессиях живёт в «Вид»; состояние галочки выставляет интерфейс.
  * Подписи заданы явно: стандартные роли Electron подписывает по-английски независимо от языка системы.
- * «Воркспейс» ведёт воркспейсами и проектами: проект выбирается на панели, а создаётся и правится отсюда; там же правка кнопок команд.
+ * «Воркспейс» ведёт воркспейсами и проектами («Открыть…» меняет воркспейс этого окна, завершая его сессии): проект выбирается на панели, а создаётся и правится отсюда; там же правка кнопок команд.
  */
 export function appMenuTemplate(
   platform: NodeJS.Platform,
@@ -93,6 +94,7 @@ export function appMenuTemplate(
   const workspaceMenu: MenuItemConstructorOptions = {
     label: 'Воркспейс',
     submenu: [
+      { label: 'Открыть…', click: () => workspace.replace() },
       { label: 'Открыть в новом окне…', click: () => workspace.open() },
       { label: 'Создать…', click: () => workspace.create() },
       { label: 'Недавние', submenu: recent },

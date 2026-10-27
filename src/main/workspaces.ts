@@ -363,6 +363,32 @@ export async function openWorkspaceFile(input: string, deps: OpenDeps): Promise<
   return { ok: true };
 }
 
+export interface ReplaceDeps {
+  current: string | null;
+  /** false - пользователь отказался завершать работающие сессии. */
+  confirm(): boolean;
+  endSessions(): void;
+  openHere(file: string): OpenResult;
+  /** Замок прежнего воркспейса отпускается, только когда новый уже взят: иначе сбой оставил бы окно без замка. */
+  releasePrevious(): void;
+  isFile?(file: string): boolean;
+  isAlive?(pid: number): boolean;
+}
+
+/** Смена воркспейса в этом окне: сессии прежнего завершаются; файл проверяется до вопроса, чтобы не завершать их зря. */
+export function replaceWorkspace(input: string, deps: ReplaceDeps): OpenResult | { cancelled: true } {
+  const file = canonicalWorkspace(input);
+  if (file === deps.current) return { cancelled: true };
+  if (!(deps.isFile ?? isRegularFile)(file)) return { missing: true };
+  const state = isWorkspaceBusy(file, deps.isAlive);
+  if (state.busy) return { busy: { pid: state.pid, lock: lockPathOf(file) } };
+  if (!deps.confirm()) return { cancelled: true };
+  deps.endSessions();
+  const result = deps.openHere(file);
+  if ('ok' in result) deps.releasePrevious();
+  return result;
+}
+
 /** Клик по «Недавним»: пропавший файл называется ошибкой и убирается из списка. */
 export async function openRecentWorkspace(file: string, deps: OpenDeps): Promise<OpenResult> {
   const result = await openWorkspaceFile(file, deps);
