@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { claudeArgs, ISOLATION_PROMPT } from '../src/main/claude-args';
+import { claudeArgs, SESSION_PROMPT } from '../src/main/claude-args';
 import { deleteHistory, historyExists, journalFacts, listHistory, projectDirName } from '../src/main/history';
 import { ago } from '../src/renderer/ago';
 
@@ -107,7 +107,7 @@ describe('история сессий', () => {
   });
 
   it('claudeArgs: --resume с id стоит до --add-dir', () => {
-    assert.deepEqual(claudeArgs(['/b'], undefined, ID_A), ['--resume', ID_A, '--append-system-prompt', ISOLATION_PROMPT, '--add-dir', '/b']);
+    assert.deepEqual(claudeArgs(['/b'], undefined, ID_A), ['--resume', ID_A, '--append-system-prompt', SESSION_PROMPT, '--add-dir', '/b']);
   });
 
   it('ago: минуты, часы, дни', () => {

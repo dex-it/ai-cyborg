@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { HistoryEntry } from '../main/history';
-import type { Placeholder, PlaceholderValues } from '../main/commands';
+import type { CommandButton, Placeholder, PlaceholderValues } from '../main/commands';
 import type { JiraIssue } from '../main/jira';
 import type { Project, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
@@ -848,12 +848,22 @@ api.on<{ id: number; cwd: string }>('session:cwd', async ({ id, cwd }) => {
 
 let refreshTimer: number | undefined;
 api.on<{ id: number; event?: string }>('session:activity', ({ id, event }) => {
-  if (event === 'UserPromptSubmit') notifier.dismiss(id);
+  if (event === 'UserPromptSubmit') {
+    notifier.dismiss(id);
+    // Запрос человека делает прежние предложения модели неактуальными.
+    const asked = findSession(id);
+    if (asked) commandBars.suggest(asked.command, []);
+  }
   if (event === 'UserPromptSubmit' || event === 'PostToolUse') findSession(id)?.stripTab.classList.add('busy');
   if (active?.id !== id) return;
   const session = active;
   clearTimeout(refreshTimer);
   refreshTimer = window.setTimeout(() => void renderTree(session, false), 250);
+});
+
+api.on<{ id: number; buttons: CommandButton[] }>('session:suggest', ({ id, buttons }) => {
+  const session = findSession(id);
+  if (session) commandBars.suggest(session.command, buttons);
 });
 
 api.on<boolean>('notifications:toggle', (enabled) => notifier.setEnabled(enabled));

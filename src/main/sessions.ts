@@ -3,6 +3,7 @@ import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs } from './claude-args.ts';
+import { parseSuggestions } from './suggestions.ts';
 import { writeJsonAtomic } from './jsonfile.ts';
 import { isAlive } from './pid.ts';
 
@@ -222,6 +223,10 @@ export class SessionManager {
         this.emit('session:cwd', { id: session.id, cwd: event.cwd });
       }
       this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
+      if (event.hook_event_name === 'Stop') {
+        const buttons = parseSuggestions(event.last_assistant_message);
+        if (buttons.length) this.emit('session:suggest', { id: session.id, buttons });
+      }
       clearTimeout(session.stopTimer);
       const reason = waitingReason(event);
       if (!reason) continue;

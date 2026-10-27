@@ -199,3 +199,22 @@ test('SessionManager: запрос разрешения объявляется �
   await new Promise((r) => setTimeout(r, 250));
   assert.equal(events.filter((e) => e.channel === 'session:waiting').length, 1);
 });
+
+test('SessionManager: хвост ответа на Stop с кнопками уходит событием session:suggest, без кнопок события нет', async (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager, eventsDir } = managerIn(t, events, 60_000);
+  const id = manager.create(os.tmpdir(), []);
+  const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
+  const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
+  const activity = () => events.filter((e) => e.channel === 'session:activity').length;
+  append({ hook_event_name: 'Stop', last_assistant_message: 'готово' });
+  await until(() => activity() === 1);
+  assert.equal(events.filter((e) => e.channel === 'session:suggest').length, 0);
+  append(
+    { hook_event_name: 'PostToolUse', last_assistant_message: 'Готово.\n<!-- cyborg-buttons: [{"label":"A","text":"a"}] -->' },
+    { hook_event_name: 'Stop', last_assistant_message: 'Готово.\n<!-- cyborg-buttons: [{"label":"Тест","text":"напиши тест","submit":true}] -->' },
+  );
+  await until(() => activity() === 3);
+  assert.deepEqual(events.filter((e) => e.channel === 'session:suggest').map((e) => e.payload), [{ id, buttons: [{ label: 'Тест', text: 'напиши тест', submit: false }] }]);
+  manager.kill(id);
+});
