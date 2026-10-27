@@ -9,7 +9,7 @@ export interface PromptsRead {
 
 /** Промпты кнопок запуска сессий - один файл в userData на все воркспейсы: корень - объект `{ "<id>": { "text", "description" } }`. */
 export class PromptStore {
-  constructor(private readonly file: string) {}
+  constructor(readonly file: string) {}
 
   read(): PromptsRead {
     let text: string;
