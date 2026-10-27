@@ -204,8 +204,9 @@ const labelOf = (item: unknown): string | null =>
 export function effectiveCommands(raw: unknown): unknown[] {
   const own = Array.isArray(raw) ? raw : [];
   const found = (label: string): unknown => own.find((item) => labelOf(item) !== null && sameLabel(labelOf(item) as string, label));
-  const merged: unknown[] = DEFAULT_COMMANDS.map((d) => found(d.label) ?? d);
-  merged.push(...own.filter((item) => !DEFAULT_COMMANDS.some((d) => labelOf(item) !== null && sameLabel(labelOf(item) as string, d.label))));
+  const placed = DEFAULT_COMMANDS.map((d) => found(d.label));
+  const merged: unknown[] = DEFAULT_COMMANDS.map((d, i) => placed[i] ?? d);
+  merged.push(...own.filter((item) => !placed.includes(item)));
   return merged;
 }
 

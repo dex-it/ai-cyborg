@@ -154,6 +154,7 @@ export function savePromptsText(text: unknown, store: { savePrompts(prompts: Rec
  */
 export function promptTemplate(id: PromptId, raw: unknown): string {
   const parsed = parsePrompts(raw);
+  if (raw !== undefined && !isRecord(raw)) throw new Error(`${parsed.problems[0]}. Исправьте файл воркспейса или меню «Воркспейс → Промпты кнопок…».`);
   const own = parsed.prompts[id];
   if (own) return own.text;
   const problem = parsed.problems.find((p) => p.startsWith(`Промпт «${id}»`));

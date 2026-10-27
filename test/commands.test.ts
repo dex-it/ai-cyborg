@@ -197,6 +197,15 @@ describe('Кнопки: проверка текста редактора', () =>
     assert.deepEqual(list.at(-1), broken, 'запись с ошибкой остаётся в тексте, чтобы её поправили');
   });
 
+  it('действующий набор: повтор подписи встроенной кнопки не теряется, а идёт в конец', () => {
+    const first = { label: 'Сливай', text: 'a' };
+    const second = { label: 'сливай', text: 'b' };
+    const list = effectiveCommands([first, second]);
+    assert.deepEqual(list[0], first);
+    assert.deepEqual(list.at(-1), second);
+    assert.equal(list.length, DEFAULT_COMMANDS.length + 1);
+  });
+
   it('сохранённый набор из редактора при повторном открытии даёт тот же набор и проходит проверку', () => {
     const once = commandsToText([{ label: 'Моя', text: 'м', description: 'д', disabled: false }]);
     assert.equal(commandsToText(JSON.parse(once)), once);

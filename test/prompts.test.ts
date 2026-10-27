@@ -133,6 +133,13 @@ describe('Промпты кнопок: подстановка', () => {
     assert.equal(promptTemplate('jira.start', raw), DEFAULT_PROMPTS['jira.start'].text);
   });
 
+  it('поле prompts не объект - исключение для любой кнопки, не молчаливая замена встроенным', () => {
+    for (const raw of [[], 'x', 5, null]) {
+      assert.throws(() => validateSessionStart({ mr, intent: 'review' }, raw), /prompts должен быть объектом.*Промпты кнопок/s, JSON.stringify(raw));
+      assert.throws(() => validateSessionStart({ jira: { key: 'DEX-12' } }, raw), /prompts должен быть объектом/);
+    }
+  });
+
   it('некорректный аргумент по-прежнему null, а не исключение', () => {
     assert.equal(validateSessionStart({ mr, intent: 'нет' }, { 'mr.ci': { text: '-x' } }), null);
     assert.equal(validateSessionStart(null, undefined), null);
