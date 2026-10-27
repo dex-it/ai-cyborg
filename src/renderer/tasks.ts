@@ -58,6 +58,7 @@ export class TasksView implements PanelView {
   private readonly actions: TaskAction[];
   private readonly gate = new RefreshGate();
   private result: TasksResult | null = null;
+  private snapshotAt: number | null = null;
   /** Задачи последнего ответа: полоса меток не исчезает и не теряет цвета, пока идёт повторная загрузка. */
   private labelSource: Task[] = [];
   private sortKey: SortKey = 'updated';
@@ -105,12 +106,26 @@ export class TasksView implements PanelView {
   onProjectChanged(): void {
     this.gate.cancel();
     this.result = null;
+    this.snapshotAt = null;
     this.labelSource = [];
     this.expanded.clear();
     this.openErrors.clear();
     this.descriptions.reset();
     this.labelsProject = null;
     this.render();
+  }
+
+  loadedAt(): number | null {
+    return this.snapshotAt;
+  }
+
+  repaint(): void {
+    this.render();
+  }
+
+  /** Загрузка без снимка на экране: до первого ответа и после смены фильтра или проекта. */
+  private get blank(): boolean {
+    return this.gate.loading && !this.result;
   }
 
   private labelsKey = (id: string): string => `cyborg.tasks.labels:${id}`;
@@ -158,7 +173,7 @@ export class TasksView implements PanelView {
       chip.textContent = `${mode === '+' ? '+ ' : mode === '-' ? '− ' : ''}${name}`;
       chip.classList.toggle('on', mode === '+');
       chip.classList.toggle('off', mode === '-');
-      chip.disabled = this.gate.loading;
+      chip.disabled = this.blank;
       nodes.push(chip);
     }
     if (this.labelFilter.size) nodes.push(this.clearButton());
@@ -168,7 +183,7 @@ export class TasksView implements PanelView {
   private clearButton(): HTMLButtonElement {
     const clear = el('button', 'tasks-labels-clear', '✕') as HTMLButtonElement;
     clear.title = 'Сбросить фильтр меток';
-    clear.disabled = this.gate.loading;
+    clear.disabled = this.blank;
     clear.addEventListener('click', () => this.setLabelFilter(new Map()));
     return clear;
   }
@@ -210,8 +225,11 @@ export class TasksView implements PanelView {
     const token = this.gate.begin(force);
     if (token === null) return;
     const project = this.host.project();
-    this.result = null;
-    if (trigger === 'reload') this.descriptions.reset();
+    // Фон, открытие и «Обновить» держат прежний снимок на экране до ответа; фильтр и проект - другой вопрос, снимок прежнего ответа неверен.
+    if (trigger === 'filter' || trigger === 'project') {
+      this.result = null;
+      this.snapshotAt = null;
+    }
     if (!project || this.host.projectHint()) {
       this.gate.cancel();
       this.render();
@@ -226,13 +244,18 @@ export class TasksView implements PanelView {
     }
     if (!this.gate.finish(token)) return;
     this.result = result;
+    this.snapshotAt = Date.now();
+    // Описания привязаны к выборке ответа: «Обновить» сбрасывает их с приходом новой, а не до неё.
+    if (trigger === 'reload') this.descriptions.reset();
     this.labelSource = result.tasks;
     this.host.applyStatuses(result);
     this.render();
   }
 
   private render(): void {
-    for (const control of [this.assigned, this.sort, this.reload]) control.disabled = this.gate.loading;
+    this.reload.disabled = this.gate.loading;
+    this.reload.textContent = this.gate.loading ? 'Обновление…' : 'Обновить';
+    this.reload.title = this.snapshotAt === null ? '' : `Снимок от ${new Date(this.snapshotAt).toLocaleTimeString('ru')}`;
     this.ensureLabelFilter();
     this.renderLabelsBar();
     const hint = this.host.projectHint();
@@ -241,7 +264,7 @@ export class TasksView implements PanelView {
       return;
     }
     const result = this.result;
-    if (this.gate.loading || !result) {
+    if (!result) {
       this.body.replaceChildren(el('p', 'tasks-note', 'Загрузка…'));
       return;
     }

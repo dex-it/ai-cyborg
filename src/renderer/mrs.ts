@@ -42,6 +42,7 @@ export class MrsView implements PanelView {
   private readonly actions: MrAction[];
   private readonly gate = new RefreshGate();
   private result: MrListResult | null = null;
+  private snapshotAt: number | null = null;
   private sortKey: SortKey = 'updated';
   /** Ключи MR, чьи пайплайн и апрувы ещё не пришли: в строке «…». */
   private pending = new Set<string>();
@@ -87,7 +88,16 @@ export class MrsView implements PanelView {
   onProjectChanged(): void {
     this.gate.cancel();
     this.result = null;
+    this.snapshotAt = null;
     this.pending.clear();
+    this.render();
+  }
+
+  loadedAt(): number | null {
+    return this.snapshotAt;
+  }
+
+  repaint(): void {
     this.render();
   }
 
@@ -95,16 +105,29 @@ export class MrsView implements PanelView {
     const token = this.gate.begin(force);
     if (token === null) return;
     const project = this.host.project();
-    this.result = null;
-    this.pending.clear();
+    // Фон, открытие и «Обновить» держат прежний снимок до ответа; фильтр и проект - другой вопрос.
+    const keep = trigger !== 'filter' && trigger !== 'project';
+    if (!keep) {
+      this.result = null;
+      this.snapshotAt = null;
+      this.pending.clear();
+    }
     if (!project || this.host.projectHint()) {
       this.gate.cancel();
       this.render();
       return;
     }
     this.render();
+    let held = false;
     await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), trigger }, {
       listed: (list, pending) => {
+        this.snapshotAt = Date.now();
+        // Снимок на экране не меняется на строки с «…»: список ляжет вместе с деталями.
+        if (keep && this.result && list.detailsId !== null) {
+          held = true;
+          this.render();
+          return;
+        }
         this.result = list;
         this.pending = pending;
         this.host.applyStatuses(list);
@@ -116,21 +139,23 @@ export class MrsView implements PanelView {
         this.pending.clear();
         this.host.applyStatuses(result);
         // Признак замечаний GitHub приходит с деталями: строки строятся заново, только если от него зависит кнопка.
-        if (result.mrs.some((m) => before.get(m.key) !== mrActionVisible(m))) this.render();
+        if (held || result.mrs.some((m) => before.get(m.key) !== mrActionVisible(m))) this.render();
         else this.metas.fill(result);
       },
     });
   }
 
   private render(): void {
-    for (const control of [this.filter, this.sort, this.reload]) control.disabled = this.gate.loading;
+    this.reload.disabled = this.gate.loading;
+    this.reload.textContent = this.gate.loading ? 'Обновление…' : 'Обновить';
+    this.reload.title = this.snapshotAt === null ? '' : `Снимок от ${new Date(this.snapshotAt).toLocaleTimeString('ru')}`;
     const hint = this.host.projectHint();
     if (hint || !this.host.project()) {
       this.body.replaceChildren(...(hint ?? ['Проекта нет.']).map((text) => el('p', 'tasks-note', text)));
       return;
     }
     const result = this.result;
-    if (this.gate.loading || !result) {
+    if (!result) {
       this.body.replaceChildren(el('p', 'tasks-note', 'Загрузка…'));
       return;
     }
