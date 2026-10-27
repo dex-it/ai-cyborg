@@ -1,4 +1,5 @@
 import { jiraPrompt, validateJiraStart } from './jira';
+import { DEFAULT_PROMPTS, fillPrompt, promptTemplate, type PromptId } from './prompts';
 import { MAX_TRACKED, taskPrompt, validateRef, type SourceResult, type TaskRef, type TrackerKind, type TrackerSettings } from './trackers';
 
 export type MrRef = TaskRef;
@@ -82,10 +83,8 @@ export const mrUrl = (ref: MrRef): string =>
   ref.kind === 'github' ? `https://github.com/${ref.path}/pull/${ref.number}` : `https://${ref.host}/${ref.path}/-/merge_requests/${ref.number}`;
 
 /** Первое сообщение сессии. Собирается из проверенной ссылки: название, ветки и автор MR (чужой текст) в него не попадают. */
-export function mrPrompt(ref: MrRef, intent: MrIntent): string {
-  if (intent === 'review') return `/dex-auto:auto review ${mrUrl(ref)}`;
-  if (intent === 'ci') return `Пайплайн MR ${mrUrl(ref)} упал: найди причину в логах упавших заданий, переключись на ветку MR и исправь её.`;
-  return `Разбери замечания к MR ${mrUrl(ref)}: переключись на его ветку и доработай её по замечаниям ревью.`;
+export function mrPrompt(ref: MrRef, intent: MrIntent, template: string = DEFAULT_PROMPTS[`mr.${intent}`].text): string {
+  return fillPrompt(template, { mr_url: mrUrl(ref) });
 }
 
 // ---------- проверка аргументов каналов ----------
@@ -113,22 +112,25 @@ export function validateMrListArgs(projectId: unknown, filter: unknown, tracked:
 /** Номер выборки для mrs:details; null - аргумент некорректен. */
 export const validateMrDetailsArgs = (id: unknown): number | null => (typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : null);
 
-/** Начальный промпт по аргументу session:create; null - аргумент некорректен. Лишние поля игнорируются. */
-export function validateSessionStart(value: unknown): string | null {
+/**
+ * Начальный промпт по аргументу session:create; null - аргумент некорректен. Лишние поля игнорируются.
+ * `prompts` - поле файла воркспейса как записано: текст промпта берётся оттуда, иначе встроенный; негодная запись - исключение с причиной.
+ */
+export function validateSessionStart(value: unknown, prompts?: unknown): string | null {
   if (typeof value !== 'object' || value === null) return null;
   const { task, mr, intent, jira } = value as Record<string, unknown>;
   if (jira !== undefined && task === undefined && mr === undefined) {
     const key = validateJiraStart(jira);
-    return key ? jiraPrompt(key) : null;
+    return key ? jiraPrompt(key, promptTemplate('jira.start', prompts)) : null;
   }
   if (task !== undefined && mr === undefined && jira === undefined) {
     const ref = validateRef(task);
-    return ref ? taskPrompt(ref) : null;
+    return ref ? taskPrompt(ref, promptTemplate('task.start', prompts)) : null;
   }
   if (mr !== undefined && task === undefined && jira === undefined) {
     const ref = validateRef(mr);
     if (!ref || typeof intent !== 'string' || !INTENTS.includes(intent)) return null;
-    return mrPrompt(ref, intent as MrIntent);
+    return mrPrompt(ref, intent as MrIntent, promptTemplate(`mr.${intent}` as PromptId, prompts));
   }
   return null;
 }
