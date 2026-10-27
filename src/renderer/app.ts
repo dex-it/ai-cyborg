@@ -14,6 +14,7 @@ import { windowTitle } from './title';
 import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
 import { initSourcesSection } from './sources';
 import { CommandBars, type CommandTarget } from './command-bar';
+import { initCommandEditor } from './command-editor';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
@@ -1215,6 +1216,8 @@ function reloadCommands(): Promise<void> {
   return api.loadCommands().then((raw) => commandBars.setConfig(raw));
 }
 window.addEventListener('focus', () => void reloadCommands());
+const commandEditor = initCommandEditor({ problems: () => commandBars.configProblems, saved: () => void reloadCommands() });
+api.on<void>('menu:commands', () => void commandEditor.open());
 
 void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, loaded]) => {
   workspaceFile = info.file;

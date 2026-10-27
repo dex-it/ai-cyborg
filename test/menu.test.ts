@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -19,6 +19,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   openRecent() {},
   newProject() {},
   editProject() {},
+  editCommands() {},
   ...over,
 });
 
@@ -74,9 +75,9 @@ describe('appMenuTemplate', () => {
   });
 
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
-    it(`${platform}: «Воркспейс» с пятью пунктами в заданном порядке`, () => {
+    it(`${platform}: «Воркспейс» с шестью пунктами в заданном порядке`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      assert.deepEqual(labels, ['Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта']);
+      assert.deepEqual(labels, ['Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…']);
     });
   }
 
@@ -86,6 +87,17 @@ describe('appMenuTemplate', () => {
     assert.equal(byId(workspaceItems('linux', { hasProject: true }), PROJECT_PROPERTIES_MENU_ID)?.enabled, true);
     assert.equal(byId(workspaceItems('linux', { hasWorkspace: false }), PROJECT_NEW_MENU_ID)?.enabled, false);
     assert.equal(byId(workspaceItems('linux'), PROJECT_NEW_MENU_ID)?.enabled, true);
+  });
+
+  it('«Кнопки команд…» недоступны без воркспейса и вызывают правку', () => {
+    const byId = (items: MenuItemConstructorOptions[], id: string) => items.find((item) => item.id === id);
+    assert.equal(byId(workspaceItems('linux', { hasWorkspace: false }), COMMANDS_MENU_ID)?.enabled, false);
+    const calls: string[] = [];
+    const item = byId(workspaceItems('darwin', { editCommands: () => calls.push('commands') }), COMMANDS_MENU_ID);
+    assert.equal(item?.label, 'Кнопки команд…');
+    assert.equal(item?.enabled, true);
+    (item?.click as () => void)();
+    assert.deepEqual(calls, ['commands']);
   });
 
   it('клики вызывают переданные функции, «Недавние» отдают путь', () => {

@@ -369,6 +369,7 @@ function rebuildMenu(): void {
     openRecent: (file) => void openRecent(file),
     newProject: () => win?.webContents.send('menu:project', 'new'),
     editProject: () => win?.webContents.send('menu:project', 'edit'),
+    editCommands: () => win?.webContents.send('menu:commands'),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
