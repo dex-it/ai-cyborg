@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 111; с автотестом - 97, из них со smoke - 13; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 113; с автотестом - 99, из них со smoke - 15; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -124,3 +124,5 @@ date: 2026-10-26
 | FR-12006 | Правка набора в Monaco и подхват без перезапуска | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/commands-store.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-12007 | Инструкция сессии и разбор предложений модели | 12-command-buttons | автотест | `test/suggestions.test.ts`, `src/main/sessions.test.ts`, `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-12008 | Предложенные кнопки на полосе | 12-command-buttons | smoke | `scripts/smoke.mjs` |
+| FR-12009 | Промпты кнопок запуска сессий: поле `prompts` и сборка первого сообщения | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/mrs.test.ts`, `test/trackers.test.ts`, `test/jira.test.ts`, `test/ipc-error.test.ts`, `scripts/smoke.mjs` |
+| FR-12010 | Правка промптов в Monaco | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
