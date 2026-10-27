@@ -187,7 +187,7 @@ describe('TasksView: проводка', () => {
     assert.ok(t.root.text().includes('#1') && t.root.text().includes('#2'));
   });
 
-  it('пока идёт загрузка, полоса меток остаётся с прежними метками и цветом, но выключена', async () => {
+  it('пока идёт фоновая загрузка, полоса меток остаётся с прежними метками и цветом и работает', async () => {
     const t = await setup();
     const before = t.barChips().map((c) => `${c.textContent}/${c.style.backgroundColor}`);
     assert.deepEqual(before, ['bug/#ff0000', 'ui/#ff0000']);
@@ -196,7 +196,7 @@ describe('TasksView: проводка', () => {
     const pending = t.view.refresh(false, 'reload');
     const during = t.barChips();
     assert.deepEqual(during.map((c) => `${c.textContent}/${c.style.backgroundColor}`), before);
-    assert.ok(during.every((c) => c.disabled), 'выключена');
+    assert.ok(during.every((c) => !c.disabled), 'снимок на экране живой');
     assert.equal(t.root.children.find((c) => c.className === 'tasks-labels')!.hidden, false);
     release(result(2, mk(1, ['bug']), mk(2, ['ui'])));
     await pending;

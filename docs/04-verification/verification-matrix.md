@@ -22,7 +22,7 @@ date: 2026-10-26
 | FR-1004 | Фильтр «Назначено мне» на стороне трекера | 01-tasks-panel | автотест | `test/trackers.test.ts` |
 | NFR-1004 | Время загрузки панели задач | 01-tasks-panel | ручная | `scripts/measure.mjs` |
 | FR-1005 | Сортировка | 01-tasks-panel | автотест | `test/model.test.ts` |
-| FR-1006 | Обновление по открытию и кнопке | 01-tasks-panel | автотест | `test/flow.test.ts` |
+| FR-1006 | Снимок задач и его фоновое обновление | 01-tasks-panel | автотест | `test/flow.test.ts`, `test/tasks-view.test.ts` |
 | FR-1007 | Отказ источника не скрывает остальные | 01-tasks-panel | автотест | `test/trackers.test.ts` |
 | FR-1008 | Пустые состояния панели | 01-tasks-panel | автотест | `test/model.test.ts`, `test/tasks-view.test.ts` |
 | FR-1009 | Раздел «Источники задач» диалога проекта | 01-tasks-panel | автотест | `test/model.test.ts`, `test/trackers.test.ts` |
