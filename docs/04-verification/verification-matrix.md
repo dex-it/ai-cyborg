@@ -118,7 +118,7 @@ date: 2026-10-26
 | FR-11012 | Выбор проектов Jira для проекта | 11-status-hub | автотест + smoke | `test/jira.test.ts`, `scripts/smoke.mjs` |
 | FR-12001 | Полоса кнопок под терминалом сессии | 12-command-buttons | smoke | `scripts/smoke.mjs` |
 | FR-12002 | Отправка текста кнопки | 12-command-buttons | smoke | `scripts/smoke.mjs` |
-| FR-12003 | Подстановки `{branch}`, `{pr}`, `{task}` | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `scripts/smoke.mjs` |
+| FR-12003 | Подстановки `{branch}`, `{pr}`, `{task}` | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/command-values.test.ts`, `scripts/smoke.mjs` |
 | FR-12004 | Сочетание клавиш кнопки | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `scripts/smoke.mjs` |
 | FR-12005 | Набор кнопок и проверка файла | 12-command-buttons | автотест | `test/commands.test.ts`, `test/commands-store.test.ts` |
 | FR-12006 | Правка набора в Monaco и подхват без перезапуска | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/commands-store.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
