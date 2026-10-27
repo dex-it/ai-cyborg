@@ -125,6 +125,26 @@
       </form>
     </dialog>
 
+    <dialog id="commands-dialog">
+      <form method="dialog">
+        <h2>Кнопки команд</h2>
+        <p class="hint">
+          Дополнения к встроенным кнопкам (Сливай, Сделай PR, Мердж, Приберись): кнопка с тем же <code>label</code> заменяет встроенную.
+          Поля: <code>label</code>, <code>text</code> (одна строка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
+          только вставка), <code>hotkey</code> (<code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>). В <code>text</code> работают
+          <code>{branch}</code>, <code>{pr}</code>, <code>{task}</code>. Файл воркспейса перечитывается сам.
+        </p>
+        <div id="commands-editor"></div>
+        <div id="commands-problems" class="dialog-note" hidden></div>
+        <div id="commands-error" class="dialog-error" role="alert" hidden></div>
+        <footer>
+          <span class="spacer"></span>
+          <button type="button" id="commands-cancel">Закрыть</button>
+          <button type="button" id="commands-save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
     <script src="vs/loader.js"></script>
     <script src="app.js"></script>
   </body>
