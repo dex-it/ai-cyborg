@@ -23,6 +23,7 @@ import {
   parseWorkspaceArg,
   readRecent,
   releaseLock,
+  replaceWorkspace,
   resolveStartup,
   sessionDirOf,
   touchRecent,
@@ -30,6 +31,7 @@ import {
   workspaceDisplayName,
   type OpenDeps,
   type OpenResult,
+  type ReplaceDeps,
   type SpawnFn,
 } from '../src/main/workspaces';
 
@@ -416,5 +418,53 @@ describe('открытие из меню', () => {
     assert.deepEqual(await createAndOpen(request(file), d), { exists: true });
     assert.equal(fs.readFileSync(file, 'utf8'), 'x');
     assert.deepEqual(launched, []);
+  });
+});
+
+describe('смена воркспейса в этом окне', () => {
+  const deps = (over: Partial<ReplaceDeps> = {}) => {
+    const steps: string[] = [];
+    const d: ReplaceDeps = {
+      current: path.join(dir, 'old.json'),
+      confirm: () => (steps.push('confirm'), true),
+      endSessions: () => void steps.push('end'),
+      openHere: (file): OpenResult => (steps.push(`open ${path.basename(file)}`), { ok: true }),
+      releasePrevious: () => void steps.push('release'),
+      ...over,
+    };
+    return { d, steps };
+  };
+
+  it('спрашивает, завершает сессии, открывает новый и только потом отпускает прежний замок', () => {
+    const file = mkfile('a.json');
+    const { d, steps } = deps();
+    assert.deepEqual(replaceWorkspace(file, d), { ok: true });
+    assert.deepEqual(steps, ['confirm', 'end', 'open a.json', 'release']);
+  });
+  it('отказ в подтверждении: сессии живы, воркспейс прежний', () => {
+    const file = mkfile('a.json');
+    const { d, steps } = deps({ confirm: () => false });
+    assert.deepEqual(replaceWorkspace(file, d), { cancelled: true });
+    assert.deepEqual(steps, []);
+  });
+  it('текущий файл - ничего не делается', () => {
+    const file = mkfile('a.json');
+    const { d, steps } = deps({ current: file });
+    assert.deepEqual(replaceWorkspace(file, d), { cancelled: true });
+    assert.deepEqual(steps, []);
+  });
+  it('пропавший или занятый файл называется до вопроса, сессии не трогаются', () => {
+    const { d, steps } = deps({ isAlive: alive(4242) });
+    assert.deepEqual(replaceWorkspace(path.join(dir, 'gone.json'), d), { missing: true });
+    const busy = mkfile('b.json');
+    tryLock(busy, 4242, alive());
+    assert.deepEqual(replaceWorkspace(busy, d), { busy: { pid: 4242, lock: lockPathOf(busy) } });
+    assert.deepEqual(steps, []);
+  });
+  it('новый не взялся - прежний замок остаётся', () => {
+    const file = mkfile('a.json');
+    const { d, steps } = deps({ openHere: () => ({ busy: { pid: 1, lock: 'x' } }) });
+    assert.ok('busy' in replaceWorkspace(file, d));
+    assert.deepEqual(steps, ['confirm', 'end']);
   });
 });
