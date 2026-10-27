@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { claudeArgs, ISOLATION_PROMPT } from '../src/main/claude-args';
+import { claudeArgs, SESSION_PROMPT } from '../src/main/claude-args';
 import {
   approvalsText,
   filterMrs,
@@ -167,7 +167,7 @@ describe('ключи, URL и сообщения', () => {
     );
   });
   it('claudeArgs: промпт на «/» стоит до --add-dir', () => {
-    assert.deepEqual(claudeArgs(['/b'], '/dex-auto:auto review URL'), ['--append-system-prompt', ISOLATION_PROMPT, '/dex-auto:auto review URL', '--add-dir', '/b']);
+    assert.deepEqual(claudeArgs(['/b'], '/dex-auto:auto review URL'), ['--append-system-prompt', SESSION_PROMPT, '/dex-auto:auto review URL', '--add-dir', '/b']);
   });
 });
 

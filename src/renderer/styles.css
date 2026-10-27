@@ -1751,6 +1751,17 @@ label.disabled .hint {
   border-style: dashed;
 }
 
+/* Кнопки, предложенные моделью: оттенок акцента и маркер ✦, чтобы отличались от заданных заранее (нейтральных) не только цветом. */
+.command-button.suggested {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  color: var(--accent);
+}
+
+.command-button.suggested:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg-raised));
+}
+
 .command-notice {
   max-width: 45%;
   padding-top: 5px;
@@ -1764,11 +1775,13 @@ label.disabled .hint {
   color: var(--danger);
 }
 
-#commands-dialog {
+#commands-dialog,
+#prompts-dialog {
   width: min(780px, 94vw);
 }
 
-#commands-dialog .hint {
+#commands-dialog .hint,
+#prompts-dialog .hint {
   margin: 0 0 12px;
   color: var(--fg-dim);
   font-size: 12px;
@@ -1786,7 +1799,8 @@ label.disabled .hint {
   user-select: text;
 }
 
-#commands-editor {
+#commands-editor,
+#prompts-editor {
   height: 320px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1800,7 +1814,8 @@ label.disabled .hint {
   white-space: pre-wrap;
 }
 
-#commands-dialog .dialog-error {
+#commands-dialog .dialog-error,
+#prompts-dialog .dialog-error {
   margin: 10px 0 0;
   white-space: pre-wrap;
 }

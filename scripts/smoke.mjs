@@ -46,7 +46,14 @@ writeFileSync(
   }),
 );
 
-// Подставной claude: SessionStart при старте, по строке `cd <dir>` - событие с новым cwd, остальной ввод эхом.
+// Хвост ответа с кнопками, как его отдаёт хук Stop: подставной claude дописывает эту строку в файл событий по команде `suggest`.
+const fakeArgsLog = join(fakeBin, 'args.log');
+const fakeSuggest = join(fakeBin, 'suggest.json');
+writeFileSync(
+  fakeSuggest,
+  JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'Готово.\n\n<!-- cyborg-buttons: [{"label":"Отправь","text":"отправь это","submit":true},{"label":"Вставь","text":"вставь это"},{"label":"Лишняя","text":"лишняя"}] -->' }) + '\n',
+);
+// Подставной claude: SessionStart при старте, по строке `cd <dir>` - событие с новым cwd, строка, оканчивающаяся на `suggest`, - ответ с кнопками, на `ask` - запрос человека (вставленный без Enter текст остаётся в строке ввода), остальной ввод эхом.
 const fakeClaude = join(fakeBin, 'claude');
 writeFileSync(
   fakeClaude,
@@ -54,9 +61,12 @@ writeFileSync(
 printf '{"hook_event_name":"SessionStart","cwd":"%s"}\\n' "$PWD" >> "$CYBORG_EVENTS"
 echo "fake-claude ready"
 echo "ARGS: $*"
+printf '%s\\n' "$*" >> "$FAKE_ARGS_LOG"
 while IFS= read -r line; do
   case "$line" in
     "cd "*) dir=\${line#cd }; printf '{"hook_event_name":"PostToolUse","cwd":"%s","tool_name":"EnterWorktree"}\\n' "$dir" >> "$CYBORG_EVENTS"; echo "moved";;
+    *suggest) cat "$FAKE_SUGGEST" >> "$CYBORG_EVENTS"; echo "suggested";;
+    *ask) printf '{"hook_event_name":"UserPromptSubmit"}\\n' >> "$CYBORG_EVENTS"; echo "asked";;
     *) echo "got: [$line]";;
   esac
 done
@@ -67,6 +77,10 @@ chmodSync(fakeClaude, 0o755);
 const fakeGh = join(fakeBin, 'gh');
 writeFileSync(fakeGh, '#!/bin/sh\necho "You are not logged in to any GitHub hosts." >&2\nexit 1\n');
 chmodSync(fakeGh, 0o755);
+// Сессия стартует через `$SHELL -lc`, а login-профиль (на Ubuntu - ~/.profile) ставит ~/.local/bin с настоящим claude впереди подставного.
+const fakeShell = join(fakeBin, 'shell');
+writeFileSync(fakeShell, '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n');
+chmodSync(fakeShell, 0o755);
 
 // Подставной jira: вход есть, одна задача SMK-1 в работе; формы ответов - как у jira-cli 1.7.0 (`--raw`, `--plain`).
 const fakeJira = join(fakeBin, 'jira');
@@ -181,7 +195,8 @@ async function launch(dataDir, args = [], cwd = root) {
   const electron = join(root, 'node_modules', '.bin', 'electron');
   const proc = spawn(electron, [root, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
     cwd,
-    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+    // Смоук, запущенный из сессии Cyborg, унаследовал бы её CYBORG_CWD, и относительный --workspace считался бы не от cwd.
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CYBORG_'))), PATH: `${fakeBin}:${process.env.PATH}`, SHELL: fakeShell, FAKE_SUGGEST: fakeSuggest, FAKE_ARGS_LOG: fakeArgsLog },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -381,6 +396,10 @@ async function main() {
   await clickMenu(mainEv, 'Кнопки команд…');
   await waitFor('диалог кнопок открыт', async () => (await ev('document.querySelector("#commands-dialog").open')) === true);
   await waitFor('редактор Monaco в диалоге', async () => (await ev('document.querySelectorAll("#commands-editor .monaco-editor").length')) === 1);
+  const editorValue = () => ev('window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#commands-dialog")).getValue()');
+  const opened = JSON.parse(await editorValue());
+  assert.deepEqual(opened.map((b) => b.label), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись'], 'редактор не показал встроенные кнопки');
+  assert.ok(opened.every((b) => b.description), 'у встроенных кнопок в редакторе нет описаний');
   const setEditor = (value) => ev(`window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#commands-dialog")).setValue(${JSON.stringify(value)})`);
   await setEditor('[{"label":"A"}]');
   await ev('document.querySelector("#commands-save").click()');
@@ -390,14 +409,16 @@ async function main() {
     JSON.stringify([
       { label: 'Ветка', text: 'ветка {branch}', submit: true, hotkey: 'Alt+B' },
       { label: 'Задача', text: 'задача {task}', submit: true },
+      { label: 'Предложи', text: 'suggest', submit: true },
+      { label: 'Спроси', text: 'ask', submit: true },
       { label: 'Вставка', text: 'без ввода', submit: false },
     ]),
   );
   await ev('document.querySelector("#commands-save").click()');
   await waitFor('диалог закрыт сохранением', async () => (await ev('document.querySelector("#commands-dialog").open')) === false);
-  await waitFor('кнопки из воркспейса на полосе без перезапуска', async () => (await barButtons()).join() === 'Сливай,Сделай PR,Мердж,Приберись,Ветка,Задача,Вставка');
+  await waitFor('кнопки из воркспейса на полосе без перезапуска', async () => (await barButtons()).join() === 'Сливай,Сделай PR,Мердж,Приберись,Ветка,Задача,Предложи,Спроси,Вставка');
   const stored = JSON.parse(readFileSync(legacyFile, 'utf8'));
-  assert.equal(stored.commands.length, 3, 'кнопки не легли в файл воркспейса');
+  assert.equal(stored.commands.length, 5, 'кнопки не легли в файл воркспейса');
   assert.equal(stored.projects.length, 2, 'запись кнопок затёрла проекты');
 
   await barButton('Ветка');
@@ -407,6 +428,27 @@ async function main() {
   const before = ((await squeezed()).match(/got:\[веткаmain\]/g) ?? []).length;
   await combo(1, 'b', 'KeyB', 66);
   await waitFor('сочетание Alt+B нажало «Ветка»', async () => ((await squeezed()).match(/got:\[веткаmain\]/g) ?? []).length === before + 1);
+  // FR-12007, FR-12008: кнопка, предложенная моделью (хвост ответа в событии Stop), - другого цвета, вставляет текст без Enter и исчезает после запроса человека.
+  assert.ok(!(await barButtons()).some((label) => label.startsWith('✦')), 'до ответа модели есть предложенные кнопки');
+  await barButton('Предложи');
+  await waitFor('подставной claude получил «suggest»', async () => (await squeezed()).includes('suggested'));
+  await waitFor('предложенные моделью кнопки на полосе', async () => (await barButtons()).includes('✦ Вставь'));
+  assert.deepEqual((await barButtons()).filter((label) => label.startsWith('✦')), ['✦ Отправь', '✦ Вставь'], 'предложенных кнопок не две: предел не сработал');
+  const paint = (label) => ev(`getComputedStyle([...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)})).backgroundColor`);
+  assert.notEqual(await paint('✦ Вставь'), await paint('Сливай'), 'предложенная кнопка того же цвета, что заданная');
+  assert.equal(await paint('Предложи'), await paint('Сливай'), 'заданные заранее кнопки разных цветов');
+  const dashed = (label) => ev(`getComputedStyle([...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)})).borderStyle`);
+  assert.equal(await dashed('✦ Вставь'), 'dashed', 'кнопка без submit не с пунктирной рамкой');
+  assert.equal(await dashed('✦ Отправь'), 'solid', 'кнопка с submit с пунктирной рамкой');
+  await barButton('✦ Отправь');
+  await waitFor('предложенная кнопка с submit отправила текст с Enter', async () => (await squeezed()).includes('got:[отправьэто]'));
+  await barButton('✦ Вставь');
+  await waitFor('предложенная кнопка без submit вставила текст', async () => (await squeezed()).includes('вставьэто'));
+  await sleep(300);
+  assert.ok(!(await squeezed()).includes('got:[вставьэто]'), 'предложенная кнопка без submit нажала Enter');
+  await barButton('Спроси');
+  await waitFor('запрос человека убрал предложенную кнопку', async () => !(await barButtons()).some((label) => label.startsWith('✦')));
+
   await barButton('Вставка');
   await waitFor('«Вставка» вставила текст', async () => (await squeezed()).includes('безввода'));
   await sleep(300);
@@ -416,7 +458,44 @@ async function main() {
   writeFileSync(legacyFile, JSON.stringify({ ...stored, commands: [...stored.commands, { label: 'Внешняя', text: 'снаружи', submit: true }] }));
   await ev('window.dispatchEvent(new Event("focus"))');
   await waitFor('правка файла снаружи подхвачена', async () => (await barButtons()).includes('Внешняя'));
-  log('кнопки-команды: встроенные, правка в Monaco, подстановки, сочетание, вставка без Enter, правка файла снаружи');
+  log('кнопки-команды: встроенные, правка в Monaco, подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью');
+
+  // FR-12009: промпты кнопок запуска сессий - действующий набор в Monaco, правка доходит до первого сообщения следующей сессии.
+  const startedWith = async (key) => {
+    const id = await ev(`window.cyborg.createSession(${JSON.stringify(repo)}, [], { jira: { key: ${JSON.stringify(key)} } })`);
+    await waitFor(`подставной claude получил аргументы сессии ${key}`, async () => existsSync(fakeArgsLog) && readFileSync(fakeArgsLog, 'utf8').includes(key));
+    await ev(`window.cyborg.kill(${id}); 1`);
+    return readFileSync(fakeArgsLog, 'utf8').split('\n').filter((line) => line.includes(key)).at(-1);
+  };
+  assert.match(await startedWith('SMK-2'), /Задача Jira SMK-2: прочитай её \(jira issue view SMK-2 --comments 5\)/, 'встроенный промпт Jira изменился без правки файла');
+  const beforePrompts = JSON.parse(readFileSync(legacyFile, 'utf8'));
+  await clickMenu(mainEv, 'Промпты кнопок…');
+  await waitFor('диалог промптов открыт', async () => (await ev('document.querySelector("#prompts-dialog").open')) === true);
+  await waitFor('редактор Monaco в диалоге промптов', async () => (await ev('document.querySelectorAll("#prompts-editor .monaco-editor").length')) === 1);
+  const promptEditor = (call) => ev(`(() => { const e = window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#prompts-dialog")); return e.${call}; })()`);
+  const shown = JSON.parse(await promptEditor('getValue()'));
+  assert.deepEqual(Object.keys(shown), ['mr.review', 'mr.rework', 'mr.ci', 'task.start', 'jira.start'], 'редактор не показал встроенные промпты');
+  assert.ok(Object.values(shown).every((p) => p.text && p.description), 'у встроенного промпта нет текста или описания');
+  const setPrompts = (value) => promptEditor(`setValue(${JSON.stringify(JSON.stringify(value))})`);
+  await setPrompts({ 'jira.start': { text: 'Работай над {jira_kye}' } });
+  await ev('document.querySelector("#prompts-save").click()');
+  await waitFor('негодный промпт назван в диалоге', async () => /«jira\.start»: неизвестная подстановка \{jira_kye\}/.test(await text('#prompts-error')));
+  assert.ok(await ev('document.querySelector("#prompts-dialog").open'), 'диалог закрылся при ошибке');
+  await setPrompts({ ...shown, 'jira.start': { text: 'Смоук-промпт {jira_key}', description: 'для проверки' } });
+  await ev('document.querySelector("#prompts-save").click()');
+  await waitFor('диалог промптов закрыт сохранением', async () => (await ev('document.querySelector("#prompts-dialog").open')) === false);
+  const afterSave = JSON.parse(readFileSync(legacyFile, 'utf8'));
+  assert.equal(afterSave.prompts['jira.start'].text, 'Смоук-промпт {jira_key}', 'промпт не лёг в файл воркспейса');
+  assert.deepEqual(afterSave.commands, beforePrompts.commands, 'запись промптов затёрла кнопки');
+  assert.deepEqual(afterSave.projects, beforePrompts.projects, 'запись промптов затёрла проекты');
+  assert.match(await startedWith('SMK-3'), /Смоук-промпт SMK-3/, 'правка промпта не дошла до первого сообщения сессии');
+  // Негодная запись, правленная руками, не заменяется встроенной молча: сессия не стартует и называет причину.
+  writeFileSync(legacyFile, JSON.stringify({ ...afterSave, prompts: { 'jira.start': { text: '-p {jira_key}' } } }));
+  const refused = await ev(`window.cyborg.createSession(${JSON.stringify(repo)}, [], { jira: { key: "SMK-4" } }).then(() => "стартовала", (error) => String(error))`);
+  assert.match(refused, /text не может начинаться с «-»/, 'негодный промпт из файла не назван');
+  assert.ok(!readFileSync(fakeArgsLog, 'utf8').includes('SMK-4'), 'сессия с негодным промптом стартовала');
+  writeFileSync(legacyFile, JSON.stringify(afterSave));
+  log('промпты кнопок: действующий набор в Monaco, проверка, правка доходит до сессии, негодный промпт не стартует молча');
 
   // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».
   const stray = await ev(`(() => {
