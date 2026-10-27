@@ -481,7 +481,9 @@ async function firstRun() {
   await ev('document.querySelector("#workspace-add-repo").click()');
   await waitFor('репозиторий в списке окна', async () => /repo/.test(await text0(ev, '#workspace-repos')));
   assert.equal(await ev('document.querySelector("#workspace-create").disabled'), false, '«Создать» недоступна при полных данных');
-  await ev('document.querySelector("#workspace-create").click()');
+  // «Создать» пересоздаёт окно: старое уничтожается сразу после ответа главного процесса, и ответ на сам вызов DevTools может не дойти.
+  // Клик откладывается, чтобы вызов вернулся до него.
+  await ev('setTimeout(() => document.querySelector("#workspace-create").click(), 0); 0');
   const pageAfter = await waitFor('окно воркспейса пересоздано', async () => {
     const pages = await started.pages();
     return pages.length === 1 && pages[0].id !== firstPage.id ? pages[0] : null;
