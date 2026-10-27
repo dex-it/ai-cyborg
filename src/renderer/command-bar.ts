@@ -168,8 +168,7 @@ export class CommandBars {
         const node = el('button', `command-button${button.submit ? '' : ' no-submit'}`, button.label) as HTMLButtonElement;
         node.type = 'button';
         node.disabled = exited;
-        node.title = [button.text, button.submit ? '' : '(текст вставляется без Enter)', button.hotkey ?? ''].filter(Boolean).join('\n');
-        if (button.hotkey) node.append(el('span', 'command-hotkey', button.hotkey));
+        node.title = [button.hotkey ?? '', button.text, button.submit ? '' : '(текст вставляется без Enter)'].filter(Boolean).join('\n');
         node.addEventListener('click', () => void this.run(target, button));
         return node;
       }),

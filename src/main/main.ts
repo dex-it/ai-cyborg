@@ -40,6 +40,7 @@ import {
   parseWorkspaceArg,
   readRecent,
   releaseLock,
+  replaceWorkspace,
   resolveStartup,
   sessionDirOf,
   touchRecent,
@@ -99,17 +100,17 @@ app.on('before-quit', () => {
   quitting = true;
 });
 
-/** Закрытие окна и выход завершают все сессии: как и закрытие вкладки, они спрашивают, пока сессия работает. */
-function confirmEndSessions(): boolean {
+/** Закрытие окна, выход и смена воркспейса завершают все сессии: как и закрытие вкладки, они спрашивают, пока сессия работает. */
+function confirmEndSessions(button = 'Закрыть', detail = 'При закрытии окна они будут завершены.'): boolean {
   const running = sessions.count();
   if (!running) return true;
   const choice = dialog.showMessageBoxSync(win!, {
     type: 'warning',
-    buttons: ['Закрыть', 'Отмена'],
+    buttons: [button, 'Отмена'],
     defaultId: 1,
     cancelId: 1,
     message: `Работающих сессий Claude Code: ${running}`,
-    detail: 'При закрытии окна они будут завершены.',
+    detail,
   });
   return choice === 0;
 }
@@ -364,6 +365,7 @@ function rebuildMenu(): void {
     home: os.homedir(),
     hasWorkspace: current.file !== null,
     hasProject: menuState.hasProject,
+    replace: () => void replaceFromMenu(),
     open: () => void chooseWorkspace(),
     create: () => win?.webContents.send('menu:create-workspace'),
     openRecent: (file) => void openRecent(file),
@@ -450,6 +452,29 @@ async function chooseWorkspace(): Promise<void> {
   });
   if (result.canceled || !result.filePaths[0]) return;
   await report(await openWorkspaceFile(result.filePaths[0], openDeps), result.filePaths[0]);
+}
+
+async function replaceFromMenu(): Promise<void> {
+  if (!win) return;
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Открыть воркспейс',
+    buttonLabel: 'Открыть',
+    properties: ['openFile'],
+    filters: [{ name: 'Воркспейс Cyborg', extensions: ['json'] }],
+  });
+  const file = result.filePaths[0];
+  if (result.canceled || !file) return;
+  const previous = heldLock;
+  const outcome = replaceWorkspace(file, {
+    current: current.file,
+    confirm: () => confirmEndSessions('Открыть', 'При смене воркспейса они будут завершены.'),
+    endSessions: () => sessions.killAll(),
+    openHere,
+    releasePrevious: () => {
+      if (previous) releaseLock(previous);
+    },
+  });
+  if (!('cancelled' in outcome)) await report(outcome, file);
 }
 
 async function openRecent(file: string): Promise<void> {
