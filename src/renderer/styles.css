@@ -1777,7 +1777,21 @@ label.disabled .hint {
 
 #commands-dialog,
 #prompts-dialog {
-  width: min(780px, 94vw);
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-sizing: border-box;
+}
+
+#commands-dialog[open] > form,
+#prompts-dialog[open] > form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 #commands-dialog .hint,
@@ -1801,7 +1815,8 @@ label.disabled .hint {
 
 #commands-editor,
 #prompts-editor {
-  height: 320px;
+  flex: 1;
+  min-height: 200px;
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;

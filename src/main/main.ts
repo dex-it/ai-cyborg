@@ -6,6 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, s
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { saveCommandsText } from './commands';
 import { savePromptsText } from './prompts';
+import { PromptStore } from './prompt-store';
 import { listDir, readTextFile } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
@@ -58,7 +59,8 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
 });
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
-type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands' | 'loadPrompts' | 'savePrompts'>;
+const prompts = new PromptStore(path.join(userData, 'prompts.json'));
+type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
 // Инстанс без воркспейса (отмена окна первого запуска): проектов нет, писать некуда.
 const noWorkspace: Projects = {
   load: () => ({ projects: [], lastProjectId: null }),
@@ -68,10 +70,6 @@ const noWorkspace: Projects = {
   problem: () => null,
   loadCommands: () => undefined,
   saveCommands: () => {
-    throw new Error('Воркспейс не открыт');
-  },
-  loadPrompts: () => undefined,
-  savePrompts: () => {
     throw new Error('Воркспейс не открыт');
   },
 };
@@ -198,12 +196,12 @@ ipcMain.handle('projects:problem', () => {
 ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
 ipcMain.handle('commands:load', () => projects.loadCommands());
 ipcMain.handle('commands:save', (_event, text: unknown) => saveCommandsText(text, projects, process.platform === 'darwin'));
-ipcMain.handle('prompts:load', () => projects.loadPrompts());
-ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, projects));
+ipcMain.handle('prompts:load', () => prompts.read());
+ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, prompts));
 ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?: unknown) => {
   if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
   if (start === undefined) return sessions.create(cwd as string, addDirs as string[]);
-  const prompt = validateSessionStart(start, projects.loadPrompts());
+  const prompt = validateSessionStart(start, prompts.load());
   if (!prompt) throw new Error('Некорректный старт сессии');
   return sessions.create(cwd as string, addDirs as string[], prompt);
 });
