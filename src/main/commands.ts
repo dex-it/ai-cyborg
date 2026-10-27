@@ -22,10 +22,10 @@ export const MAX_COMMANDS_TEXT = 200_000;
 
 /** Кнопки по умолчанию, общие для всех воркспейсов: фразы, которыми Claude Code понимает типовое действие. */
 export const DEFAULT_COMMANDS: readonly CommandButton[] = [
-  { label: 'Сливай', text: 'сливай', submit: true, description: 'Фраза «сливай»: слить PR текущей ветки.' },
-  { label: 'Сделай PR', text: 'сделай PR', submit: true, description: 'Фраза «сделай PR»: открыть PR из текущей ветки.' },
-  { label: 'Мердж', text: 'смерджи PR {pr}', submit: false, description: 'Вставляет «смерджи PR» со ссылкой на PR ветки без Enter: проверьте и нажмите Enter сами. Нужен открытый PR/MR ветки.' },
-  { label: 'Приберись', text: 'приберись', submit: true, description: 'Фраза «приберись»: убрать за собой, например слитые ветки.' },
+  { label: 'Сливай', text: 'сливай', submit: true, hotkey: 'F1', description: 'Фраза «сливай»: слить PR текущей ветки.' },
+  { label: 'Сделай PR', text: 'сделай PR', submit: true, hotkey: 'F2', description: 'Фраза «сделай PR»: открыть PR из текущей ветки.' },
+  { label: 'Мердж', text: 'смерджи PR {pr}', submit: false, hotkey: 'F3', description: 'Вставляет «смерджи PR» со ссылкой на PR ветки без Enter: проверьте и нажмите Enter сами. Нужен открытый PR/MR ветки.' },
+  { label: 'Приберись', text: 'приберись', submit: true, hotkey: 'F4', description: 'Фраза «приберись»: убрать за собой, например слитые ветки.' },
 ];
 
 const KNOWN_FIELDS = new Set(['label', 'text', 'submit', 'hotkey', 'description', 'disabled']);
@@ -65,11 +65,11 @@ const MODIFIERS: Record<string, 'ctrl' | 'alt' | 'shift' | 'meta' | 'cmdorctrl'>
 
 // Сочетания, которые уже заняты меню приложения либо самим окном: до кнопки они не дошли бы (запись в порядке canonical: ctrl, alt, shift, meta).
 const RESERVED_MAC = ['meta+KeyQ', 'meta+KeyC', 'meta+KeyV', 'meta+KeyX', 'meta+KeyA', 'meta+KeyZ', 'meta+KeyW', 'meta+KeyM', 'meta+KeyH', 'meta+Digit0', 'shift+meta+KeyN', 'shift+meta+KeyZ'];
-const RESERVED_OTHER = ['ctrl+shift+KeyN', 'ctrl+shift+KeyC', 'ctrl+shift+KeyV'];
+const RESERVED_OTHER = ['ctrl+shift+KeyN', 'ctrl+shift+KeyC', 'ctrl+shift+KeyV', 'F11'];
 
 const canonical = (h: Hotkey): string => [h.ctrl && 'ctrl', h.alt && 'alt', h.shift && 'shift', h.meta && 'meta', h.code].filter(Boolean).join('+');
 
-/** «Alt+S», «Ctrl+Shift+K», «CmdOrCtrl+Shift+M»; ошибка - текст причины. */
+/** «Alt+S», «Ctrl+Shift+K», «CmdOrCtrl+Shift+M», «F2»; ошибка - текст причины. */
 export function parseHotkey(text: string, mac: boolean): Hotkey | { error: string } {
   const parts = text.split('+').map((p) => p.trim());
   const key = parts.pop() ?? '';
@@ -86,7 +86,7 @@ export function parseHotkey(text: string, mac: boolean): Hotkey | { error: strin
   else if (/^F([1-9]|1[0-2])$/i.test(key)) hotkey.code = key.toUpperCase();
   else return { error: `«${key}» - допустимы буква, цифра и F1-F12` };
   // Ctrl с буквой без других модификаторов - управляющие символы терминала (Ctrl+C, Ctrl+D): кнопка отняла бы их у сессии.
-  if (!hotkey.alt && !hotkey.meta && !(hotkey.ctrl && hotkey.shift)) return { error: 'нужен Alt или Cmd, либо Ctrl с Shift: остальное занято терминалом' };
+  if (!/^F/.test(hotkey.code) && !hotkey.alt && !hotkey.meta && !(hotkey.ctrl && hotkey.shift)) return { error: 'нужен Alt или Cmd, либо Ctrl с Shift, либо F-клавиша: остальное занято терминалом' };
   if ((mac ? RESERVED_MAC : RESERVED_OTHER).includes(canonical(hotkey))) return { error: 'сочетание занято приложением' };
   return hotkey;
 }

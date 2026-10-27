@@ -1762,11 +1762,6 @@ label.disabled .hint {
   background: color-mix(in srgb, var(--accent) 24%, var(--bg-raised));
 }
 
-.command-hotkey {
-  color: var(--fg-dim);
-  font-size: 11px;
-}
-
 .command-notice {
   max-width: 45%;
   padding-top: 5px;
@@ -1789,6 +1784,17 @@ label.disabled .hint {
   color: var(--fg-dim);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.commands-example {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  background: var(--bg-side);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  user-select: text;
 }
 
 #commands-editor {

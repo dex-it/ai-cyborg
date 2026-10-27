@@ -132,10 +132,14 @@
           Действующий набор: встроенные кнопки (Сливай, Сделай PR, Мердж, Приберись) и ваши. Что здесь записано, то и сохранится в файле воркспейса.
           Кнопка с тем же <code>label</code>, что у встроенной, заменяет её. Поля: <code>label</code>, <code>text</code> (одна строка),
           <code>description</code> (что делает кнопка - подсказка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
-          только вставка), <code>hotkey</code> (<code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>), <code>disabled</code>
+          только вставка), <code>hotkey</code> (<code>F5</code>, <code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>), <code>disabled</code>
           (<code>true</code> - скрыть кнопку; так отключается и встроенная). В <code>text</code> работают <code>{branch}</code>, <code>{pr}</code>,
           <code>{task}</code>. Файл воркспейса перечитывается сам.
         </p>
+        <pre class="commands-example">[
+  { "label": "Тесты", "text": "прогони тесты", "submit": true, "hotkey": "F5" },
+  { "label": "Ревью", "text": "сделай ревью {pr}", "hotkey": "Alt+R" }
+]</pre>
         <div id="commands-editor"></div>
         <div id="commands-problems" class="dialog-note" hidden></div>
         <div id="commands-error" class="dialog-error" role="alert" hidden></div>
