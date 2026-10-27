@@ -229,6 +229,6 @@ test('SessionManager: хвост ответа на Stop с кнопками ух
     { hook_event_name: 'Stop', last_assistant_message: 'Готово.\n<!-- cyborg-buttons: [{"label":"Тест","text":"напиши тест","submit":true}] -->' },
   );
   await until(() => activity() === 3);
-  assert.deepEqual(events.filter((e) => e.channel === 'session:suggest').map((e) => e.payload), [{ id, buttons: [{ label: 'Тест', text: 'напиши тест', submit: false }] }]);
+  assert.deepEqual(events.filter((e) => e.channel === 'session:suggest').map((e) => e.payload), [{ id, buttons: [{ label: 'Тест', text: 'напиши тест', submit: true }] }]);
   manager.kill(id);
 });

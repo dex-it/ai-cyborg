@@ -51,7 +51,7 @@ const fakeArgsLog = join(fakeBin, 'args.log');
 const fakeSuggest = join(fakeBin, 'suggest.json');
 writeFileSync(
   fakeSuggest,
-  JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'Готово.\n\n<!-- cyborg-buttons: [{"label":"Тест","text":"напиши тест","submit":true}] -->' }) + '\n',
+  JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'Готово.\n\n<!-- cyborg-buttons: [{"label":"Отправь","text":"отправь это","submit":true},{"label":"Вставь","text":"вставь это"},{"label":"Лишняя","text":"лишняя"}] -->' }) + '\n',
 );
 // Подставной claude: SessionStart при старте, по строке `cd <dir>` - событие с новым cwd, строка, оканчивающаяся на `suggest`, - ответ с кнопками, на `ask` - запрос человека (вставленный без Enter текст остаётся в строке ввода), остальной ввод эхом.
 const fakeClaude = join(fakeBin, 'claude');
@@ -432,16 +432,22 @@ async function main() {
   assert.ok(!(await barButtons()).some((label) => label.startsWith('✦')), 'до ответа модели есть предложенные кнопки');
   await barButton('Предложи');
   await waitFor('подставной claude получил «suggest»', async () => (await squeezed()).includes('suggested'));
-  await waitFor('предложенная моделью кнопка на полосе', async () => (await barButtons()).includes('✦ Тест'));
+  await waitFor('предложенные моделью кнопки на полосе', async () => (await barButtons()).includes('✦ Вставь'));
+  assert.deepEqual((await barButtons()).filter((label) => label.startsWith('✦')), ['✦ Отправь', '✦ Вставь'], 'предложенных кнопок не две: предел не сработал');
   const paint = (label) => ev(`getComputedStyle([...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)})).backgroundColor`);
-  assert.notEqual(await paint('✦ Тест'), await paint('Сливай'), 'предложенная кнопка того же цвета, что заданная');
+  assert.notEqual(await paint('✦ Вставь'), await paint('Сливай'), 'предложенная кнопка того же цвета, что заданная');
   assert.equal(await paint('Предложи'), await paint('Сливай'), 'заданные заранее кнопки разных цветов');
-  await barButton('✦ Тест');
-  await waitFor('предложенная кнопка вставила текст', async () => (await squeezed()).includes('напишитест'));
+  const dashed = (label) => ev(`getComputedStyle([...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)})).borderStyle`);
+  assert.equal(await dashed('✦ Вставь'), 'dashed', 'кнопка без submit не с пунктирной рамкой');
+  assert.equal(await dashed('✦ Отправь'), 'solid', 'кнопка с submit с пунктирной рамкой');
+  await barButton('✦ Отправь');
+  await waitFor('предложенная кнопка с submit отправила текст с Enter', async () => (await squeezed()).includes('got:[отправьэто]'));
+  await barButton('✦ Вставь');
+  await waitFor('предложенная кнопка без submit вставила текст', async () => (await squeezed()).includes('вставьэто'));
   await sleep(300);
-  assert.ok(!(await squeezed()).includes('got:[напишитест]'), 'предложенная кнопка нажала Enter, хотя модель просила submit');
+  assert.ok(!(await squeezed()).includes('got:[вставьэто]'), 'предложенная кнопка без submit нажала Enter');
   await barButton('Спроси');
-  await waitFor('запрос человека убрал предложенную кнопку', async () => !(await barButtons()).includes('✦ Тест'));
+  await waitFor('запрос человека убрал предложенную кнопку', async () => !(await barButtons()).some((label) => label.startsWith('✦')));
 
   await barButton('Вставка');
   await waitFor('«Вставка» вставила текст', async () => (await squeezed()).includes('безввода'));
