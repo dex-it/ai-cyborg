@@ -3,7 +3,7 @@ import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { el } from './dom';
 import { readChoice, readPref, writePref } from './prefs';
 import type { PanelView } from './panel';
-import { fetchTasks, keepSnapshotOnError, RefreshGate, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
+import { fetchTasks, keepSnapshotOnError, RefreshGate, sameSnapshot, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
 import {
   availableLabels,
   cycleLabel,
@@ -12,6 +12,7 @@ import {
   detailsLines,
   emptyView,
   filterByLabels,
+  fetchFailed,
   labelEmpty,
   labelInk,
   parseLabelFilter,
@@ -239,7 +240,9 @@ export class TasksView implements PanelView {
       this.render();
       return;
     }
-    this.render();
+    // Снимок на экране не перерисовывается: фон не должен сбивать фокус и выделение текста, меняется только кнопка.
+    if (this.result) this.syncReload();
+    else this.render();
     let result: TasksResult;
     try {
       result = await fetchTasks(api, project.id, this.assigned.checked, this.host.trackedRefs(), trigger);
@@ -247,25 +250,34 @@ export class TasksView implements PanelView {
       result = { tasks: [], sources: [], tracked: [], enabled: { github: false, gitlab: false }, error: (error as Error).message };
     }
     if (!this.gate.finish(token)) return;
-    if (keepSnapshotOnError(trigger, !!this.result && !this.result.error, result.error)) {
+    const failed = fetchFailed(result);
+    if (keepSnapshotOnError(trigger, !!this.result && !fetchFailed(this.result), failed)) {
       this.failedAt = Date.now();
-      this.render();
+      this.syncReload();
       return;
     }
     this.failedAt = null;
+    const same = trigger === 'timer' && !!this.result && sameSnapshot(this.result, result);
     this.result = result;
-    this.snapshotAt = Date.now();
+    // Ответ-неудача снимком не считается: открытие панели и вкладка выберут заново, а не будут ждать пять минут.
+    this.snapshotAt = failed ? null : Date.now();
     // Описания привязаны к выборке ответа: «Обновить» сбрасывает их с приходом новой, а не до неё.
     if (trigger === 'reload') this.descriptions.reset();
     this.labelSource = result.tasks;
     this.host.applyStatuses(result);
-    this.render();
+    // Фоновый ответ, равный снимку на экране, строки не пересоздаёт.
+    if (same) this.syncReload();
+    else this.render();
   }
 
-  private render(): void {
+  private syncReload(): void {
     this.reload.disabled = this.gate.loading;
     this.reload.textContent = this.gate.loading ? 'Обновление…' : 'Обновить';
     this.reload.title = this.snapshotAt === null ? '' : `Снимок от ${new Date(this.snapshotAt).toLocaleTimeString('ru')}`;
+  }
+
+  private render(): void {
+    this.syncReload();
     this.ensureLabelFilter();
     this.renderLabelsBar();
     const hint = this.host.projectHint();

@@ -24,6 +24,8 @@ interface Session {
   watcher: fs.FSWatcher;
   /** Отложенное «ждёт» после Stop: любое следующее событие сессии его отменяет. */
   stopTimer?: NodeJS.Timeout;
+  /** Интерфейсу отправлены предложенные моделью кнопки, которые ещё не сняты. */
+  suggested?: boolean;
 }
 
 export interface SessionEvent {
@@ -227,7 +229,17 @@ export class SessionManager {
       this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
       if (event.hook_event_name === 'Stop') {
         const buttons = parseSuggestions(event.last_assistant_message);
-        if (buttons.length) this.emit('session:suggest', { id: session.id, buttons });
+        if (buttons.length) {
+          this.emit('session:suggest', { id: session.id, buttons });
+          session.suggested = true;
+        }
+      } else if (event.hook_event_name === 'UserPromptSubmit') {
+        session.suggested = false; // кнопки снимает интерфейс по этому же событию
+      } else if (session.suggested && (event.hook_event_name === 'PostToolUse' || (event.hook_event_name === 'Notification' && waitingReason(event)))) {
+        // Модель снова работает без запроса человека (фоновая задача, расписание) либо стоит на вопросе: предложение относилось к прошлому ходу,
+        // а кнопка с submit отправила бы Enter уже в чужой диалог.
+        this.emit('session:suggest', { id: session.id, buttons: [] });
+        session.suggested = false;
       }
       clearTimeout(session.stopTimer);
       const reason = waitingReason(event);

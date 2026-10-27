@@ -88,6 +88,23 @@ export function applyMrDetails(result: MrListResult, d: MrDetailsResult | null):
   };
 }
 
+/**
+ * Фоновое обновление не затирает известное: пайплайн, апрувы и замечания, которых новый ответ не принёс (вызов деталей упал: лимит, таймаут),
+ * берутся из прежнего снимка по ключу MR; не пришли MR вне списка - остаются прежние.
+ */
+export function keepKnownDetails(next: MrListResult, prev: MrListResult | null): MrListResult {
+  if (!prev) return next;
+  const before = new Map(prev.mrs.map((m) => [m.key, m]));
+  return {
+    ...next,
+    mrs: next.mrs.map((m) => {
+      const old = before.get(m.key);
+      return old ? { ...m, pipeline: m.pipeline ?? old.pipeline, approvals: m.approvals ?? old.approvals, comments: m.comments ?? old.comments } : m;
+    }),
+    tracked: next.tracked.length ? next.tracked : prev.tracked,
+  };
+}
+
 export const findMr = (result: MrListResult, key: string): Mr | undefined => result.mrs.find((m) => m.key === key) ?? result.tracked.find((m) => m.key === key);
 
 export function mrEmptyView(result: MrListResult): 'disabled' | 'no-remotes' | 'no-mrs' | null {

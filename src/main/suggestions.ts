@@ -1,25 +1,29 @@
 // Кнопки, которые предлагает модель (фича 12): инструкция сессии и разбор хвоста ответа.
 // Чистый файл без Node: разбор вызывает главный процесс (событие Stop), инструкцию - сборка аргументов claude.
 
-import { parseCommands, type CommandButton } from './commands.ts';
+import { LABEL_MAX, parseCommands, type CommandButton } from './commands.ts';
 
 export const SUGGEST_MAX = 2;
 /** Хвост длиннее разбирать не стоит: две кнопки по пределам commands.ts умещаются с запасом. */
 const SUGGEST_BLOCK_MAX = 20_000;
 const MARKER = '<!-- cyborg-buttons:';
 const END = '-->';
+const SHELL_PREFIX = '!';
+const SLASH_PREFIX = '/';
 
 /** Инструкция сессии: когда и в каком виде предлагать кнопки (дописывается к системному промту, как инструкция об изоляции). */
 export const SUGGEST_PROMPT =
   `Если после ответа человеку понятны 1-${SUGGEST_MAX} следующих шага, допиши в самом конце ответа, отдельной строкой, комментарий ` +
-  `${MARKER} [{"label":"подпись до 40 знаков","text":"реплика человека к тебе, одной строкой"}] ${END} . ` +
+  `${MARKER} [{"label":"подпись до ${LABEL_MAX} знаков","text":"реплика человека к тебе, одной строкой"}] ${END} . ` +
   '"submit":true добавляй, только если реплику можно отправить без правки; иначе поле не пиши, и человек допишет реплику сам. ' +
+  'Реплика не начинается с «!». ' +
   'Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай.';
 
 /**
  * Кнопки из хвоста ответа: комментарий должен стоять в самом конце сообщения (процитированный из файла в середине ответа не в счёт).
  * Ответ модели недоверенный: поля проверяются как у кнопок файла, лишние поля отбрасываются. `submit` принимается (нажимает по-прежнему человек),
- * сочетание клавиш и отключение - нет.
+ * сочетание клавиш и отключение - нет. Claude Code выполняет ввод с «!» как команду оболочки без запроса разрешения (режим shell), а с «/» как свою
+ * команду: такая реплика от модели отбрасывается («!») либо только вставляется без Enter («/»).
  */
 export function parseSuggestions(message: unknown): CommandButton[] {
   if (typeof message !== 'string') return [];
@@ -47,8 +51,9 @@ export function parseSuggestions(message: unknown): CommandButton[] {
   for (const button of parseCommands(plain, false).commands) {
     const key = button.label.toLowerCase();
     if (seen.has(key)) continue;
+    if (button.text.startsWith(SHELL_PREFIX)) continue;
     seen.add(key);
-    buttons.push({ label: button.label, text: button.text, submit: button.submit, ...(button.description ? { description: button.description } : {}) });
+    buttons.push({ label: button.label, text: button.text, submit: button.submit && !button.text.startsWith(SLASH_PREFIX), ...(button.description ? { description: button.description } : {}) });
     if (buttons.length === SUGGEST_MAX) break;
   }
   return buttons;

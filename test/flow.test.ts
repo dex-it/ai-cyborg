@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import type { MrListResult } from '../src/main/mrs';
 import { refreshMrs, type MrRefreshApi } from '../src/renderer/mr-refresh';
 import { MrMetaSlots, mrMeta } from '../src/renderer/mr-model';
-import { debounce, decideStart, fetchTasks, keepSnapshotOnError, recheckFor, refreshOnPanelEvent, RefreshGate, SNAPSHOT_TTL_MS, snapshotStale, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger, type Timers } from '../src/renderer/task-flow';
+import { debounce, decideStart, fetchTasks, keepSnapshotOnError, recheckFor, sameSnapshot, refreshOnPanelEvent, RefreshGate, SNAPSHOT_TTL_MS, snapshotStale, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger, type Timers } from '../src/renderer/task-flow';
 
 type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
 const sess = (project: string, key: string): S => ({ project: { id: project }, task: { key } });
@@ -238,11 +238,17 @@ describe('проводка выборки', () => {
     assert.equal(snapshotStale(0, SNAPSHOT_TTL_MS), true);
   });
 
-  it('ошибка фоновой выборки не стирает снимок; открытие, вкладка, фильтр, «Обновить» и выборка без снимка ошибку показывают', () => {
-    assert.equal(keepSnapshotOnError('timer', true, 'сеть'), true);
-    assert.equal(keepSnapshotOnError('timer', true, undefined), false, 'ответ без ошибки заменяет снимок');
-    assert.equal(keepSnapshotOnError('timer', false, 'сеть'), false, 'снимка нет - показать ошибку');
-    for (const t of ['open', 'tab', 'filter', 'project', 'reload'] as RefreshTrigger[]) assert.equal(keepSnapshotOnError(t, true, 'сеть'), false, t);
+  it('неудача фоновой выборки не стирает снимок; открытие, вкладка, фильтр, «Обновить» и выборка без снимка её показывают', () => {
+    assert.equal(keepSnapshotOnError('timer', true, true), true);
+    assert.equal(keepSnapshotOnError('timer', true, false), false, 'удачный ответ заменяет снимок');
+    assert.equal(keepSnapshotOnError('timer', false, true), false, 'снимка нет - показать ошибку');
+    for (const t of ['open', 'tab', 'filter', 'project', 'reload'] as RefreshTrigger[]) assert.equal(keepSnapshotOnError(t, true, true), false, t);
+  });
+
+  it('ответы равны по содержимому: номер выборки и служебные поля деталей в счёт не идут', () => {
+    const a = { tasks: [{ n: 1 }], selection: 1, detailsId: 'x', awaiting: ['k'] };
+    assert.equal(sameSnapshot(a, { tasks: [{ n: 1 }], selection: 2, detailsId: null, awaiting: [] }), true);
+    assert.equal(sameSnapshot(a, { tasks: [{ n: 2 }], selection: 1 }), false);
   });
 
   it('дебаунс сливает серию вызовов в один', () => {
