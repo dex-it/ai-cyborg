@@ -115,6 +115,9 @@ function utcStamp(date: Date): string {
   return date.toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '');
 }
 
+/** Поля файла воркспейса, которыми владеют свои каналы, а не состояние проектов окна. */
+const OWN_FIELDS = ['commands', 'prompts'] as const;
+
 export class ProjectStore {
   private lastProblem: ProjectsProblem | null = null;
   /** Байты повреждённого файла, для которых копия уже сделана: повторное чтение того же файла копий не плодит. */
@@ -179,9 +182,10 @@ export class ProjectStore {
 
   save(state: ProjectsState): void {
     if (this.unreadable) throw new Error(`Файл проектов не прочитан (${this.lastProblem?.detail}), запись затёрла бы его`);
-    // Кнопки команд (фича 12) принадлежат своему каналу: интерфейс их не держит, а запись проектов их не теряет.
-    const commands = this.readFileObject()?.commands;
-    writeJsonAtomic(this.file, commands === undefined ? state : { ...state, commands });
+    // Кнопки команд и промпты (фича 12) принадлежат своим каналам: интерфейс их не держит, а запись проектов их не теряет.
+    const file = this.readFileObject();
+    const own = Object.fromEntries(OWN_FIELDS.flatMap((field) => (file?.[field] === undefined ? [] : [[field, file[field]]])));
+    writeJsonAtomic(this.file, { ...state, ...own });
   }
 
   /** Поле `commands` файла воркспейса как записано; нет файла, он повреждён или поля нет - undefined. */
@@ -191,6 +195,20 @@ export class ProjectStore {
 
   /** Пишет только `commands`, остальное в файле (проекты, прочие поля) остаётся. Повреждённый и не прочитанный файл не затирается. */
   saveCommands(commands: unknown[]): void {
+    this.saveField('commands', commands, 'кнопки');
+  }
+
+  /** Поле `prompts` файла воркспейса как записано; нет файла, он повреждён или поля нет - undefined. */
+  loadPrompts(): unknown {
+    return this.readFileObject()?.prompts;
+  }
+
+  /** Пишет только `prompts`, как saveCommands. */
+  savePrompts(prompts: Record<string, unknown>): void {
+    this.saveField('prompts', prompts, 'промпты');
+  }
+
+  private saveField(field: (typeof OWN_FIELDS)[number], value: unknown, what: string): void {
     if (this.unreadable) throw new Error(`Файл проектов не прочитан (${this.lastProblem?.detail}), запись затёрла бы его`);
     let base: Record<string, unknown>;
     try {
@@ -198,9 +216,9 @@ export class ProjectStore {
       if (typeof base !== 'object' || base === null || Array.isArray(base)) throw new SyntaxError('корень файла не объект');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') base = { projects: [], lastProjectId: null };
-      else throw new Error(`Файл воркспейса не разобран (${(error as Error).message}): исправьте его, кнопки записаны не были`);
+      else throw new Error(`Файл воркспейса не разобран (${(error as Error).message}): исправьте его, ${what} записаны не были`);
     }
-    writeJsonAtomic(this.file, { ...base, commands });
+    writeJsonAtomic(this.file, { ...base, [field]: value });
   }
 
   private readFileObject(): Record<string, unknown> | null {

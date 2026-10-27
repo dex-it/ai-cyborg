@@ -151,6 +151,27 @@
       </form>
     </dialog>
 
+    <dialog id="prompts-dialog">
+      <form method="dialog">
+        <h2>Промпты кнопок</h2>
+        <p class="hint">
+          Первое сообщение сессии, которую запускают кнопки: «Ревью», «Доработать» и «CI» у MR (<code>mr.review</code>, <code>mr.rework</code>,
+          <code>mr.ci</code>), «Взять в работу» у задачи GitHub и GitLab (<code>task.start</code>) и сессия по задаче Jira (<code>jira.start</code>).
+          Показаны действующие тексты с описаниями; что здесь записано, то и сохранится в файле воркспейса. В <code>text</code> работают только подстановки,
+          названные в описании промпта (<code>{mr_url}</code>, <code>{task_url}</code>, <code>{status_command}</code>, <code>{jira_key}</code>): название
+          задачи или MR, ветки и автор в промпт не попадают. Текст - одна строка, не начинается с «-».
+        </p>
+        <div id="prompts-editor"></div>
+        <div id="prompts-problems" class="dialog-note" hidden></div>
+        <div id="prompts-error" class="dialog-error" role="alert" hidden></div>
+        <footer>
+          <span class="spacer"></span>
+          <button type="button" id="prompts-cancel">Закрыть</button>
+          <button type="button" id="prompts-save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
     <script src="vs/loader.js"></script>
     <script src="app.js"></script>
   </body>
