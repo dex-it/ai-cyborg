@@ -28,6 +28,8 @@ const api = {
   loadProjects: (): Promise<ProjectsState> => ipcRenderer.invoke('projects:load'),
   projectsProblem: (): Promise<ProjectsProblem | null> => ipcRenderer.invoke('projects:problem'),
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),
+  loadCommands: (): Promise<unknown> => ipcRenderer.invoke('commands:load'),
+  saveCommands: (text: string): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text),
   createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', cwd, addDirs, start),
   listHistory: (projectId: string): Promise<HistoryEntry[]> => ipcRenderer.invoke('history:list', projectId),

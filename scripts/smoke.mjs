@@ -160,7 +160,7 @@ async function cdp(url) {
   const send = (method, params = {}) =>
     new Promise((res, rej) => {
       const id = ++seq;
-      const timer = setTimeout(() => rej(new Error(`DevTools ${method}: нет ответа за ${CDP_TIMEOUT_MS / 1000} с`)), CDP_TIMEOUT_MS);
+      const timer = setTimeout(() => rej(new Error(`DevTools ${method}${typeof params.expression === 'string' ? ` «${params.expression.replace(/\s+/g, ' ').slice(0, 90)}»` : ''}: нет ответа за ${CDP_TIMEOUT_MS / 1000} с`)), CDP_TIMEOUT_MS);
       pending.set(id, (reply) => {
         clearTimeout(timer);
         res(reply);
@@ -365,6 +365,58 @@ async function main() {
   await waitFor('повторное действие вернуло к сессии без новой вкладки', async () => !(await popoverOpen()) && (await tabs()) === 2);
   log('кнопка «Статус»: карточка с задачей Jira, детали, закрытие кликом и Escape, сессия по задаче, возврат к ней');
 
+  // FR-12001..FR-12006: кнопки-команды под терминалом активной сессии (сейчас это сессия по задаче Jira SMK-1, ветка main).
+  const squeezed = async () => (await visibleTerminal()).replace(/\s+/g, '');
+  const barButtons = () => ev('[...document.querySelectorAll(".workspace-pane.active .command-button")].map((b) => b.firstChild.textContent)');
+  const barButton = (label) => ev(`[...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)}).click()`);
+  const barNotice = () => text('.workspace-pane.active .command-notice');
+  assert.deepEqual(await barButtons(), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись'], 'под терминалом нет встроенных кнопок');
+  await barButton('Сливай');
+  await waitFor('«Сливай» отправил текст с Enter', async () => (await squeezed()).includes('got:[сливай]'));
+  await barButton('Мердж');
+  await waitFor('«Мердж» без PR назвал причину', async () => /PR\/MR/.test(await barNotice()));
+  assert.ok(!(await squeezed()).includes('смерджи'), 'текст с неразрешённым {pr} ушёл в сессию');
+
+  await clickMenu(mainEv, 'Кнопки команд…');
+  await waitFor('диалог кнопок открыт', async () => (await ev('document.querySelector("#commands-dialog").open')) === true);
+  await waitFor('редактор Monaco в диалоге', async () => (await ev('document.querySelectorAll("#commands-editor .monaco-editor").length')) === 1);
+  const setEditor = (value) => ev(`window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#commands-dialog")).setValue(${JSON.stringify(value)})`);
+  await setEditor('[{"label":"A"}]');
+  await ev('document.querySelector("#commands-save").click()');
+  await waitFor('негодная кнопка названа в диалоге', async () => /Кнопка 1 \(«A»\): text/.test(await text('#commands-error')));
+  assert.ok(await ev('document.querySelector("#commands-dialog").open'), 'диалог закрылся при ошибке');
+  await setEditor(
+    JSON.stringify([
+      { label: 'Ветка', text: 'ветка {branch}', submit: true, hotkey: 'Alt+B' },
+      { label: 'Задача', text: 'задача {task}', submit: true },
+      { label: 'Вставка', text: 'без ввода', submit: false },
+    ]),
+  );
+  await ev('document.querySelector("#commands-save").click()');
+  await waitFor('диалог закрыт сохранением', async () => (await ev('document.querySelector("#commands-dialog").open')) === false);
+  await waitFor('кнопки из воркспейса на полосе без перезапуска', async () => (await barButtons()).join() === 'Сливай,Сделай PR,Мердж,Приберись,Ветка,Задача,Вставка');
+  const stored = JSON.parse(readFileSync(legacyFile, 'utf8'));
+  assert.equal(stored.commands.length, 3, 'кнопки не легли в файл воркспейса');
+  assert.equal(stored.projects.length, 2, 'запись кнопок затёрла проекты');
+
+  await barButton('Ветка');
+  await waitFor('{branch} подставлена веткой сессии', async () => (await squeezed()).includes('got:[веткаmain]'));
+  await barButton('Задача');
+  await waitFor('{task} подставлена ключом задачи Jira', async () => (await squeezed()).includes('got:[задачаSMK-1]'));
+  const before = ((await squeezed()).match(/got:\[веткаmain\]/g) ?? []).length;
+  await combo(1, 'b', 'KeyB', 66);
+  await waitFor('сочетание Alt+B нажало «Ветка»', async () => ((await squeezed()).match(/got:\[веткаmain\]/g) ?? []).length === before + 1);
+  await barButton('Вставка');
+  await waitFor('«Вставка» вставила текст', async () => (await squeezed()).includes('безввода'));
+  await sleep(300);
+  assert.ok(!(await squeezed()).includes('got:[безввода]'), 'кнопка без submit нажала Enter');
+
+  // Файл правят снаружи (другим редактором): полоса подхватывает его при возврате фокуса окну.
+  writeFileSync(legacyFile, JSON.stringify({ ...stored, commands: [...stored.commands, { label: 'Внешняя', text: 'снаружи', submit: true }] }));
+  await ev('window.dispatchEvent(new Event("focus"))');
+  await waitFor('правка файла снаружи подхвачена', async () => (await barButtons()).includes('Внешняя'));
+  log('кнопки-команды: встроенные, правка в Monaco, подстановки, сочетание, вставка без Enter, правка файла снаружи');
+
   // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».
   const stray = await ev(`(() => {
     const result = {};
@@ -429,7 +481,9 @@ async function firstRun() {
   await ev('document.querySelector("#workspace-add-repo").click()');
   await waitFor('репозиторий в списке окна', async () => /repo/.test(await text0(ev, '#workspace-repos')));
   assert.equal(await ev('document.querySelector("#workspace-create").disabled'), false, '«Создать» недоступна при полных данных');
-  await ev('document.querySelector("#workspace-create").click()');
+  // «Создать» пересоздаёт окно: старое уничтожается сразу после ответа главного процесса, и ответ на сам вызов DevTools может не дойти.
+  // Клик откладывается, чтобы вызов вернулся до него.
+  await ev('setTimeout(() => document.querySelector("#workspace-create").click(), 0); 0');
   const pageAfter = await waitFor('окно воркспейса пересоздано', async () => {
     const pages = await started.pages();
     return pages.length === 1 && pages[0].id !== firstPage.id ? pages[0] : null;
