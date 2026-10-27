@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { HistoryEntry } from '../main/history';
-import type { Placeholder, PlaceholderValues } from '../main/commands';
+import type { CommandButton, Placeholder, PlaceholderValues } from '../main/commands';
 import type { JiraIssue } from '../main/jira';
 import type { Project, ProjectsState } from '../main/projects';
 import type { Mr, MrIntent, MrListResult, MrRef } from '../main/mrs';
@@ -16,6 +16,8 @@ import { initSourcesSection } from './sources';
 import { CommandBars, type CommandTarget } from './command-bar';
 import { pickPr } from './command-values';
 import { initCommandEditor } from './command-editor';
+import { initPromptEditor } from './prompt-editor';
+import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
@@ -629,6 +631,9 @@ async function newSession(repo: string, start?: StartFrom): Promise<void> {
   }
   try {
     await createSessionView(owner, repo, start);
+  } catch (error) {
+    // Сессия не стартовала (например, негодный промпт кнопки в файле воркспейса): причина названа, а не потеряна в консоли.
+    alert(ipcErrorText(error));
   } finally {
     if (key) startGuard.end(owner.id, key);
   }
@@ -853,12 +858,22 @@ api.on<{ id: number; cwd: string }>('session:cwd', async ({ id, cwd }) => {
 
 let refreshTimer: number | undefined;
 api.on<{ id: number; event?: string }>('session:activity', ({ id, event }) => {
-  if (event === 'UserPromptSubmit') notifier.dismiss(id);
+  if (event === 'UserPromptSubmit') {
+    notifier.dismiss(id);
+    // Запрос человека делает прежние предложения модели неактуальными.
+    const asked = findSession(id);
+    if (asked) commandBars.suggest(asked.command, []);
+  }
   if (event === 'UserPromptSubmit' || event === 'PostToolUse') findSession(id)?.stripTab.classList.add('busy');
   if (active?.id !== id) return;
   const session = active;
   clearTimeout(refreshTimer);
   refreshTimer = window.setTimeout(() => void renderTree(session, false), 250);
+});
+
+api.on<{ id: number; buttons: CommandButton[] }>('session:suggest', ({ id, buttons }) => {
+  const session = findSession(id);
+  if (session) commandBars.suggest(session.command, buttons);
 });
 
 api.on<boolean>('notifications:toggle', (enabled) => notifier.setEnabled(enabled));
@@ -1231,6 +1246,8 @@ function reloadCommands(): Promise<void> {
 window.addEventListener('focus', () => void reloadCommands());
 const commandEditor = initCommandEditor({ problems: () => commandBars.configProblems, saved: () => void reloadCommands() });
 api.on<void>('menu:commands', () => void commandEditor.open());
+const promptEditor = initPromptEditor();
+api.on<void>('menu:prompts', () => void promptEditor.open());
 
 void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, loaded]) => {
   workspaceFile = info.file;

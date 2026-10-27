@@ -7,23 +7,28 @@ export interface CommandButton {
   /** true - текст и Enter; false - текст вставляется, Enter нажимает человек. */
   submit: boolean;
   hotkey?: string;
+  /** Что кнопка делает и когда нужна: подсказка кнопки и строка редактора. */
+  description?: string;
+  /** true - кнопка скрыта (так отключается и встроенная: удалённая из файла вернулась бы из набора по умолчанию). */
+  disabled?: boolean;
 }
 
 export const MAX_COMMANDS = 30;
 export const LABEL_MAX = 40;
 export const TEXT_MAX = 2000;
+export const DESCRIPTION_MAX = 200;
 /** Предел текста файла кнопок, принимаемого главным процессом от интерфейса. */
 export const MAX_COMMANDS_TEXT = 200_000;
 
 /** Кнопки по умолчанию, общие для всех воркспейсов: фразы, которыми Claude Code понимает типовое действие. */
 export const DEFAULT_COMMANDS: readonly CommandButton[] = [
-  { label: 'Сливай', text: 'сливай', submit: true, hotkey: 'F1' },
-  { label: 'Сделай PR', text: 'сделай PR', submit: true, hotkey: 'F2' },
-  { label: 'Мердж', text: 'смерджи PR {pr}', submit: false, hotkey: 'F3' },
-  { label: 'Приберись', text: 'приберись', submit: true, hotkey: 'F4' },
+  { label: 'Сливай', text: 'сливай', submit: true, hotkey: 'F1', description: 'Фраза «сливай»: слить PR текущей ветки.' },
+  { label: 'Сделай PR', text: 'сделай PR', submit: true, hotkey: 'F2', description: 'Фраза «сделай PR»: открыть PR из текущей ветки.' },
+  { label: 'Мердж', text: 'смерджи PR {pr}', submit: false, hotkey: 'F3', description: 'Вставляет «смерджи PR» со ссылкой на PR ветки без Enter: проверьте и нажмите Enter сами. Нужен открытый PR/MR ветки.' },
+  { label: 'Приберись', text: 'приберись', submit: true, hotkey: 'F4', description: 'Фраза «приберись»: убрать за собой, например слитые ветки.' },
 ];
 
-const KNOWN_FIELDS = new Set(['label', 'text', 'submit', 'hotkey']);
+const KNOWN_FIELDS = new Set(['label', 'text', 'submit', 'hotkey', 'description', 'disabled']);
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
 // ---------- сочетания клавиш ----------
@@ -112,7 +117,7 @@ export function parseCommands(raw: unknown, mac: boolean): ParsedCommands {
       problems.push(`${where(index, undefined)}: не объект`);
       return;
     }
-    const { label, text, submit, hotkey } = item as Record<string, unknown>;
+    const { label, text, submit, hotkey, description, disabled } = item as Record<string, unknown>;
     const at = where(index, label);
     if (typeof label !== 'string' || !label.trim() || label.trim().length > LABEL_MAX || CONTROL.test(label)) {
       problems.push(`${at}: label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`);
@@ -132,6 +137,10 @@ export function parseCommands(raw: unknown, mac: boolean): ParsedCommands {
       if ('error' in parsed) problems.push(`${at}: hotkey: ${parsed.error}`);
       else button.hotkey = hotkey.trim();
     } else if (hotkey !== undefined) problems.push(`${at}: hotkey - строка вида «Alt+S»`);
+    if (typeof description === 'string' && description.trim() && description.length <= DESCRIPTION_MAX && !CONTROL.test(description)) button.description = description.trim();
+    else if (description !== undefined) problems.push(`${at}: description - непустая строка до ${DESCRIPTION_MAX} знаков в одну строку`);
+    if (disabled === true) button.disabled = true;
+    else if (disabled !== undefined && disabled !== false) problems.push(`${at}: disabled - true или false`);
     const extra = Object.keys(item).filter((key) => !KNOWN_FIELDS.has(key));
     if (extra.length) problems.push(`${at}: неизвестное поле ${extra.join(', ')}`);
     commands.push(button);
@@ -143,8 +152,10 @@ const sameLabel = (a: string, b: string): boolean => a.trim().toLowerCase() === 
 
 /** Встроенные кнопки и дополнения воркспейса: одноимённая кнопка заменяет встроенную на её месте, остальные идут следом; сочетание достаётся первой. */
 export function mergeCommands(defaults: readonly CommandButton[], extra: readonly CommandButton[], mac: boolean): ParsedCommands {
-  const merged = defaults.map((d) => extra.find((e) => sameLabel(e.label, d.label)) ?? d);
-  merged.push(...extra.filter((e) => !defaults.some((d) => sameLabel(e.label, d.label))));
+  const all = defaults.map((d) => extra.find((e) => sameLabel(e.label, d.label)) ?? d);
+  all.push(...extra.filter((e) => !defaults.some((d) => sameLabel(e.label, d.label))));
+  // Скрытая кнопка не занимает сочетание и не попадает на полосу.
+  const merged = all.filter((button) => !button.disabled);
   const problems: string[] = [];
   const taken = new Map<string, string>();
   const commands = merged.map((button) => {
@@ -157,7 +168,9 @@ export function mergeCommands(defaults: readonly CommandButton[], extra: readonl
       return button;
     }
     if (owner !== undefined) problems.push(`«${button.label}»: сочетание ${button.hotkey} уже у кнопки «${owner}»`);
-    return { label: button.label, text: button.text, submit: button.submit };
+    const rest: CommandButton = { ...button };
+    delete rest.hotkey;
+    return rest;
   });
   return { commands, problems };
 }
@@ -181,7 +194,23 @@ export function checkCommandsText(text: string, mac: boolean): { ok: true; comma
   return problems.length ? { ok: false, error: problems.join('\n') } : { ok: true, commands: raw };
 }
 
-export const commandsToText = (raw: unknown): string => JSON.stringify(Array.isArray(raw) ? raw : [], null, 2);
+const labelOf = (item: unknown): string | null =>
+  typeof item === 'object' && item !== null && typeof (item as { label?: unknown }).label === 'string' ? (item as { label: string }).label : null;
+
+/**
+ * Действующий набор в том виде, как он записывается в файл: встроенные кнопки (с описаниями) и записи файла как они есть, в порядке полосы.
+ * Записи файла берутся без разбора, чтобы негодную запись можно было увидеть и поправить, а не потерять при сохранении.
+ */
+export function effectiveCommands(raw: unknown): unknown[] {
+  const own = Array.isArray(raw) ? raw : [];
+  const found = (label: string): unknown => own.find((item) => labelOf(item) !== null && sameLabel(labelOf(item) as string, label));
+  const placed = DEFAULT_COMMANDS.map((d) => found(d.label));
+  const merged: unknown[] = DEFAULT_COMMANDS.map((d, i) => placed[i] ?? d);
+  merged.push(...own.filter((item) => !placed.includes(item)));
+  return merged;
+}
+
+export const commandsToText = (raw: unknown): string => JSON.stringify(effectiveCommands(raw), null, 2);
 
 /** Запись из редактора: текст проверяется заново (интерфейсу не доверяют), ошибка проверки или записи - в ответе, а не исключением. */
 export function saveCommandsText(text: unknown, store: { saveCommands(commands: unknown[]): void }, mac: boolean): { error?: string } {

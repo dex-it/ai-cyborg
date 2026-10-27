@@ -129,10 +129,12 @@
       <form method="dialog">
         <h2>Кнопки команд</h2>
         <p class="hint">
-          Дополнения к встроенным кнопкам (Сливай, Сделай PR, Мердж, Приберись): кнопка с тем же <code>label</code> заменяет встроенную.
-          Поля: <code>label</code>, <code>text</code> (одна строка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
-          только вставка), <code>hotkey</code> (<code>F5</code>, <code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>). В <code>text</code> работают
-          <code>{branch}</code>, <code>{pr}</code>, <code>{task}</code>. Файл воркспейса перечитывается сам.
+          Действующий набор: встроенные кнопки (Сливай, Сделай PR, Мердж, Приберись) и ваши. Что здесь записано, то и сохранится в файле воркспейса.
+          Кнопка с тем же <code>label</code>, что у встроенной, заменяет её. Поля: <code>label</code>, <code>text</code> (одна строка),
+          <code>description</code> (что делает кнопка - подсказка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
+          только вставка), <code>hotkey</code> (<code>F5</code>, <code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>), <code>disabled</code>
+          (<code>true</code> - скрыть кнопку; так отключается и встроенная). В <code>text</code> работают <code>{branch}</code>, <code>{pr}</code>,
+          <code>{task}</code>. Файл воркспейса перечитывается сам.
         </p>
         <pre class="commands-example">[
   { "label": "Тесты", "text": "прогони тесты", "submit": true, "hotkey": "F5" },
@@ -145,6 +147,27 @@
           <span class="spacer"></span>
           <button type="button" id="commands-cancel">Закрыть</button>
           <button type="button" id="commands-save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="prompts-dialog">
+      <form method="dialog">
+        <h2>Промпты кнопок</h2>
+        <p class="hint">
+          Первое сообщение сессии, которую запускают кнопки: «Ревью», «Доработать» и «CI» у MR (<code>mr.review</code>, <code>mr.rework</code>,
+          <code>mr.ci</code>), «Взять в работу» у задачи GitHub и GitLab (<code>task.start</code>) и сессия по задаче Jira (<code>jira.start</code>).
+          Показаны действующие тексты с описаниями; что здесь записано, то и сохранится в файле воркспейса. В <code>text</code> работают только подстановки,
+          названные в описании промпта (<code>{mr_url}</code>, <code>{task_url}</code>, <code>{status_command}</code>, <code>{jira_key}</code>): название
+          задачи или MR, ветки и автор в промпт не попадают. Текст - одна строка, не начинается с «-».
+        </p>
+        <div id="prompts-editor"></div>
+        <div id="prompts-problems" class="dialog-note" hidden></div>
+        <div id="prompts-error" class="dialog-error" role="alert" hidden></div>
+        <footer>
+          <span class="spacer"></span>
+          <button type="button" id="prompts-cancel">Закрыть</button>
+          <button type="button" id="prompts-save" class="primary">Сохранить</button>
         </footer>
       </form>
     </dialog>

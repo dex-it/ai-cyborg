@@ -5,6 +5,7 @@ export const NOTIFICATIONS_MENU_ID = 'notifications';
 export const PROJECT_NEW_MENU_ID = 'project-new';
 export const PROJECT_PROPERTIES_MENU_ID = 'project-properties';
 export const COMMANDS_MENU_ID = 'commands-edit';
+export const PROMPTS_MENU_ID = 'prompts-edit';
 
 /** Подпись пункта «Недавних»: домашний каталог - «~». */
 export function recentLabel(file: string, home: string): string {
@@ -23,6 +24,7 @@ export interface WorkspaceMenu {
   newProject(): void;
   editProject(): void;
   editCommands(): void;
+  editPrompts(): void;
 }
 
 /**
@@ -103,6 +105,7 @@ export function appMenuTemplate(
       { id: PROJECT_PROPERTIES_MENU_ID, label: 'Свойства проекта', enabled: workspace.hasProject, click: () => workspace.editProject() },
       { type: 'separator' },
       { id: COMMANDS_MENU_ID, label: 'Кнопки команд…', enabled: workspace.hasWorkspace, click: () => workspace.editCommands() },
+      { id: PROMPTS_MENU_ID, label: 'Промпты кнопок…', enabled: workspace.hasWorkspace, click: () => workspace.editPrompts() },
     ],
   };
   const viewMenu: MenuItemConstructorOptions = {

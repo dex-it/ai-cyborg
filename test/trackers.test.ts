@@ -21,7 +21,7 @@ import {
   type TrackerSettings,
 } from '../src/main/trackers';
 import { emptyView } from '../src/renderer/task-model';
-import { claudeArgs, ISOLATION_PROMPT } from '../src/main/claude-args';
+import { claudeArgs, SESSION_PROMPT } from '../src/main/claude-args';
 
 const ok = (stdout: string, stderr = ''): CliResult => ({ code: 0, stdout, stderr, missing: false });
 const fail = (code: number, stderr: string): CliResult => ({ code, stdout: '', stderr, missing: false });
@@ -147,10 +147,10 @@ describe('начальный промпт', () => {
     assert.ok(!gh.startsWith('-'));
   });
   it('claudeArgs: промпт стоит до вариадического --add-dir, без задачи аргументы прежние', () => {
-    assert.deepEqual(claudeArgs(['/b', '/c'], 'P'), ['--append-system-prompt', ISOLATION_PROMPT, 'P', '--add-dir', '/b', '/c']);
-    assert.deepEqual(claudeArgs(['/b']), ['--append-system-prompt', ISOLATION_PROMPT, '--add-dir', '/b']);
-    assert.deepEqual(claudeArgs([]), ['--append-system-prompt', ISOLATION_PROMPT]);
-    assert.deepEqual(claudeArgs([], 'P'), ['--append-system-prompt', ISOLATION_PROMPT, 'P']);
+    assert.deepEqual(claudeArgs(['/b', '/c'], 'P'), ['--append-system-prompt', SESSION_PROMPT, 'P', '--add-dir', '/b', '/c']);
+    assert.deepEqual(claudeArgs(['/b']), ['--append-system-prompt', SESSION_PROMPT, '--add-dir', '/b']);
+    assert.deepEqual(claudeArgs([]), ['--append-system-prompt', SESSION_PROMPT]);
+    assert.deepEqual(claudeArgs([], 'P'), ['--append-system-prompt', SESSION_PROMPT, 'P']);
   });
 });
 

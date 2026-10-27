@@ -37,6 +37,8 @@ interface Bar {
   notice: HTMLElement;
   said: { text: string; warn: boolean } | null;
   timer: number | undefined;
+  /** Кнопки, предложенные моделью: живут до следующего запроса человека (FR-12008). */
+  suggested: CommandButton[];
 }
 
 const SAID_MS = 8000;
@@ -71,7 +73,7 @@ export class CommandBars {
     const notice = el('div', 'command-notice');
     notice.setAttribute('role', 'status');
     root.append(buttons, notice);
-    this.bars.set(target, { root, buttons, notice, said: null, timer: undefined });
+    this.bars.set(target, { root, buttons, notice, said: null, timer: undefined, suggested: [] });
     this.render(target);
     return root;
   }
@@ -96,6 +98,15 @@ export class CommandBars {
       return hotkey && !('error' in hotkey) ? [{ button, hotkey }] : [];
     });
     for (const target of this.bars.keys()) this.render(target);
+    this.deps.layout();
+  }
+
+  /** Кнопки, предложенные моделью, вместо прежних; пустой набор убирает их. `submit` берётся как проверил главный процесс (parseSuggestions); сочетаний у них нет. */
+  suggest(target: CommandTarget, buttons: readonly CommandButton[]): void {
+    const bar = this.bars.get(target);
+    if (!bar || (!bar.suggested.length && !buttons.length)) return;
+    bar.suggested = buttons.map((button) => ({ label: button.label, text: button.text, submit: button.submit, ...(button.description ? { description: button.description } : {}) }));
+    this.render(target);
     this.deps.layout();
   }
 
@@ -163,16 +174,23 @@ export class CommandBars {
     const bar = this.bars.get(target);
     if (!bar) return;
     const exited = target.isExited();
-    bar.buttons.replaceChildren(
-      ...this.commands.map((button) => {
-        const node = el('button', `command-button${button.submit ? '' : ' no-submit'}`, button.label) as HTMLButtonElement;
-        node.type = 'button';
-        node.disabled = exited;
-        node.title = [button.hotkey ?? '', button.text, button.submit ? '' : '(текст вставляется без Enter)'].filter(Boolean).join('\n');
-        node.addEventListener('click', () => void this.run(target, button));
-        return node;
-      }),
-    );
+    const make = (button: CommandButton, suggested: boolean): HTMLElement => {
+      const node = el('button', `command-button${button.submit ? '' : ' no-submit'}${suggested ? ' suggested' : ''}`, suggested ? `✦ ${button.label}` : button.label) as HTMLButtonElement;
+      node.type = 'button';
+      node.disabled = exited;
+      node.title = [
+        suggested ? 'Предложено моделью' : '',
+        button.hotkey ?? '',
+        button.description ?? '',
+        button.text,
+        button.submit ? (suggested ? '(нажатие отправит текст с Enter)' : '') : '(текст вставляется без Enter)',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      node.addEventListener('click', () => void this.run(target, button));
+      return node;
+    };
+    bar.buttons.replaceChildren(...this.commands.map((button) => make(button, false)), ...bar.suggested.map((button) => make(button, true)));
     this.renderNotice(bar);
   }
 
