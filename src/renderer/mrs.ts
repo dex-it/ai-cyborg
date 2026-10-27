@@ -5,7 +5,7 @@ import { readChoice, writePref } from './prefs';
 import { MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
-import { RefreshGate, wireRefresh, type RefreshTrigger } from './task-flow';
+import { keepSnapshotOnError, RefreshGate, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
 import { sortByKey, sourceLabel, type SortKey } from './task-model';
 
 /** Сессия, начатая из MR: панелю нужно знать только, жива ли она. */
@@ -43,6 +43,8 @@ export class MrsView implements PanelView {
   private readonly gate = new RefreshGate();
   private result: MrListResult | null = null;
   private snapshotAt: number | null = null;
+  /** Когда фоновая выборка не удалась, а прежний снимок остался: повтор не раньше TTL. */
+  private failedAt: number | null = null;
   private sortKey: SortKey = 'updated';
   /** Ключи MR, чьи пайплайн и апрувы ещё не пришли: в строке «…». */
   private pending = new Set<string>();
@@ -89,6 +91,7 @@ export class MrsView implements PanelView {
     this.gate.cancel();
     this.result = null;
     this.snapshotAt = null;
+    this.failedAt = null;
     this.pending.clear();
     this.render();
   }
@@ -102,6 +105,7 @@ export class MrsView implements PanelView {
   }
 
   async refresh(force = false, trigger: RefreshTrigger = 'open'): Promise<void> {
+    if (trigger === 'timer' && !snapshotStale(this.failedAt, Date.now())) return;
     const token = this.gate.begin(force);
     if (token === null) return;
     const project = this.host.project();
@@ -121,6 +125,12 @@ export class MrsView implements PanelView {
     let held = false;
     await refreshMrs(api, this.gate, token, { projectId: project.id, filter: this.filter.value as MrFilter, tracked: this.host.trackedRefs(), trigger }, {
       listed: (list, pending) => {
+        if (keepSnapshotOnError(trigger, !!this.result && !this.result.error, list.error)) {
+          this.failedAt = Date.now();
+          this.render();
+          return;
+        }
+        this.failedAt = null;
         this.snapshotAt = Date.now();
         // Снимок на экране не меняется на строки с «…»: список ляжет вместе с деталями.
         if (keep && this.result && list.detailsId !== null) {
