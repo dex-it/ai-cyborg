@@ -16,6 +16,8 @@ import { initSourcesSection } from './sources';
 import { CommandBars, type CommandTarget } from './command-bar';
 import { pickPr } from './command-values';
 import { initCommandEditor } from './command-editor';
+import { initPromptEditor } from './prompt-editor';
+import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
@@ -629,6 +631,9 @@ async function newSession(repo: string, start?: StartFrom): Promise<void> {
   }
   try {
     await createSessionView(owner, repo, start);
+  } catch (error) {
+    // Сессия не стартовала (например, негодный промпт кнопки в файле воркспейса): причина названа, а не потеряна в консоли.
+    alert(ipcErrorText(error));
   } finally {
     if (key) startGuard.end(owner.id, key);
   }
@@ -1236,6 +1241,8 @@ function reloadCommands(): Promise<void> {
 window.addEventListener('focus', () => void reloadCommands());
 const commandEditor = initCommandEditor({ problems: () => commandBars.configProblems, saved: () => void reloadCommands() });
 api.on<void>('menu:commands', () => void commandEditor.open());
+const promptEditor = initPromptEditor();
+api.on<void>('menu:prompts', () => void promptEditor.open());
 
 void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, loaded]) => {
   workspaceFile = info.file;

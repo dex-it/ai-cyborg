@@ -47,6 +47,7 @@ writeFileSync(
 );
 
 // Хвост ответа с кнопками, как его отдаёт хук Stop: подставной claude дописывает эту строку в файл событий по команде `suggest`.
+const fakeArgsLog = join(fakeBin, 'args.log');
 const fakeSuggest = join(fakeBin, 'suggest.json');
 writeFileSync(
   fakeSuggest,
@@ -60,6 +61,7 @@ writeFileSync(
 printf '{"hook_event_name":"SessionStart","cwd":"%s"}\\n' "$PWD" >> "$CYBORG_EVENTS"
 echo "fake-claude ready"
 echo "ARGS: $*"
+printf '%s\\n' "$*" >> "$FAKE_ARGS_LOG"
 while IFS= read -r line; do
   case "$line" in
     "cd "*) dir=\${line#cd }; printf '{"hook_event_name":"PostToolUse","cwd":"%s","tool_name":"EnterWorktree"}\\n' "$dir" >> "$CYBORG_EVENTS"; echo "moved";;
@@ -189,7 +191,7 @@ async function launch(dataDir, args = [], cwd = root) {
   const electron = join(root, 'node_modules', '.bin', 'electron');
   const proc = spawn(electron, [root, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
     cwd,
-    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, FAKE_SUGGEST: fakeSuggest },
+    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, FAKE_SUGGEST: fakeSuggest, FAKE_ARGS_LOG: fakeArgsLog },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -446,6 +448,43 @@ async function main() {
   await ev('window.dispatchEvent(new Event("focus"))');
   await waitFor('правка файла снаружи подхвачена', async () => (await barButtons()).includes('Внешняя'));
   log('кнопки-команды: встроенные, правка в Monaco, подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью');
+
+  // FR-12009: промпты кнопок запуска сессий - действующий набор в Monaco, правка доходит до первого сообщения следующей сессии.
+  const startedWith = async (key) => {
+    const id = await ev(`window.cyborg.createSession(${JSON.stringify(repo)}, [], { jira: { key: ${JSON.stringify(key)} } })`);
+    await waitFor(`подставной claude получил аргументы сессии ${key}`, async () => existsSync(fakeArgsLog) && readFileSync(fakeArgsLog, 'utf8').includes(key));
+    await ev(`window.cyborg.kill(${id}); 1`);
+    return readFileSync(fakeArgsLog, 'utf8').split('\n').filter((line) => line.includes(key)).at(-1);
+  };
+  assert.match(await startedWith('SMK-2'), /Задача Jira SMK-2: прочитай её \(jira issue view SMK-2 --comments 5\)/, 'встроенный промпт Jira изменился без правки файла');
+  const beforePrompts = JSON.parse(readFileSync(legacyFile, 'utf8'));
+  await clickMenu(mainEv, 'Промпты кнопок…');
+  await waitFor('диалог промптов открыт', async () => (await ev('document.querySelector("#prompts-dialog").open')) === true);
+  await waitFor('редактор Monaco в диалоге промптов', async () => (await ev('document.querySelectorAll("#prompts-editor .monaco-editor").length')) === 1);
+  const promptEditor = (call) => ev(`(() => { const e = window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#prompts-dialog")); return e.${call}; })()`);
+  const shown = JSON.parse(await promptEditor('getValue()'));
+  assert.deepEqual(Object.keys(shown), ['mr.review', 'mr.rework', 'mr.ci', 'task.start', 'jira.start'], 'редактор не показал встроенные промпты');
+  assert.ok(Object.values(shown).every((p) => p.text && p.description), 'у встроенного промпта нет текста или описания');
+  const setPrompts = (value) => promptEditor(`setValue(${JSON.stringify(JSON.stringify(value))})`);
+  await setPrompts({ 'jira.start': { text: 'Работай над {jira_kye}' } });
+  await ev('document.querySelector("#prompts-save").click()');
+  await waitFor('негодный промпт назван в диалоге', async () => /«jira\.start»: неизвестная подстановка \{jira_kye\}/.test(await text('#prompts-error')));
+  assert.ok(await ev('document.querySelector("#prompts-dialog").open'), 'диалог закрылся при ошибке');
+  await setPrompts({ ...shown, 'jira.start': { text: 'Смоук-промпт {jira_key}', description: 'для проверки' } });
+  await ev('document.querySelector("#prompts-save").click()');
+  await waitFor('диалог промптов закрыт сохранением', async () => (await ev('document.querySelector("#prompts-dialog").open')) === false);
+  const afterSave = JSON.parse(readFileSync(legacyFile, 'utf8'));
+  assert.equal(afterSave.prompts['jira.start'].text, 'Смоук-промпт {jira_key}', 'промпт не лёг в файл воркспейса');
+  assert.deepEqual(afterSave.commands, beforePrompts.commands, 'запись промптов затёрла кнопки');
+  assert.deepEqual(afterSave.projects, beforePrompts.projects, 'запись промптов затёрла проекты');
+  assert.match(await startedWith('SMK-3'), /Смоук-промпт SMK-3/, 'правка промпта не дошла до первого сообщения сессии');
+  // Негодная запись, правленная руками, не заменяется встроенной молча: сессия не стартует и называет причину.
+  writeFileSync(legacyFile, JSON.stringify({ ...afterSave, prompts: { 'jira.start': { text: '-p {jira_key}' } } }));
+  const refused = await ev(`window.cyborg.createSession(${JSON.stringify(repo)}, [], { jira: { key: "SMK-4" } }).then(() => "стартовала", (error) => String(error))`);
+  assert.match(refused, /text не может начинаться с «-»/, 'негодный промпт из файла не назван');
+  assert.ok(!readFileSync(fakeArgsLog, 'utf8').includes('SMK-4'), 'сессия с негодным промптом стартовала');
+  writeFileSync(legacyFile, JSON.stringify(afterSave));
+  log('промпты кнопок: действующий набор в Monaco, проверка, правка доходит до сессии, негодный промпт не стартует молча');
 
   // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».
   const stray = await ev(`(() => {

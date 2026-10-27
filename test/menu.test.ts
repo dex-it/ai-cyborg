@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -21,6 +21,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   newProject() {},
   editProject() {},
   editCommands() {},
+  editPrompts() {},
   ...over,
 });
 
@@ -76,9 +77,9 @@ describe('appMenuTemplate', () => {
   });
 
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
-    it(`${platform}: «Воркспейс» с семью пунктами в заданном порядке`, () => {
+    it(`${platform}: «Воркспейс» с восемью пунктами в заданном порядке`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      assert.deepEqual(labels, ['Открыть…', 'Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…']);
+      assert.deepEqual(labels, ['Открыть…', 'Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…', 'Промпты кнопок…']);
     });
   }
 
@@ -99,6 +100,17 @@ describe('appMenuTemplate', () => {
     assert.equal(item?.enabled, true);
     (item?.click as () => void)();
     assert.deepEqual(calls, ['commands']);
+  });
+
+  it('«Промпты кнопок…» недоступны без воркспейса и вызывают правку', () => {
+    const byId = (items: MenuItemConstructorOptions[], id: string) => items.find((item) => item.id === id);
+    assert.equal(byId(workspaceItems('linux', { hasWorkspace: false }), PROMPTS_MENU_ID)?.enabled, false);
+    const calls: string[] = [];
+    const item = byId(workspaceItems('darwin', { editPrompts: () => calls.push('prompts') }), PROMPTS_MENU_ID);
+    assert.equal(item?.label, 'Промпты кнопок…');
+    assert.equal(item?.enabled, true);
+    (item?.click as () => void)();
+    assert.deepEqual(calls, ['prompts']);
   });
 
   it('клики вызывают переданные функции, «Недавние» отдают путь', () => {

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import { DEFAULT_PROMPTS, fillPrompt } from './prompts';
 import { readTrackers, validateJira, type Project, type ProjectsState, type TrackerSettings } from './projects';
 
 export type { TrackerSettings } from './projects';
@@ -158,9 +159,8 @@ export function normalizeColor(raw: unknown): string | null {
 }
 
 /** Начальный промпт сессии. Собирается из проверенного TaskRef: название задачи (чужой текст) в него не попадает. */
-export function taskPrompt(ref: TaskRef): string {
-  const command = ref.kind === 'github' ? 'gh issue edit' : 'glab issue update';
-  return `Ознакомься с задачей ${taskUrl(ref)}. Когда приступишь к работе, смени её статус в трекере (${command}), чтобы было видно, что задача в работе.`;
+export function taskPrompt(ref: TaskRef, template: string = DEFAULT_PROMPTS['task.start'].text): string {
+  return fillPrompt(template, { task_url: taskUrl(ref), status_command: ref.kind === 'github' ? 'gh issue edit' : 'glab issue update' });
 }
 
 /** Значения JSON, записанные подряд: строка на объект у gh --jq, `][` между страницами у glab --paginate. */
