@@ -18,7 +18,7 @@ import {
   promptsToText,
   savePromptsText,
 } from '../src/main/prompts';
-import { ProjectStore, type ProjectsState } from '../src/main/projects';
+import { PromptStore } from '../src/main/prompt-store';
 import { taskPrompt } from '../src/main/trackers';
 
 const gh = { kind: 'github', host: 'github.com', path: 'o/r', number: 7 } as const;
@@ -183,46 +183,29 @@ describe('Промпты кнопок: текст редактора', () => {
   });
 });
 
-describe('ProjectStore: промпты в файле воркспейса', () => {
+describe('PromptStore: общий файл промптов', () => {
   let dir: string;
   let file: string;
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-prm-'));
-    file = path.join(dir, 'team.cyborg.json');
+    file = path.join(dir, 'prompts.json');
   });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const project = { id: 'p', name: 'P', description: '', repos: ['/r'], trackers: { github: false, gitlab: false } };
-  const state: ProjectsState = { projects: [project], lastProjectId: 'p' };
-  const read = () => JSON.parse(fs.readFileSync(file, 'utf8'));
   const prompts = { 'mr.ci': { text: 'свой' } };
 
-  it('нет файла или поля - undefined; поле читается как записано', () => {
-    const store = new ProjectStore(file);
-    assert.equal(store.loadPrompts(), undefined);
-    fs.writeFileSync(file, JSON.stringify({ projects: [], lastProjectId: null, prompts }));
-    assert.deepEqual(store.loadPrompts(), prompts);
-  });
-
-  it('savePrompts пишет только prompts: проекты, кнопки и чужие поля остаются', () => {
-    fs.writeFileSync(file, JSON.stringify({ ...state, commands: [{ label: 'A', text: 'a' }], note: 'x' }));
-    new ProjectStore(file).savePrompts(prompts);
-    assert.deepEqual(read(), { ...state, commands: [{ label: 'A', text: 'a' }], note: 'x', prompts });
-  });
-
-  it('сохранение проектов и кнопок не теряет промпты, а сохранение промптов - кнопки', () => {
-    const store = new ProjectStore(file);
-    store.save(state);
+  it('нет файла - undefined без замечаний; записанное читается как есть', () => {
+    const store = new PromptStore(file);
+    assert.deepEqual(store.read(), { raw: undefined });
+    assert.equal(store.load(), undefined);
     store.savePrompts(prompts);
-    store.save({ ...state, lastProjectId: null });
-    store.saveCommands([{ label: 'A', text: 'a' }]);
-    assert.deepEqual(read(), { ...state, lastProjectId: null, prompts, commands: [{ label: 'A', text: 'a' }] });
-    store.savePrompts({});
-    assert.deepEqual(read().commands, [{ label: 'A', text: 'a' }]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), prompts);
+    assert.deepEqual(store.load(), prompts);
   });
 
-  it('повреждённый файл промптами не затирается, причина названа', () => {
+  it('файл не JSON: редактору - замечание, старту сессии - ошибка, а не встроенный промпт молча', () => {
     fs.writeFileSync(file, '{ не json');
-    assert.throws(() => new ProjectStore(file).savePrompts(prompts), /промпты записаны не были/);
-    assert.equal(fs.readFileSync(file, 'utf8'), '{ не json');
+    const store = new PromptStore(file);
+    assert.match(store.read().problem ?? '', /не разобран/);
+    assert.throws(() => store.load(), /не разобран.*Промпты кнопок/s);
   });
 });

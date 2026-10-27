@@ -105,7 +105,7 @@ export function appMenuTemplate(
       { id: PROJECT_PROPERTIES_MENU_ID, label: 'Свойства проекта', enabled: workspace.hasProject, click: () => workspace.editProject() },
       { type: 'separator' },
       { id: COMMANDS_MENU_ID, label: 'Кнопки команд…', enabled: workspace.hasWorkspace, click: () => workspace.editCommands() },
-      { id: PROMPTS_MENU_ID, label: 'Промпты кнопок…', enabled: workspace.hasWorkspace, click: () => workspace.editPrompts() },
+      { id: PROMPTS_MENU_ID, label: 'Промпты кнопок…', click: () => workspace.editPrompts() },
     ],
   };
   const viewMenu: MenuItemConstructorOptions = {

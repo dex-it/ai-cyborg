@@ -102,13 +102,13 @@ describe('appMenuTemplate', () => {
     assert.deepEqual(calls, ['commands']);
   });
 
-  it('«Промпты кнопок…» недоступны без воркспейса и вызывают правку', () => {
+  it('«Промпты кнопок…» общие для воркспейсов: доступны и без воркспейса, вызывают правку', () => {
     const byId = (items: MenuItemConstructorOptions[], id: string) => items.find((item) => item.id === id);
-    assert.equal(byId(workspaceItems('linux', { hasWorkspace: false }), PROMPTS_MENU_ID)?.enabled, false);
+    assert.notEqual(byId(workspaceItems('linux', { hasWorkspace: false }), PROMPTS_MENU_ID)?.enabled, false);
     const calls: string[] = [];
     const item = byId(workspaceItems('darwin', { editPrompts: () => calls.push('prompts') }), PROMPTS_MENU_ID);
     assert.equal(item?.label, 'Промпты кнопок…');
-    assert.equal(item?.enabled, true);
+    assert.notEqual(item?.enabled, false);
     (item?.click as () => void)();
     assert.deepEqual(calls, ['prompts']);
   });

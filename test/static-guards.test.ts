@@ -47,11 +47,11 @@ describe('привязка задачи и MR к сессии только в п
     assert.deepEqual(keys.filter((key) => !allowed.some((re) => re.test(key))), []);
   });
 
-  it('главный процесс пишет на диск только проекты, их копию, настройки хуков, файлы событий сессий, список недавних воркспейсов и замок открытого воркспейса', () => {
+  it('главный процесс пишет на диск только проекты, их копию, общие промпты кнопок, настройки хуков, файлы событий сессий, список недавних воркспейсов и замок открытого воркспейса', () => {
     const writers = sources('src/main')
       .filter((file) => /\b(writeFileSync|appendFileSync|writeJsonAtomic|createWriteStream|writeFile)\(/.test(code(file)))
       .map((file) => file.split(path.sep).join('/'))
       .sort();
-    assert.deepEqual(writers, ['src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
+    assert.deepEqual(writers, ['src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
   });
 });
