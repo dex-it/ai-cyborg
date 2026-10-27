@@ -3,6 +3,8 @@ import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs } from './claude-args.ts';
+import { writeJsonAtomic } from './jsonfile.ts';
+import { isAlive } from './pid.ts';
 
 type Emit = (channel: string, payload: unknown) => void;
 type Spawn = typeof pty.spawn;
@@ -80,15 +82,6 @@ function sessionEnv(extra: Record<string, string>): Record<string, string> {
   return { ...env, ...extra };
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 export class SessionManager {
   private readonly sessions = new Map<number, Session>();
   private nextId = 1;
@@ -113,7 +106,8 @@ export class SessionManager {
         [{ ...(event === 'PostToolUse' ? { matcher: '*' } : {}), hooks: [{ type: 'command', command: HOOK_COMMAND }] }],
       ]),
     );
-    fs.writeFileSync(this.settingsFile, JSON.stringify({ hooks }, null, 2));
+    // Атомарно: соседний инстанс пишет тот же файл, а запускающийся claude не должен прочитать обрезанный.
+    writeJsonAtomic(this.settingsFile, { hooks });
   }
 
   create(cwd: string, addDirs: string[], prompt?: string, resume?: string): number {

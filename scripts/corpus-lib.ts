@@ -34,7 +34,7 @@ interface Doc {
 }
 
 export const MATRIX_FILE = 'docs/04-verification/verification-matrix.md';
-const STATUSES = new Set(['review', 'approved']);
+const STATUSES = new Set(['review', 'approved', 'superseded']);
 const ADR_SECTION = '## Расхождения с текущим кодом';
 // Требования, которые автотестом не проверяются: замер на приватном GitLab у владельца (RESEARCH, Issue #10).
 const MANUAL = /npm run measure|вручную/i;
@@ -149,7 +149,12 @@ function checkFrontMatter(corpus: Corpus, out: Finding[]): void {
       out.push({ rule: 'front-matter', file: doc.file, message: 'нет front matter' });
       continue;
     }
-    if (!STATUSES.has(doc.front.status ?? '')) out.push({ rule: 'status', file: doc.file, message: `status «${doc.front.status ?? ''}» не из review, approved` });
+    if (!STATUSES.has(doc.front.status ?? '')) out.push({ rule: 'status', file: doc.file, message: `status «${doc.front.status ?? ''}» не из review, approved, superseded` });
+    if (doc.front.status === 'superseded') {
+      const by = doc.front.superseded_by ?? '';
+      if (!by) out.push({ rule: 'status', file: doc.file, message: 'status superseded без superseded_by' });
+      else if (!corpus.adrs.some((a) => a.front.id === by)) out.push({ rule: 'status', file: doc.file, message: `superseded_by ${by} не заведён` });
+    }
     if (!/^\d{4}-\d\d-\d\d$/.test(doc.front.date ?? '')) out.push({ rule: 'front-matter', file: doc.file, message: `date «${doc.front.date ?? ''}» не вида ГГГГ-ММ-ДД` });
     const dir = /docs\/01-product\/(\d\d-[^/]+)\//.exec(doc.file);
     if (dir && doc.front.feature !== dir[1]) out.push({ rule: 'front-matter', file: doc.file, message: `feature «${doc.front.feature ?? ''}» не совпадает с каталогом ${dir[1]}` });
