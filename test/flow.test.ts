@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import type { MrListResult } from '../src/main/mrs';
 import { refreshMrs, type MrRefreshApi } from '../src/renderer/mr-refresh';
 import { MrMetaSlots, mrMeta } from '../src/renderer/mr-model';
-import { decideStart, fetchTasks, recheckFor, refreshOnPanelEvent, RefreshGate, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger } from '../src/renderer/task-flow';
+import { debounce, decideStart, fetchTasks, keepSnapshotOnError, recheckFor, refreshOnPanelEvent, RefreshGate, SNAPSHOT_TTL_MS, snapshotStale, StartGuard, TaskSessionRegistry, wireRefresh, type PanelEvent, type RefreshTrigger, type Timers } from '../src/renderer/task-flow';
 
 type S = { project: { id: string }; task?: { key: string }; mr?: { key: string } };
 const sess = (project: string, key: string): S => ({ project: { id: project }, task: { key } });
@@ -203,20 +203,61 @@ describe('проводка выборки', () => {
     for (const t of ['open', 'tab', 'filter', 'project'] as const) assert.equal(recheckFor(t), false, t);
   });
 
-  it('«Обновить» просит новую проверку входа, смена фильтра - нет; события панели - нет', () => {
+  it('«Обновить» просит новую проверку входа через дебаунс, фильтр вытесняет выборку; события панели - по устареванию снимка', () => {
     const handlers = new Map<string, () => void>();
     const control = (name: string) => ({ addEventListener: (type: string, fn: () => void) => void handlers.set(`${name}:${type}`, fn) });
+    const timers = fakeTimers();
     const seen: [boolean, RefreshTrigger][] = [];
-    wireRefresh({ filter: control('filter'), reload: control('reload') }, async (force, trigger) => void seen.push([force, trigger]));
+    wireRefresh({ filter: control('filter'), reload: control('reload') }, async (force, trigger) => void seen.push([force, trigger]), timers);
     handlers.get('filter:change')!();
     handlers.get('reload:click')!();
-    assert.deepEqual(seen, [[false, 'filter'], [false, 'reload']]);
+    handlers.get('reload:click')!();
+    assert.deepEqual(seen, [[true, 'filter']]);
+    timers.flush();
+    assert.deepEqual(seen, [[true, 'filter'], [true, 'reload']]);
     assert.deepEqual(seen.map(([, t]) => recheckFor(t)), [false, true]);
 
+    const now = 1_000_000_000;
     const panel: [boolean, RefreshTrigger][] = [];
-    for (const e of ['open', 'tab', 'project'] as PanelEvent[]) void refreshOnPanelEvent(async (force, trigger) => void panel.push([force, trigger]), e);
+    const push = async (force: boolean, trigger: RefreshTrigger) => void panel.push([force, trigger]);
+    for (const e of ['open', 'tab', 'project'] as PanelEvent[]) void refreshOnPanelEvent(push, e, null, now);
     assert.deepEqual(panel, [[false, 'open'], [false, 'tab'], [true, 'project']]);
     assert.deepEqual(panel.map(([, t]) => recheckFor(t)), [false, false, false]);
+
+    panel.length = 0;
+    for (const e of ['open', 'tab', 'project'] as PanelEvent[]) void refreshOnPanelEvent(push, e, now - 1000, now);
+    assert.deepEqual(panel, [[true, 'project']], 'свежий снимок: открытие и вкладка не выбирают заново');
+    void refreshOnPanelEvent(push, 'tab', now - SNAPSHOT_TTL_MS, now);
+    assert.deepEqual(panel.at(-1), [false, 'tab']);
+  });
+
+  it('снимок устаревает через пять минут; его отсутствие - устаревший снимок', () => {
+    assert.equal(SNAPSHOT_TTL_MS, 5 * 60_000);
+    assert.equal(snapshotStale(null, 0), true);
+    assert.equal(snapshotStale(0, SNAPSHOT_TTL_MS - 1), false);
+    assert.equal(snapshotStale(0, SNAPSHOT_TTL_MS), true);
+  });
+
+  it('ошибка фоновой выборки не стирает снимок; открытие, вкладка, фильтр, «Обновить» и выборка без снимка ошибку показывают', () => {
+    assert.equal(keepSnapshotOnError('timer', true, 'сеть'), true);
+    assert.equal(keepSnapshotOnError('timer', true, undefined), false, 'ответ без ошибки заменяет снимок');
+    assert.equal(keepSnapshotOnError('timer', false, 'сеть'), false, 'снимка нет - показать ошибку');
+    for (const t of ['open', 'tab', 'filter', 'project', 'reload'] as RefreshTrigger[]) assert.equal(keepSnapshotOnError(t, true, 'сеть'), false, t);
+  });
+
+  it('дебаунс сливает серию вызовов в один', () => {
+    const timers = fakeTimers();
+    let calls = 0;
+    const kick = debounce(() => calls++, 300, timers);
+    kick();
+    kick();
+    kick();
+    assert.equal(timers.pending(), 1);
+    timers.flush();
+    assert.equal(calls, 1);
+    kick();
+    timers.flush();
+    assert.equal(calls, 2);
   });
 
   it('канал списка задач получает recheck из триггера: true только у «Обновить»', async () => {
@@ -259,3 +300,18 @@ describe('проводка выборки', () => {
     assert.equal(slot.textContent, 'bob · f → m · пайплайн: успешен · апрувов: 1');
   });
 });
+
+function fakeTimers(): Timers & { flush(): void; pending(): number } {
+  const queue = new Map<number, () => void>();
+  let next = 0;
+  return {
+    set: (fn) => (queue.set(++next, fn), next),
+    clear: (handle) => void queue.delete(handle as number),
+    flush: () => {
+      const fns = [...queue.values()];
+      queue.clear();
+      for (const fn of fns) fn();
+    },
+    pending: () => queue.size,
+  };
+}

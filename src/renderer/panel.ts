@@ -1,6 +1,6 @@
 import { byId } from './dom';
 import { MrsView, type MrsViewHost } from './mrs';
-import { refreshOnPanelEvent, type RefreshTrigger } from './task-flow';
+import { refreshOnPanelEvent, SNAPSHOT_TICK_MS, snapshotStale, type PanelEvent, type RefreshTrigger } from './task-flow';
 import { TasksView, type TasksViewHost } from './tasks';
 
 /** Вид внутри панели: свой заголовок и список, обновление запрашивает панель. */
@@ -9,6 +9,10 @@ export interface PanelView {
   /** trigger 'reload' - «Обновить»: вход в трекеры проверяется заново. */
   refresh(force?: boolean, trigger?: RefreshTrigger): Promise<void>;
   onProjectChanged(): void;
+  /** Время снимка текущего проекта; null - снимка нет. */
+  loadedAt(): number | null;
+  /** Перерисовать снимок без выборки: сессии задач могли открыться или закрыться. */
+  repaint(): void;
 }
 
 type Tab = 'tasks' | 'mrs';
@@ -21,7 +25,10 @@ export interface TrackerPanelHosts {
   onClosed(): void;
 }
 
-/** Панель трекеров: кнопки «Задачи» и «MR/PR» полосы сессий открывают каждая свой вид, повторный клик закрывает. Выбранный вид живёт до перезапуска. */
+/**
+ * Панель трекеров: кнопки «Задачи» и «MR/PR» полосы сессий открывают каждая свой вид, повторный клик закрывает. Выбранный вид живёт до перезапуска.
+ * Вид показывает снимок; уже загруженный снимок обновляется в фоне по устареванию, а не при каждом открытии.
+ */
 export class TrackerPanel {
   private readonly root = byId('tasks-panel');
   private readonly sessionsEl = byId('sessions');
@@ -38,6 +45,21 @@ export class TrackerPanel {
       this.buttons.set(id, button);
     }
     this.mount();
+    window.setInterval(() => this.tick(), SNAPSHOT_TICK_MS);
+  }
+
+  /** Фон обновляет только виды, которые уже смотрели в этом проекте: нетронутый вид трекеры не опрашивает. */
+  private tick(): void {
+    if (document.hidden) return;
+    const now = Date.now();
+    for (const view of Object.values(this.views)) {
+      const at = view.loadedAt();
+      if (at !== null && snapshotStale(at, now)) void view.refresh(false, 'timer');
+    }
+  }
+
+  private panelEvent(event: PanelEvent): void {
+    void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), event, this.view.loadedAt());
   }
 
   get isOpen(): boolean {
@@ -71,7 +93,8 @@ export class TrackerPanel {
   private select(tab: Tab): void {
     this.tab = tab;
     this.mount();
-    void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'tab');
+    this.view.repaint();
+    this.panelEvent('tab');
   }
 
   open(): void {
@@ -79,7 +102,8 @@ export class TrackerPanel {
     this.root.hidden = false;
     this.sessionsEl.classList.add('tasks-open');
     this.markButtons();
-    void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'open');
+    this.view.repaint();
+    this.panelEvent('open');
   }
 
   close(): void {
@@ -100,10 +124,10 @@ export class TrackerPanel {
   onProjectChanged(): void {
     for (const view of Object.values(this.views)) view.onProjectChanged();
     // Смена проекта - новый вопрос: идёт в обход флага загрузки, ответ прежнего отбросит токен.
-    if (this.opened) void refreshOnPanelEvent((force, trigger) => this.view.refresh(force, trigger), 'project');
+    if (this.opened) this.panelEvent('project');
   }
 
-  refreshActive(force = false): Promise<void> {
-    return this.view.refresh(force, 'open');
+  repaint(): void {
+    if (this.opened) this.view.repaint();
   }
 }

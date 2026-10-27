@@ -62,11 +62,26 @@ export function decideStart(hasOpenSession: boolean, taskRepos: string[], projec
   return { action: 'none' };
 }
 
-/** Одиночный полёт обновления и токен ответа: без force второй запрос не начинается, ответ не текущего токена отбрасывается. */
 /** Что запустило выборку; кэш входа в трекерах сбрасывает только «Обновить» (FR-1006). */
-export type RefreshTrigger = 'open' | 'tab' | 'filter' | 'project' | 'reload';
+export type RefreshTrigger = 'open' | 'tab' | 'filter' | 'project' | 'reload' | 'timer';
 
 export const recheckFor = (trigger: RefreshTrigger): boolean => trigger === 'reload';
+
+/** Возраст снимка, после которого фон и открытие вида выбирают заново. */
+export const SNAPSHOT_TTL_MS = 5 * 60_000;
+/** Шаг фоновой проверки устаревания: снимок обновится не позже TTL плюс шаг. */
+export const SNAPSHOT_TICK_MS = 30_000;
+export const RELOAD_DEBOUNCE_MS = 300;
+
+/**
+ * Фоновая выборка ответила ошибкой, а снимок без ошибки есть: снимок остаётся на экране (сеть моргнула - список не пропадает),
+ * повтор - не раньше TTL от неудачи. Открытие, вкладка, фильтр и «Обновить» показывают ошибку: человек ждал ответа.
+ */
+export const keepSnapshotOnError = (trigger: RefreshTrigger, hasSnapshot: boolean, error: string | undefined): boolean =>
+  trigger === 'timer' && hasSnapshot && !!error;
+
+/** null - снимка нет. */
+export const snapshotStale = (at: number | null, now: number, ttl = SNAPSHOT_TTL_MS): boolean => at === null || now - at >= ttl;
 
 /** Вызов канала списка задач: флаг новой проверки входа берётся из триггера. */
 export function fetchTasks<R>(
@@ -85,19 +100,46 @@ export interface Listenable {
 
 type Refresh = (force: boolean, trigger: RefreshTrigger) => Promise<void>;
 
-/** Проводка шапки вида: смена фильтра и «Обновить» запускают выборку со своим триггером. */
-export function wireRefresh(controls: { filter: Listenable; reload: Listenable }, refresh: Refresh): void {
-  controls.filter.addEventListener('change', () => void refresh(false, 'filter'));
-  controls.reload.addEventListener('click', () => void refresh(false, 'reload'));
+export interface Timers {
+  set(fn: () => void, ms: number): unknown;
+  clear(handle: unknown): void;
+}
+
+const windowTimers: Timers = {
+  set: (fn, ms) => setTimeout(fn, ms),
+  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+/** Серия вызовов за ms сливается в один - последний. */
+export function debounce(fn: () => void, ms: number, timers: Timers = windowTimers): () => void {
+  let handle: unknown = null;
+  return () => {
+    if (handle !== null) timers.clear(handle);
+    handle = timers.set(() => {
+      handle = null;
+      fn();
+    }, ms);
+  };
+}
+
+/**
+ * Проводка шапки вида: смена фильтра - новый вопрос, вытесняет фоновую выборку;
+ * «Обновить» - внеочередной цикл того же фонового обновления, серия кликов сливается дебаунсом.
+ */
+export function wireRefresh(controls: { filter: Listenable; reload: Listenable }, refresh: Refresh, timers: Timers = windowTimers): void {
+  controls.filter.addEventListener('change', () => void refresh(true, 'filter'));
+  controls.reload.addEventListener('click', debounce(() => void refresh(true, 'reload'), RELOAD_DEBOUNCE_MS, timers));
 }
 
 export type PanelEvent = 'open' | 'tab' | 'project';
 
-/** Выборка по событию панели: смена проекта идёт в обход флага загрузки; кэш входа ни одно из них не сбрасывает. */
-export function refreshOnPanelEvent(refresh: Refresh, event: PanelEvent): Promise<void> {
-  return refresh(event === 'project', event);
+/** Выборка по событию панели: смена проекта - всегда и в обход флага загрузки; открытие и вкладка - только при устаревшем снимке. */
+export function refreshOnPanelEvent(refresh: Refresh, event: PanelEvent, loadedAt: number | null = null, now = Date.now()): Promise<void> {
+  if (event === 'project') return refresh(true, event);
+  return snapshotStale(loadedAt, now) ? refresh(false, event) : Promise.resolve();
 }
 
+/** Одиночный полёт обновления и токен ответа: без force второй запрос не начинается, ответ не текущего токена отбрасывается. */
 export class RefreshGate {
   private token = 0;
   private busy = false;
