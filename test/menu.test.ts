@@ -14,6 +14,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   home: '/home/u',
   hasWorkspace: true,
   hasProject: true,
+  replace() {},
   open() {},
   create() {},
   openRecent() {},
@@ -75,9 +76,9 @@ describe('appMenuTemplate', () => {
   });
 
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
-    it(`${platform}: «Воркспейс» с шестью пунктами в заданном порядке`, () => {
+    it(`${platform}: «Воркспейс» с семью пунктами в заданном порядке`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      assert.deepEqual(labels, ['Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…']);
+      assert.deepEqual(labels, ['Открыть…', 'Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…']);
     });
   }
 
