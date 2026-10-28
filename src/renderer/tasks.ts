@@ -3,6 +3,7 @@ import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { el } from './dom';
 import { readChoice, readPref, writePref } from './prefs';
 import type { PanelView } from './panel';
+import { RowMarks } from './row-marks';
 import { fetchTasks, keepSnapshotOnError, RefreshGate, sameSnapshot, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
 import {
   availableLabels,
@@ -72,6 +73,7 @@ export class TasksView implements PanelView {
   private readonly expanded = new Set<string>();
   private readonly descriptions = new DescriptionStore();
   private readonly openErrors = new Map<string, string>();
+  private readonly marks = new RowMarks();
 
   constructor(private readonly host: TasksViewHost) {
     this.actions = [
@@ -125,6 +127,22 @@ export class TasksView implements PanelView {
 
   repaint(): void {
     this.render();
+  }
+
+  getScroll(): number {
+    return this.body.scrollTop;
+  }
+
+  setScroll(top: number): void {
+    this.body.scrollTop = top;
+  }
+
+  mark(key: string | null): void {
+    this.marks.set(key);
+  }
+
+  reveal(key: string): boolean {
+    return this.marks.reveal(key);
   }
 
   /** Загрузка без снимка на экране: до первого ответа и после смены фильтра или проекта. */
@@ -294,6 +312,7 @@ export class TasksView implements PanelView {
       this.body.replaceChildren(el('p', 'tasks-note', result.error));
       return;
     }
+    this.marks.clear();
     const nodes: HTMLElement[] = [];
     for (const source of result.sources) {
       if (source.error) nodes.push(el('p', 'tasks-error', `${sourceLabel(source)}: ${source.error}`));
@@ -345,7 +364,7 @@ export class TasksView implements PanelView {
 
   private row(task: Task): HTMLElement {
     const open = this.host.sessionOf(task.key);
-    const row = el('div', 'task-row');
+    const row = this.marks.register(task.key, el('div', 'task-row'));
     row.tabIndex = 0;
     row.setAttribute('role', 'button');
     row.setAttribute('aria-expanded', String(this.expanded.has(task.key)));
@@ -384,6 +403,7 @@ export class TasksView implements PanelView {
       button.addEventListener('click', (event) => {
         // Меню выбора репозитория закрывается кликом по документу: клик по кнопке не должен закрыть его сразу.
         event.stopPropagation();
+        this.marks.set(task.key);
         action.run(task, button);
       });
       actions.append(button);

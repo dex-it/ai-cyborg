@@ -394,6 +394,14 @@ select:disabled {
 
 #history[hidden],
 #tree[hidden],
+#tree-back {
+  margin-top: 6px;
+}
+
+#tree-back[hidden] {
+  display: none;
+}
+
 #tree-header[hidden] {
   display: none;
 }
@@ -1153,6 +1161,12 @@ label.disabled .hint {
 
 .task-row:hover {
   background: var(--bg-hover);
+}
+
+/* Строка, с которой ушли в сессию: на неё возвращаются. */
+.task-row.returned {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .task-item:last-child .task-row {

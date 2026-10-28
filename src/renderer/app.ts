@@ -21,6 +21,7 @@ import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
+import { returnTarget } from './panel-return';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
@@ -80,6 +81,7 @@ const projectSelect = byId<HTMLSelectElement>('project-select');
 const treeEl = byId('tree');
 const treeTitle = byId('tree-title');
 const treeMeta = byId('tree-meta');
+const treeBack = byId<HTMLButtonElement>('tree-back');
 const sessionList = byId('session-list');
 const newSessionButton = byId<HTMLButtonElement>('new-session');
 newSessionButton.title = `Новая сессия Claude Code (${newSessionShortcut})`;
@@ -144,6 +146,7 @@ function selectProject(next: Project | null, save = true): void {
   if (session) activateSession(session, panel.isOpen);
   else showNoSession();
   panel.setAvailable(hasSources(next));
+  updateBackButton(active);
   panel.onProjectChanged();
   statusHub.onProjectChanged();
   if (!historyEl.hidden) void loadHistory();
@@ -399,6 +402,20 @@ const sessionTitle = (s: Session): string =>
         ? `CC${s.id} · ${s.jira.key} ${s.jira.summary}`
         : `CC${s.id} · ${rootLabel(s)}`;
 
+/** Из сессии по MR или задаче - обратно к её строке в списке панели; кнопка видна, пока у проекта есть источники. */
+function updateBackButton(s: Session | null): void {
+  const target = s && panel.isAvailable ? returnTarget(s) : null;
+  treeBack.hidden = !target;
+  if (!target) return;
+  treeBack.textContent = target.label;
+  treeBack.title = target.title;
+}
+
+treeBack.addEventListener('click', () => {
+  const target = active ? returnTarget(active) : null;
+  if (target) panel.reveal(target.tab, target.key);
+});
+
 function updateSessionLabels(s: Session): void {
   const label = sessionTitle(s);
   const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
@@ -410,6 +427,7 @@ function updateSessionLabels(s: Session): void {
     treeTitle.title = tooltip;
     // Шапка обрезает путь слева через direction: rtl; LRM не даёт ведущему «/» уехать в конец.
     treeMeta.textContent = `‎${s.exited ? `завершена · ${s.cwd}` : s.cwd}`;
+    updateBackButton(s);
   }
 }
 
@@ -431,6 +449,7 @@ function showNoSession(): void {
   treeTitle.textContent = project ? project.name : 'Нет проекта';
   treeTitle.title = '';
   treeMeta.textContent = project ? 'нет активной сессии' : '';
+  updateBackButton(null);
   treeEl.replaceChildren();
   closePreview();
   const tree = projectTree();
