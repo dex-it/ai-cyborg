@@ -21,6 +21,7 @@ import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
+import { neighborAfterClose } from './neighbor';
 import { returnTarget } from './panel-return';
 import { RenderTickets } from './render-ticket';
 import { asMenuItem, bindList, rove } from './list-keys';
@@ -820,11 +821,13 @@ function closeSession(s: Session, force: boolean): void {
   for (const f of s.files) f.viewer.dispose();
   s.stripTab.remove();
   s.container.remove();
+  // Вкладки идут в порядке создания: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
+  const peers = sessions.filter((x) => x.project === s.project);
   sessions.splice(sessions.indexOf(s), 1);
   if (lastSessionOf.get(s.project.id) === s) lastSessionOf.delete(s.project.id);
   taskSessions.remove(s);
   if (active === s) {
-    const next = sessions.find((x) => x.project === project);
+    const next = neighborAfterClose(peers, s) ?? sessions.find((x) => x.project === project);
     if (next) activateSession(next, panel.isOpen);
     else showNoSession();
   }
