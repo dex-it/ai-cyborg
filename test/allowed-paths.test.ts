@@ -130,6 +130,7 @@ describe('обработчики каналов fs:* и git:*', () => {
       allowed: new AllowedPaths(() => [repo, ...live]),
       liveDirs: () => live,
       listDir: (dir) => record('listDir')(dir).then(() => []),
+      listFiles: (root) => record('listFiles')(root).then(() => []),
       readTextFile: (file) => record('readTextFile')(file).then(() => ({ content: '' })),
       gitRoot: (dir) => record('gitRoot')(dir).then(() => path.dirname(dir)),
       gitBranch: record('gitBranch'),
@@ -144,6 +145,7 @@ describe('обработчики каналов fs:* и git:*', () => {
     const { handlers, calls } = setup(repo);
     for (const outside of ['/etc', '/etc/hosts', path.dirname(repo), `${repo}-evil`, undefined, 42]) {
       await assert.rejects(async () => handlers.list(outside), OUTSIDE);
+      await assert.rejects(async () => handlers.files(outside), OUTSIDE);
       await assert.rejects(async () => handlers.read(outside), OUTSIDE);
       await assert.rejects(async () => handlers.root(outside), OUTSIDE);
       await assert.rejects(async () => handlers.branch(outside), OUTSIDE);
@@ -153,17 +155,18 @@ describe('обработчики каналов fs:* и git:*', () => {
     assert.deepEqual(calls, []);
   });
 
-  it('в репозитории проекта все шесть каналов отвечают', async () => {
+  it('в репозитории проекта все семь каналов отвечают', async () => {
     const repo = mkdir('repo');
     const { handlers, calls } = setup(repo);
     const file = path.join(repo, 'a.ts');
     await handlers.list(repo);
+    await handlers.files(repo);
     await handlers.read(file);
     await handlers.root(repo);
     await handlers.branch(repo);
     await handlers.status(repo);
     await handlers.headContent(file);
-    assert.deepEqual(calls.map((c) => c.split(':')[0]), ['listDir', 'readTextFile', 'gitRoot', 'gitBranch', 'gitStatus', 'gitHeadContent']);
+    assert.deepEqual(calls.map((c) => c.split(':')[0]), ['listDir', 'listFiles', 'readTextFile', 'gitRoot', 'gitBranch', 'gitStatus', 'gitHeadContent']);
   });
 
   it('сессия ушла из репозиториев (cd): её cwd и git-корень разрешены, соседний каталог - нет', async () => {

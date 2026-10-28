@@ -392,16 +392,35 @@ select:disabled {
   padding: 0 6px 12px;
 }
 
-#history[hidden],
-#tree[hidden],
+#tree-filter {
+  flex: none;
+  width: auto;
+  margin: 0 10px 8px;
+}
+
+#tree .row.note {
+  color: var(--fg-dim);
+  cursor: default;
+}
+
+#tree .row.note:hover {
+  background: none;
+}
+
+#tree mark {
+  background: var(--accent-soft);
+  color: inherit;
+  border-radius: 2px;
+}
+
 #tree-back {
   margin-top: 6px;
 }
 
-#tree-back[hidden] {
-  display: none;
-}
-
+#history[hidden],
+#tree[hidden],
+#tree-filter[hidden],
+#tree-back[hidden],
 #tree-header[hidden] {
   display: none;
 }

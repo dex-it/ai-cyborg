@@ -65,6 +65,7 @@ export interface PathHandlerDeps {
   /** Каталоги и cwd живых сессий. */
   liveDirs: () => string[];
   listDir: (dir: string) => Promise<DirEntry[]>;
+  listFiles: (root: string) => Promise<string[]>;
   readTextFile: (file: string) => Promise<{ content?: string; error?: string }>;
   gitRoot: (dir: string) => Promise<string | null>;
   gitBranch: (root: string) => Promise<string | null>;
@@ -79,6 +80,10 @@ export function createPathHandlers(deps: PathHandlerDeps) {
     list(dir: unknown) {
       allowed.assert(dir);
       return deps.listDir(dir);
+    },
+    files(root: unknown) {
+      allowed.assert(root);
+      return deps.listFiles(root);
     },
     read(file: unknown) {
       allowed.assert(file);

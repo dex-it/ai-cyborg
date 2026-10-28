@@ -259,6 +259,16 @@ async function main() {
   assert.match(await text('#tree'), /\bM\b/, 'изменённый файл без отметки M git-статуса');
   log('проект, дерево и git-статус');
 
+  const filterTree = (value) =>
+    ev(`(() => { const f = document.querySelector('#tree-filter'); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event('input')); })()`);
+  await filterTree('A.T');
+  await waitFor('совпадение фильтра подсвечено', async () => (await ev('document.querySelector("#tree mark")?.textContent ?? ""')) === 'a.t');
+  await filterTree('нет-такого');
+  await waitFor('фильтр без совпадений', async () => /нет совпадений/.test(await text('#tree')) && !/a\.txt/.test(await text('#tree')));
+  await filterTree('');
+  await waitFor('дерево без фильтра', async () => /a\.txt/.test(await text('#tree')) && !(await ev('!!document.querySelector("#tree mark")')));
+  log('поиск в дереве: часть имени без учёта регистра, без совпадений, сброс');
+
   assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
   log('заголовок окна с проектом и версией');
 

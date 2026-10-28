@@ -68,6 +68,7 @@ const api = {
   unnotify: (id: number): void => ipcRenderer.send('session:unnotify', id),
   notificationsState: (enabled: boolean): void => ipcRenderer.send('notifications:state', enabled),
   listDir: (dir: string): Promise<DirEntry[]> => ipcRenderer.invoke('fs:list', dir),
+  listFiles: (root: string): Promise<string[]> => ipcRenderer.invoke('fs:files', root),
   readFile: (file: string): Promise<{ content?: string; error?: string }> => ipcRenderer.invoke('fs:read', file),
   gitRoot: (dir: string): Promise<string | null> => ipcRenderer.invoke('git:root', dir),
   gitBranch: (root: string): Promise<string | null> => ipcRenderer.invoke('git:branch', root),
