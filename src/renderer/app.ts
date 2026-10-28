@@ -546,6 +546,8 @@ function activateSession(s: Session, keepPanel = false): void {
     other.container.classList.toggle('active', other === s);
     selectTab(other.stripTab, other === s);
   }
+  // Полоса прокручивается: при десятке сессий активная вкладка (новая, «К сессии», уведомление) была бы за краем.
+  s.stripTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   empty.hidden = true;
   sidebar.style.setProperty('--session', s.color);
   updateSessionLabels(s);
