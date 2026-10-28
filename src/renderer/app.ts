@@ -22,6 +22,8 @@ import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
 import { returnTarget } from './panel-return';
+import { asMenuItem, bindList, rove } from './list-keys';
+import { bindTablist, markTab, selectTab } from './tabs';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
@@ -444,7 +446,7 @@ function showNoSession(): void {
   active = null;
   for (const s of sessions) {
     s.container.classList.remove('active');
-    s.stripTab.classList.remove('active');
+    selectTab(s.stripTab, false);
   }
   sidebar.style.removeProperty('--session');
   treeTitle.textContent = project ? project.name : 'Нет проекта';
@@ -541,8 +543,10 @@ function activateSession(s: Session, keepPanel = false): void {
   if (document.hasFocus()) notifier.dismiss(s.id);
   for (const other of sessions) {
     other.container.classList.toggle('active', other === s);
-    other.stripTab.classList.toggle('active', other === s);
+    selectTab(other.stripTab, other === s);
   }
+  // Полоса прокручивается: при десятке сессий активная вкладка (новая, «К сессии», уведомление) была бы за краем.
+  s.stripTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   empty.hidden = true;
   sidebar.style.setProperty('--session', s.color);
   updateSessionLabels(s);
@@ -555,10 +559,10 @@ function activateSession(s: Session, keepPanel = false): void {
 
 function showInner(s: Session, file: FileTab | null): void {
   s.activeFile = file;
-  s.claudeTab.classList.toggle('active', !file);
+  selectTab(s.claudeTab, !file);
   s.termPane.classList.toggle('active', !file);
   for (const f of s.files) {
-    f.tab.classList.toggle('active', f === file);
+    selectTab(f.tab, f === file);
     f.pane.classList.toggle('active', f === file);
   }
   if (file) void file.viewer.load();
@@ -584,7 +588,7 @@ function fitSession(s: Session): void {
 }
 
 function makeTab(className: string, label: string, onClose?: () => void): HTMLElement {
-  const tab = el('div', `tab ${className}`);
+  const tab = markTab(el('div', `tab ${className}`));
   tab.append(el('span', 'icon'), el('span', 'label', label));
   if (onClose) {
     const close = el('button', 'close', '×');
@@ -688,6 +692,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const container = el('div', 'workspace-pane');
   container.style.setProperty('--session', color);
   const innerTabs = el('nav', 'inner-tabs');
+  bindTablist(innerTabs, 'Вкладки сессии');
   const innerPanes = el('div', 'inner-panes');
   const termPane = el('div', 'pane terminal');
   const host = el('div', 'term-host');
@@ -952,24 +957,44 @@ setInterval(() => {
 
 // ---------- запуск сессии ----------
 
+/** Меню выбора закрыто Escape либо выбором: фокус возвращается на кнопку, которая его открыла. */
+let menuOpener: HTMLElement | null = null;
+
+function closeRepoMenu(restoreFocus: boolean): void {
+  const hadFocus = repoMenu.contains(document.activeElement);
+  repoMenu.hidden = true;
+  if (restoreFocus && hadFocus && menuOpener?.isConnected) menuOpener.focus();
+  menuOpener = null;
+}
+
+function openRepoMenu(anchor: HTMLElement, label: string, focus: 'first' | 'none'): void {
+  const rect = anchor.getBoundingClientRect();
+  repoMenu.setAttribute('role', 'menu');
+  repoMenu.setAttribute('aria-label', label);
+  menuOpener = anchor;
+  repoMenu.style.top = `${rect.bottom + 2}px`;
+  repoMenu.hidden = false;
+  rove(repoMenu, '.menu-item');
+  if (focus === 'first') repoMenu.querySelector<HTMLElement>('.menu-item')?.focus();
+}
+
 function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPick: (repo: string) => void): void {
   repoMenu.replaceChildren(
     el('div', 'menu-title', title),
     ...repos.map((repo) => {
-      const item = el('div', 'menu-item');
+      const item = asMenuItem(el('div', 'menu-item'));
       item.append(el('span', 'repo-name', basename(repo)), el('span', 'repo-path', repo));
       item.addEventListener('click', () => {
-        repoMenu.hidden = true;
+        closeRepoMenu(true);
         onPick(repo);
       });
       return item;
     }),
   );
   const rect = anchor.getBoundingClientRect();
-  repoMenu.style.top = `${rect.bottom + 2}px`;
   repoMenu.style.left = '';
   repoMenu.style.right = `${window.innerWidth - rect.right}px`;
-  repoMenu.hidden = false;
+  openRepoMenu(anchor, title, 'first');
 }
 
 async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void> {
@@ -990,7 +1015,7 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
       error.hidden = false;
       return;
     }
-    repoMenu.hidden = true;
+    closeRepoMenu(true);
     void renderProjectTree(false);
   };
   const draw = (): void => {
@@ -998,7 +1023,8 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
     shown = all.filter((b) => b.name.toLowerCase().includes(query));
     list.replaceChildren(
       ...shown.slice(0, 200).map(({ name, remote: fromRemote }) => {
-        const item = el('div', `menu-item branch-item${name === current ? ' current' : ''}`);
+        const item = asMenuItem(el('div', `menu-item branch-item${name === current ? ' current' : ''}`), 'menuitemradio');
+        item.setAttribute('aria-checked', String(name === current));
         item.append(el('span', '', `${name === current ? '✓ ' : ''}${name}`));
         if (fromRemote) item.append(el('span', 'repo-path', 'только на сервере'));
         item.addEventListener('click', () => void pick(name));
@@ -1006,6 +1032,7 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
       }),
     );
     if (!shown.length) list.append(el('div', 'menu-title', 'Нет веток'));
+    rove(list, '.menu-item');
   };
   filter.addEventListener('input', draw);
   filter.addEventListener('keydown', (event) => {
@@ -1014,17 +1041,16 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
   draw();
   repoMenu.replaceChildren(el('div', 'menu-title', `Ветка ${root.label}`), filter, error, list);
   const rect = anchor.getBoundingClientRect();
-  repoMenu.style.top = `${rect.bottom + 2}px`;
   repoMenu.style.right = '';
   repoMenu.style.left = `${rect.left}px`;
-  repoMenu.hidden = false;
+  openRepoMenu(anchor, `Ветка ${root.label}`, 'none');
   filter.focus();
 }
 
 /** Кнопка «Новая сессия» (в полосе или на пустом экране): повторное нажатие при открытом меню закрывает его. */
 function toggleSessionMenu(anchor: HTMLElement): void {
   if (repoMenu.hidden) requestSession(anchor);
-  else repoMenu.hidden = true;
+  else closeRepoMenu(true);
 }
 
 function requestSession(anchor: HTMLElement = newSessionButton): void {
@@ -1046,10 +1072,12 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
   }
   historyEl.replaceChildren(
     ...entries.map((entry) => {
-      const item = el('div', 'menu-item history-item');
+      const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
       item.title = `Продолжить: ${entry.title}`;
       const remove = el('button', 'close', '×');
-      remove.title = 'Удалить сессию';
+      remove.title = 'Удалить сессию (Delete)';
+      // Запись в порядке табуляции одна, поэтому кнопка удаления с клавиатуры - Delete на записи.
+      remove.tabIndex = -1;
       remove.addEventListener('click', (event) => {
         event.stopPropagation();
         if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
@@ -1064,9 +1092,16 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
         remove,
       );
       item.addEventListener('click', () => void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err))));
+      item.addEventListener('keydown', (event) => {
+        if (event.target === item && event.key === 'Delete') {
+          event.preventDefault();
+          remove.click();
+        }
+      });
       return item;
     }),
   );
+  rove(historyEl, '.history-item');
 }
 
 async function loadHistory(): Promise<void> {
@@ -1082,8 +1117,8 @@ async function loadHistory(): Promise<void> {
 }
 
 function showSideView(history: boolean): void {
-  sideFiles.classList.toggle('active', !history);
-  sideHistory.classList.toggle('active', history);
+  selectTab(sideFiles, !history);
+  selectTab(sideHistory, history);
   treeHeader.hidden = treeEl.hidden = history;
   historyEl.hidden = !history;
   if (history) void loadHistory();
@@ -1194,16 +1229,24 @@ newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleSessionMenu(newSessionButton);
 });
+bindTablist(byId('side-tabs'), 'Боковая панель');
+bindTablist(sessionList, 'Сессии');
+selectTab(sideFiles, true);
+selectTab(sideHistory, false);
 sideFiles.addEventListener('click', () => showSideView(false));
 sideHistory.addEventListener('click', () => showSideView(true));
+bindList(repoMenu, '.menu-item');
+historyEl.setAttribute('role', 'listbox');
+historyEl.setAttribute('aria-label', 'Прошлые сессии');
+bindList(historyEl, '.history-item');
 document.addEventListener('click', (event) => {
-  if (!repoMenu.contains(event.target as Node)) repoMenu.hidden = true;
+  if (!repoMenu.contains(event.target as Node)) closeRepoMenu(false);
 });
 window.addEventListener(
   'keydown',
   (event) => {
     if (commandBars.handleKey(event, active && !panel.isOpen ? active.command : null)) return;
-    if (event.key === 'Escape') repoMenu.hidden = true;
+    if (event.key === 'Escape' && !repoMenu.hidden) closeRepoMenu(true);
     if (commandKey(event) && !event.shiftKey && !event.altKey && event.key === '0') {
       event.preventDefault();
       event.stopPropagation();
