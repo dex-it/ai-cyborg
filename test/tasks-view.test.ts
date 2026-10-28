@@ -267,4 +267,106 @@ describe('TasksView: проводка', () => {
     t.view.onProjectChanged();
     assert.equal(t.barChips().length, 0);
   });
+
+  it('действие в строке метит её; метка переживает перерисовку и снимается mark(null)', async () => {
+    const t = await setup();
+    const rowOf = (n: number) => t.root.all().find((x) => x.className.startsWith('task-row') && x.text().includes(`#${n}`))!;
+    t.rowOf(2).all().find((x) => x.dataset.action === 'start')!.click();
+    assert.ok(rowOf(2).className.includes('returned'));
+    assert.ok(!rowOf(1).className.includes('returned'));
+    t.view.repaint();
+    assert.ok(rowOf(2).className.includes('returned'), 'после перерисовки строка по-прежнему помечена');
+    assert.equal(t.view.reveal('github:github.com:o/r#2'), true);
+    assert.equal(t.view.reveal('нет такой'), false);
+    t.view.mark(null);
+    assert.ok(!rowOf(2).className.includes('returned'));
+  });
+
+  it('прокрутка списка читается и восстанавливается', async () => {
+    const t = await setup();
+    t.view.setScroll(240);
+    assert.equal(t.view.getScroll(), 240);
+  });
+});
+
+describe('TrackerPanel: возврат к списку', () => {
+  async function panelSetup() {
+    const ids = new Map<string, FakeNode>();
+    for (const id of ['tasks-panel', 'sessions', 'tasks-toggle', 'mrs-toggle']) ids.set(id, new FakeNode('div'));
+    (globalThis as any).document.getElementById = (id: string) => ids.get(id);
+    (globalThis as any).window.setInterval = () => 0;
+    const { TrackerPanel } = await import('../src/renderer/panel');
+    const host = { project: () => null, projectHint: () => ['нет'], trackedRefs: () => [], applyStatuses: () => {}, sessionOf: () => undefined, startTask: () => {}, startMr: () => {} };
+    const closed: number[] = [];
+    const panel = new TrackerPanel({ tasks: host as any, mrs: host as any, onClosed: () => closed.push(1) });
+    const log: string[] = [];
+    const stub = (name: string) => {
+      let top = 0;
+      return {
+        element: new FakeNode('div'),
+        refresh: async () => {},
+        onProjectChanged: () => log.push(`${name}:project`),
+        loadedAt: () => null,
+        repaint: () => log.push(`${name}:repaint`),
+        getScroll: () => top,
+        setScroll: (n: number) => { top = n; log.push(`${name}:scroll=${n}`); },
+        mark: (k: string | null) => log.push(`${name}:mark=${k}`),
+        reveal: (k: string) => { log.push(`${name}:reveal=${k}`); return true; },
+        scroll: (n: number) => { top = n; },
+      };
+    };
+    const views = { tasks: stub('tasks'), mrs: stub('mrs') };
+    (panel as any).views = views;
+    (panel as any).mount();
+    return { panel, views, log, toggle: (id: string) => ids.get(id)!.click(), closed, ids };
+  }
+
+  it('прокрутка списка запоминается при закрытии и возвращается при открытии', async () => {
+    const t = await panelSetup();
+    t.panel.setAvailable(true);
+    t.toggle('mrs-toggle');
+    assert.ok(t.panel.isOpen);
+    t.views.mrs.scroll(480);
+    t.panel.close();
+    t.log.length = 0;
+    t.toggle('mrs-toggle');
+    assert.deepEqual(t.log.filter((x) => x.startsWith('mrs:')), ['mrs:repaint', 'mrs:scroll=480']);
+  });
+
+  it('прокрутка каждого вида своя; переключение вкладок её не смешивает', async () => {
+    const t = await panelSetup();
+    t.toggle('tasks-toggle');
+    t.views.tasks.scroll(100);
+    t.toggle('mrs-toggle');
+    t.views.mrs.scroll(300);
+    t.toggle('tasks-toggle');
+    assert.equal(t.views.tasks.getScroll(), 100);
+    t.toggle('mrs-toggle');
+    assert.equal(t.views.mrs.getScroll(), 300);
+  });
+
+  it('reveal открывает закрытую панель на нужной вкладке и показывает строку', async () => {
+    const t = await panelSetup();
+    t.panel.reveal('mrs', 'k1');
+    assert.ok(t.panel.isOpen);
+    assert.ok(t.ids.get('mrs-toggle')!.className.includes('active'));
+    assert.ok(t.log.includes('mrs:reveal=k1'));
+    t.log.length = 0;
+    t.panel.reveal('tasks', 't9');
+    assert.ok(t.ids.get('tasks-toggle')!.className.includes('active'), 'открытая панель переключается на вкладку задач');
+    assert.ok(t.log.includes('tasks:reveal=t9'));
+  });
+
+  it('смена проекта сбрасывает метки и прокрутку', async () => {
+    const t = await panelSetup();
+    t.toggle('mrs-toggle');
+    t.views.mrs.scroll(90);
+    t.panel.close();
+    t.log.length = 0;
+    t.panel.onProjectChanged();
+    assert.ok(t.log.includes('mrs:mark=null') && t.log.includes('tasks:mark=null'));
+    t.log.length = 0;
+    t.toggle('mrs-toggle');
+    assert.ok(t.log.includes('mrs:scroll=0'));
+  });
 });

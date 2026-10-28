@@ -5,6 +5,7 @@ import { readChoice, writePref } from './prefs';
 import { keepKnownDetails, MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
 import type { PanelView } from './panel';
+import { RowMarks } from './row-marks';
 import { keepSnapshotOnError, RefreshGate, sameSnapshot, snapshotStale, wireRefresh, type RefreshTrigger } from './task-flow';
 import { fetchFailed, sortByKey, sourceLabel, type SortKey } from './task-model';
 
@@ -49,6 +50,7 @@ export class MrsView implements PanelView {
   /** Ключи MR, чьи пайплайн и апрувы ещё не пришли: в строке «…». */
   private pending = new Set<string>();
   private readonly metas = new MrMetaSlots();
+  private readonly marks = new RowMarks();
 
   constructor(private readonly host: MrsViewHost) {
     this.actions = [
@@ -102,6 +104,22 @@ export class MrsView implements PanelView {
 
   repaint(): void {
     this.render();
+  }
+
+  getScroll(): number {
+    return this.body.scrollTop;
+  }
+
+  setScroll(top: number): void {
+    this.body.scrollTop = top;
+  }
+
+  mark(key: string | null): void {
+    this.marks.set(key);
+  }
+
+  reveal(key: string): boolean {
+    return this.marks.reveal(key);
   }
 
   async refresh(force = false, trigger: RefreshTrigger = 'open'): Promise<void> {
@@ -185,6 +203,7 @@ export class MrsView implements PanelView {
       return;
     }
     this.metas.clear();
+    this.marks.clear();
     const nodes: HTMLElement[] = [];
     for (const source of result.sources) {
       if (source.error) nodes.push(el('p', 'tasks-error', `${sourceLabel(source)}: ${source.error}`));
@@ -213,7 +232,7 @@ export class MrsView implements PanelView {
 
   private row(mr: Mr): HTMLElement {
     const open = this.host.sessionOf(mr.key);
-    const row = el('div', 'task-row');
+    const row = this.marks.register(mr.key, el('div', 'task-row'));
     const main = el('div', 'task-main');
     const title = el('div', 'task-title');
     const number = el('button', 'task-number', mrNumber(mr.kind, mr.number));
@@ -232,6 +251,7 @@ export class MrsView implements PanelView {
       button.addEventListener('click', (event) => {
         // Меню выбора репозитория закрывается кликом по документу: клик по кнопке не должен закрыть его сразу.
         event.stopPropagation();
+        this.marks.set(mr.key);
         action.run(mr, button);
       });
       actions.append(button);

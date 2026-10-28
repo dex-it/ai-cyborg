@@ -1,6 +1,7 @@
 import { basename, el, parentRel } from './dom';
 import { makeDraggable } from './drop-path';
 import { filterPaths, matchAt, type FilterNode } from './tree-filter';
+import { restoreIndex, rowKey, tabStopIndex, treeKeyAction, type KeyRow } from './tree-keys';
 
 export interface TreeRoot {
   path: string;
@@ -24,6 +25,9 @@ const api = window.cyborg;
 // Больше строк DOM не потянет без задержки на каждом нажатии.
 const FILTER_LIMIT = 500;
 
+/** Опрос, не ответивший дольше этого, считается зависшим: следующий тик запускается, не дожидаясь его. */
+const POLL_STALE_MS = 30_000;
+
 function statusLabel(code: string): string {
   if (code === '?') return 'U';
   if (code === 'U') return '!';
@@ -38,6 +42,68 @@ function changedDirs(state: RootState): Set<string> {
   return dirs;
 }
 
+const ITEM = '[role="treeitem"]';
+
+/** Роль и состояние строки для чтения с экрана; ключ нужен, чтобы после перерисовки найти ту же строку. */
+function markItem(row: HTMLElement, key: string, level: number, expanded: boolean | null, selected: boolean | null): void {
+  row.setAttribute('role', 'treeitem');
+  row.setAttribute('aria-level', String(level));
+  if (expanded !== null) row.setAttribute('aria-expanded', String(expanded));
+  if (selected !== null) row.setAttribute('aria-selected', String(selected));
+  row.dataset.key = key;
+  // В порядке табуляции остаётся одна строка; replaceTree выбирает её после отрисовки.
+  row.tabIndex = -1;
+}
+
+const itemOf = (node: EventTarget | Element | null): HTMLElement | null => (node as HTMLElement | null)?.closest?.<HTMLElement>(ITEM) ?? null;
+
+const itemsOf = (container: HTMLElement): HTMLElement[] => [...container.querySelectorAll<HTMLElement>(ITEM)];
+
+function setTabStop(container: HTMLElement, row: HTMLElement): void {
+  for (const item of itemsOf(container)) item.tabIndex = item === row ? 0 : -1;
+}
+
+/**
+ * Дерево как WAI-ARIA tree: стрелки, Home и End переводят фокус, вправо и влево раскрывают и сворачивают, Enter и пробел
+ * нажимают строку. Работает на контейнере: строки пересоздаются при каждой перерисовке.
+ */
+export function bindTree(container: HTMLElement, label: string): void {
+  container.setAttribute('role', 'tree');
+  container.setAttribute('aria-label', label);
+  container.addEventListener('focusin', (event) => {
+    const row = itemOf(event.target as Element);
+    if (row && container.contains(row)) setTabStop(container, row);
+  });
+  container.addEventListener('keydown', (event) => {
+    // Кнопка ветки внутри строки корня и прочие вложенные элементы управляются сами.
+    if (event.altKey || event.ctrlKey || event.metaKey || !(event.target as HTMLElement).matches?.(ITEM)) return;
+    const items = itemsOf(container);
+    const rows: KeyRow[] = items.map((item) => ({
+      level: Number(item.getAttribute('aria-level')),
+      expandable: item.hasAttribute('aria-expanded'),
+      expanded: item.getAttribute('aria-expanded') === 'true',
+    }));
+    const action = treeKeyAction(event.key, rows, items.indexOf(event.target as HTMLElement));
+    if (!action) return;
+    event.preventDefault();
+    if (action.kind === 'focus') items[action.index].focus();
+    else if (action.kind === 'click') items[action.index].click();
+  });
+}
+
+/** Подменяет строки дерева готовыми; прокрутка и фокус клавиатуры остаются там, где были (строка с тем же путём, иначе родитель, иначе первая). */
+export function replaceTree(container: HTMLElement, fragment: DocumentFragment): void {
+  const scroll = container.scrollTop;
+  const focused = container.contains(document.activeElement) ? itemOf(document.activeElement) : null;
+  const wanted = focused?.dataset.key ?? null;
+  container.replaceChildren(fragment);
+  container.scrollTop = scroll;
+  const items = itemsOf(container);
+  const stop = tabStopIndex(items.map((item) => item.getAttribute('aria-selected') === 'true'));
+  if (stop >= 0) items[stop].tabIndex = 0;
+  if (focused) items[restoreIndex(items.map((item) => item.dataset.key ?? ''), wanted)]?.focus({ preventScroll: true });
+}
+
 /** Дерево одной сессии: раскрытые каталоги и выбор не делятся с другими сессиями. */
 export class TreeView {
   private roots: TreeRoot[] = [];
@@ -47,6 +113,8 @@ export class TreeView {
   private filterText = '';
   // Набор файлов меняется вместе с git status: пока он тот же, ввод фильтра не перечитывает списки.
   private files: { key: string; lists: Promise<string[][]> } | null = null;
+  /** Когда начался ещё не законченный опрос; null - опрос не идёт. */
+  private pollStartedAt: number | null = null;
 
   constructor(
     private readonly onOpenFile: (path: string, root: TreeRoot) => void,
@@ -76,11 +144,31 @@ export class TreeView {
     this.redraw();
   }
 
-  /** Строит дерево заново; null - git-состояние не менялось и onlyIfChanged просил не перерисовывать. */
+  /**
+   * Строит дерево заново; null - git-состояние не менялось и onlyIfChanged просил не перерисовывать.
+   * Опрос не накладывается сам на себя: пока предыдущий не закончил (медленный git status у большого репозитория или
+   * загруженной машины), очередной тик ничего не запускает. Отрисовки по клику и по событию не пропускаются.
+   */
   async render(onlyIfChanged: boolean): Promise<DocumentFragment | null> {
+    if (!onlyIfChanged) return this.build(false);
+    if (this.pollStartedAt !== null && Date.now() - this.pollStartedAt < POLL_STALE_MS) return null;
+    const started = Date.now();
+    this.pollStartedAt = started;
+    try {
+      return await this.build(true);
+    } finally {
+      if (this.pollStartedAt === started) this.pollStartedAt = null;
+    }
+  }
+
+  private async build(onlyIfChanged: boolean): Promise<DocumentFragment | null> {
     const roots = this.roots;
+    // Статус и ветка независимы: два запроса к git идут одновременно, а не друг за другом.
     const results = await Promise.all(
-      roots.map(async (root) => ({ status: await api.gitStatus(root.path), branch: await api.gitBranch(root.path) })),
+      roots.map(async (root) => {
+        const [status, branch] = await Promise.all([api.gitStatus(root.path), api.gitBranch(root.path)]);
+        return { status, branch };
+      }),
     );
     const key = JSON.stringify(results);
     if (onlyIfChanged && key === this.statusKey) return null;
@@ -114,8 +202,9 @@ export class TreeView {
   private rootRow(root: TreeRoot, state: RootState, primary: boolean): HTMLElement {
     const row = el('div', `row root${primary ? ' primary' : ''}`);
     row.title = `${root.path}\n${root.hint}`;
+    markItem(row, rowKey(root.path, ''), 1, !state.collapsed || !!this.filterText, null);
     makeDraggable(row, root.path);
-    row.append(el('span', 'twisty', state.collapsed ? '▸' : '▾'), el('span', 'name', root.label));
+    row.append(this.twisty(state.collapsed && !this.filterText ? '▸' : '▾'), el('span', 'name', root.label));
     const changes = Object.keys(state.status).length;
     const meta = el('span', 'meta');
     if (!state.branch) meta.append(el('span', '', 'не git'));
@@ -203,8 +292,9 @@ export class TreeView {
     const row = el('div', `row ${entry.isDir ? 'dir' : 'file'}`);
     row.style.paddingLeft = `${4 + depth * 12}px`;
     row.title = abs;
+    markItem(row, rowKey(root.path, rel), depth + 1, entry.isDir ? expanded : null, entry.isDir ? null : this.selected === abs);
     makeDraggable(row, abs);
-    row.append(el('span', 'twisty', entry.isDir ? (expanded ? '▾' : '▸') : ''));
+    row.append(this.twisty(entry.isDir ? (expanded ? '▾' : '▸') : ''));
     const name = el('span', 'name');
     const at = entry.isDir || !this.filterText ? -1 : matchAt(entry.name, this.filterText);
     if (at < 0) name.textContent = entry.name;
@@ -226,8 +316,12 @@ export class TreeView {
       if (entry.isDir) onDirClick?.();
       else {
         this.selected = abs;
-        row.parentElement?.querySelectorAll('.row.selected').forEach((r) => r.classList.remove('selected'));
+        row.parentElement?.querySelectorAll('.row.selected').forEach((r) => {
+          r.classList.remove('selected');
+          r.setAttribute('aria-selected', 'false');
+        });
         row.classList.add('selected');
+        row.setAttribute('aria-selected', 'true');
         this.onOpenFile(abs, root);
       }
     });
@@ -238,6 +332,13 @@ export class TreeView {
     const row = el('div', 'row note', text);
     row.style.paddingLeft = '16px';
     return row;
+  }
+
+  /** Треугольник - украшение: состояние читается из aria-expanded. */
+  private twisty(sign: string): HTMLElement {
+    const twisty = el('span', 'twisty', sign);
+    twisty.setAttribute('aria-hidden', 'true');
+    return twisty;
   }
 
   private redraw(): void {

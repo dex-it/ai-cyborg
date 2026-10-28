@@ -55,3 +55,16 @@ describe('привязка задачи и MR к сессии только в п
     assert.deepEqual(writers, ['src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
   });
 });
+
+describe('диалоги названы для программ чтения с экрана (FR-10010)', () => {
+  it('у каждого <dialog> в index.html есть aria-labelledby на существующий заголовок', () => {
+    const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8');
+    const dialogs = [...html.matchAll(/<dialog\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(dialogs.length >= 4, 'диалоги в index.html не найдены');
+    for (const tag of dialogs) {
+      const labelled = /aria-labelledby="([^"]+)"/.exec(tag)?.[1];
+      assert.ok(labelled, `без aria-labelledby: ${tag}`);
+      assert.ok(new RegExp(`<h2 id="${labelled}"`).test(html), `заголовка ${labelled} нет`);
+    }
+  });
+});

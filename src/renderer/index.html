@@ -20,8 +20,9 @@
         <header id="tree-header">
           <div id="tree-title"></div>
           <div id="tree-meta"></div>
+          <button id="tree-back" hidden></button>
         </header>
-        <input id="tree-filter" class="menu-filter" type="search" placeholder="Найти файл" title="Файлы, в имени которых есть набранное; Esc - сбросить" spellcheck="false" />
+        <input id="tree-filter" class="menu-filter" type="search" aria-label="Найти файл" placeholder="Найти файл" title="Файлы, в имени которых есть набранное; Esc - сбросить" spellcheck="false" />
         <div id="tree"></div>
         <div id="history" hidden></div>
       </aside>
@@ -47,7 +48,7 @@
     <div id="status-popover" class="popover" role="dialog" aria-label="Статус проекта" tabindex="-1" hidden></div>
     <div id="repo-menu" class="menu" hidden></div>
 
-    <dialog id="project-dialog">
+    <dialog id="project-dialog" aria-labelledby="project-dialog-title">
       <form method="dialog">
         <h2 id="project-dialog-title"></h2>
         <label class="field">
@@ -94,9 +95,9 @@
       </form>
     </dialog>
 
-    <dialog id="workspace-dialog">
+    <dialog id="workspace-dialog" aria-labelledby="workspace-dialog-title">
       <form method="dialog">
-        <h2>Новый воркспейс</h2>
+        <h2 id="workspace-dialog-title">Новый воркспейс</h2>
         <label class="field">
           <span>Имя воркспейса</span>
           <input id="workspace-name" required autocomplete="off" />
@@ -126,9 +127,9 @@
       </form>
     </dialog>
 
-    <dialog id="commands-dialog">
+    <dialog id="commands-dialog" aria-labelledby="commands-dialog-title">
       <form method="dialog">
-        <h2>Кнопки команд</h2>
+        <h2 id="commands-dialog-title">Кнопки команд</h2>
         <p class="hint">
           Действующий набор: встроенные кнопки (Сливай, Сделай PR, Мердж, Приберись) и ваши. Что здесь записано, то и сохранится в файле воркспейса.
           Кнопка с тем же <code>label</code>, что у встроенной, заменяет её. Поля: <code>label</code>, <code>text</code> (одна строка),
@@ -154,9 +155,9 @@
       </form>
     </dialog>
 
-    <dialog id="prompts-dialog">
+    <dialog id="prompts-dialog" aria-labelledby="prompts-dialog-title">
       <form method="dialog">
-        <h2>Промпты кнопок</h2>
+        <h2 id="prompts-dialog-title">Промпты кнопок</h2>
         <p class="hint">
           Первое сообщение сессии, которую запускают кнопки: «Ревью», «Доработать» и «CI» у MR (<code>mr.review</code>, <code>mr.rework</code>,
           <code>mr.ci</code>), «Взять в работу» у задачи GitHub и GitLab (<code>task.start</code>) и сессия по задаче Jira (<code>jira.start</code>).
