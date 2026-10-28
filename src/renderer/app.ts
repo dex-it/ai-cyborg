@@ -29,7 +29,7 @@ import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
-import { TreeView, type TreeRoot } from './tree';
+import { bindTree, replaceTree, TreeView, type TreeRoot } from './tree';
 import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize } from './font-size';
 import { WaitNotifier } from './notify';
@@ -81,6 +81,7 @@ const newSessionShortcut = shortcut(mac, 'Shift', 'N');
 const sidebar = byId('sidebar');
 const projectSelect = byId<HTMLSelectElement>('project-select');
 const treeEl = byId('tree');
+bindTree(treeEl, 'Файлы');
 const treeTitle = byId('tree-title');
 const treeMeta = byId('tree-meta');
 const treeBack = byId<HTMLButtonElement>('tree-back');
@@ -495,9 +496,7 @@ async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
   const token = ++treeToken;
   const fragment = await tree.render(onlyIfChanged);
   if (!fragment || token !== treeToken || active || projectTree() !== tree) return;
-  const scroll = treeEl.scrollTop;
-  treeEl.replaceChildren(fragment);
-  treeEl.scrollTop = scroll;
+  replaceTree(treeEl, fragment);
 }
 
 function fileHeader(path: string, root: TreeRoot): HTMLElement {
@@ -579,9 +578,7 @@ async function renderTree(s: Session, onlyIfChanged: boolean): Promise<void> {
   const token = ++treeToken;
   const fragment = await s.tree.render(onlyIfChanged);
   if (!fragment || token !== treeToken || s !== active) return;
-  const scroll = treeEl.scrollTop;
-  treeEl.replaceChildren(fragment);
-  treeEl.scrollTop = scroll;
+  replaceTree(treeEl, fragment);
 }
 
 function fitSession(s: Session): void {
