@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { rowKey } from '../src/renderer/tree-keys';
 
 class FakeNode {
   className = '';
   textContent = '';
   title = '';
   style: Record<string, string> = {};
+  dataset: Record<string, string> = {};
+  tabIndex = 0;
+  attrs: Record<string, string> = {};
   children: FakeNode[] = [];
   parentElement: FakeNode | null = null;
   private listeners: { type: string; fn: () => void }[] = [];
@@ -13,6 +17,12 @@ class FakeNode {
     add: (c: string) => { this.className = `${this.className} ${c}`.trim(); },
     remove: (c: string) => { this.className = this.className.split(' ').filter((x) => x !== c).join(' '); },
   };
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
+  }
+  getAttribute(name: string): string | null {
+    return this.attrs[name] ?? null;
+  }
   append(...nodes: FakeNode[]): void {
     for (const n of nodes) {
       n.parentElement = this;
@@ -142,5 +152,64 @@ describe('TreeView: раскрытие по каждому каталогу не
     const two = await makeView();
     byTitle(await one.draw(), '/r/a')!.row.click();
     assert.equal(byTitle(await two.draw(), '/r/a')!.open, false);
+  });
+});
+
+describe('TreeView: роли и состояния ARIA', () => {
+  const attr = (r: { row: FakeNode } | undefined, name: string) => r!.row.getAttribute(name);
+
+  it('корни, каталоги и файлы - treeitem с глубиной; aria-expanded у корней и каталогов, у файлов его нет', async () => {
+    const { draw } = await makeView();
+    rootRow(await draw(), 'o').row.click();
+    byTitle(await draw(), '/r/a')!.row.click();
+    const frag = await draw();
+    for (const r of rows(frag)) assert.equal(r.row.getAttribute('role'), 'treeitem', r.title);
+    assert.equal(attr(rootRow(frag, 'r'), 'aria-level'), '1');
+    assert.equal(attr(rootRow(frag, 'r'), 'aria-expanded'), 'true');
+    assert.equal(attr(rootRow(frag, 'o'), 'aria-expanded'), 'true', 'корень o раскрыт кликом');
+    assert.equal(attr(byTitle(frag, '/r/a'), 'aria-level'), '2');
+    assert.equal(attr(byTitle(frag, '/r/a'), 'aria-expanded'), 'true');
+    assert.equal(attr(byTitle(frag, '/r/b'), 'aria-expanded'), 'false');
+    assert.equal(attr(byTitle(frag, '/r/a/c'), 'aria-level'), '3');
+    assert.equal(attr(byTitle(frag, '/r/a/x.txt'), 'aria-level'), '3');
+    assert.equal(attr(byTitle(frag, '/r/a/x.txt'), 'aria-expanded'), null);
+  });
+
+  it('свёрнутый корень: aria-expanded=false, потомков нет', async () => {
+    const { draw } = await makeView();
+    const frag = await draw();
+    assert.equal(attr(rootRow(frag, 'o'), 'aria-expanded'), 'false');
+    assert.equal(byTitle(frag, '/o/a'), undefined);
+  });
+
+  it('aria-selected: true у выбранного файла, false у остальных файлов, у каталогов нет', async () => {
+    const { draw } = await makeView();
+    byTitle(await draw(), '/r/f.txt')!.row.click();
+    const frag = await draw();
+    assert.equal(attr(byTitle(frag, '/r/f.txt'), 'aria-selected'), 'true');
+    assert.equal(attr(byTitle(frag, '/r/a'), 'aria-selected'), null);
+    byTitle(frag, '/r/a')!.row.click();
+    byTitle(await draw(), '/r/a/x.txt')!.row.click();
+    const after = await draw();
+    assert.equal(attr(byTitle(after, '/r/a/x.txt'), 'aria-selected'), 'true');
+    assert.equal(attr(byTitle(after, '/r/f.txt'), 'aria-selected'), 'false');
+  });
+
+  it('ключи строк уникальны, различают одноимённый путь в разных корнях', async () => {
+    const { draw } = await makeView();
+    rootRow(await draw(), 'o').row.click();
+    byTitle(await draw(), '/r/a')!.row.click();
+    byTitle(await draw(), '/o/a')!.row.click();
+    const frag = await draw();
+    const keys = rows(frag).map((r) => r.row.dataset.key);
+    assert.equal(new Set(keys).size, keys.length, 'ключи уникальны');
+    assert.equal(byTitle(frag, '/r/a')!.row.dataset.key, rowKey('/r', 'a'));
+    assert.equal(byTitle(frag, '/o/a')!.row.dataset.key, rowKey('/o', 'a'));
+    assert.equal(rootRow(frag, 'r').row.dataset.key, rowKey('/r', ''));
+  });
+
+  it('строки вне порядка табуляции: единственную выбирает replaceTree', async () => {
+    const { draw } = await makeView();
+    for (const r of rows(await draw())) assert.equal(r.row.tabIndex, -1, r.title);
   });
 });
