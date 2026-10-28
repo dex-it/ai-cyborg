@@ -110,6 +110,7 @@ date: 2026-10-26
 | FR-10007 | Системное меню «Воркспейс» вместо меню проекта на панели | 10-ui-preferences | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-10008 | Вкладки управляются с клавиатуры | 10-ui-preferences | автотест | `test/tabs.test.ts` |
 | FR-10009 | Активная вкладка сессии видна в полосе | 10-ui-preferences | осмотр и демонстрация | - |
+| FR-10010 | Диалоги названы для программ чтения с экрана | 10-ui-preferences | автотест | `test/static-guards.test.ts` |
 | FR-11001 | Jira в свойствах проекта | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11002 | Кнопка «Статус» и карточка | 11-status-hub | smoke | `scripts/smoke.mjs` |
 | FR-11003 | Сбор и обновление данных | 11-status-hub | smoke | `scripts/smoke.mjs` |
