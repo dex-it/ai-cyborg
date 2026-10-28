@@ -8,10 +8,10 @@ import { saveCommandsText } from './commands';
 import { savePromptsText } from './prompts';
 import { PromptStore } from './prompt-store';
 import { openablePath, webUrl } from './open-path';
-import { listDir, readTextFile } from './files';
+import { listDir, readTextFile, walkFiles } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
-import { gitBranch, gitBranches, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
+import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
 import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from './menu';
 import { validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
@@ -82,6 +82,7 @@ const paths = createPathHandlers({
   allowed: new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]),
   liveDirs: () => sessions.liveDirs(),
   listDir,
+  listFiles: async (root) => (await gitFiles(root)) ?? walkFiles(root),
   readTextFile,
   gitRoot,
   gitBranch,
@@ -349,6 +350,7 @@ ipcMain.on('project:selected', (_event, selected: unknown) => {
   if (item) item.enabled = menuState.hasProject;
 });
 ipcMain.handle('fs:list', (_event, dir: unknown) => paths.list(dir));
+ipcMain.handle('fs:files', (_event, root: unknown) => paths.files(root));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('git:root', (_event, dir: unknown) => paths.root(dir));
 ipcMain.handle('git:branch', (_event, root: unknown) => paths.branch(root));
