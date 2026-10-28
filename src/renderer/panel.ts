@@ -91,7 +91,11 @@ export class TrackerPanel {
   }
 
   private markButtons(): void {
-    for (const [id, button] of this.buttons) button.classList.toggle('active', this.opened && id === this.tab);
+    for (const [id, button] of this.buttons) {
+      const pressed = this.opened && id === this.tab;
+      button.classList.toggle('active', pressed);
+      button.setAttribute('aria-pressed', String(pressed));
+    }
   }
 
   private press(tab: Tab): void {
