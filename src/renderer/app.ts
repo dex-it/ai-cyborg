@@ -31,7 +31,7 @@ import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
 import { bindTree, replaceTree, TreeView, type TreeRoot } from './tree';
 import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
-import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize } from './font-size';
+import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
@@ -1280,13 +1280,14 @@ function zoomTree(): void {
 zoomTree();
 
 // В capture до xterm: иначе колесо с клавишей команд прокрутит историю терминала.
+const wheelSteps = new WheelStepper();
 window.addEventListener(
   'wheel',
   (event) => {
     if (!commandKey(event)) return;
     event.preventDefault();
     event.stopPropagation();
-    setFontSize(stepFontSize(fontSize, event.deltaY));
+    setFontSize(stepFontSize(fontSize, wheelSteps.push(event.deltaY, event.timeStamp)));
   },
   { capture: true, passive: false },
 );
