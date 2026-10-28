@@ -213,3 +213,72 @@ describe('TreeView: роли и состояния ARIA', () => {
     for (const r of rows(await draw())) assert.equal(r.row.tabIndex, -1, r.title);
   });
 });
+
+describe('TreeView: опрос git', () => {
+  const cyborg = (globalThis as any).window.cyborg;
+  const saved = { gitStatus: cyborg.gitStatus, gitBranch: cyborg.gitBranch };
+  const restore = () => Object.assign(cyborg, saved);
+
+  it('статус и ветка корня запрашиваются одновременно, у всех корней сразу', async () => {
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    cyborg.gitStatus = async (root: string) => (started.push(`status ${root}`), await gate, { 'f.txt': 'M' });
+    cyborg.gitBranch = async (root: string) => (started.push(`branch ${root}`), await gate, 'main');
+    try {
+      const { view } = await makeView();
+      const drawing = view.render(false);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(started.sort(), ['branch /o', 'branch /r', 'status /o', 'status /r'], 'до ответа первого запроса запущены все');
+      release();
+      const frag = (await drawing)!;
+      const file = frag.children.find((row) => row.title === '/r/f.txt')!;
+      assert.equal(file.children.some((c) => c.className.includes('badge st-M')), true, 'статус применён');
+    } finally {
+      restore();
+    }
+  });
+
+  it('опрос не накладывается на незаконченный опрос, отрисовка по клику не пропускается', async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    cyborg.gitStatus = async () => (calls++, await gate, {});
+    try {
+      const { view } = await makeView();
+      const first = view.render(true);
+      const second = await view.render(true);
+      assert.equal(second, null, 'второй опрос во время первого ничего не делает');
+      assert.equal(calls, 2, 'статус запрошен только первым опросом (по числу корней)');
+      const click = view.render(false);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(calls, 4, 'отрисовка не по опросу запущена, не дожидаясь опроса');
+      release();
+      assert.ok(await first);
+      assert.ok(await click);
+      cyborg.gitStatus = async () => (calls++, {});
+      assert.equal(await view.render(true), null, 'после окончания опрос снова запускается; состояние то же - null');
+      assert.equal(calls, 6);
+    } finally {
+      restore();
+    }
+  });
+
+  it('зависший опрос старше предела не блокирует следующий', async () => {
+    let calls = 0;
+    cyborg.gitStatus = async () => {
+      calls++;
+      return calls <= 2 ? new Promise(() => {}) : {};
+    };
+    const realNow = Date.now;
+    try {
+      const { view } = await makeView();
+      void view.render(true);
+      Date.now = () => realNow() + 31_000;
+      assert.ok(await view.render(true), 'опрос запущен, не дожидаясь зависшего');
+    } finally {
+      Date.now = realNow;
+      restore();
+    }
+  });
+});
