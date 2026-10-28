@@ -23,6 +23,7 @@ import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
 import { returnTarget } from './panel-return';
 import { asMenuItem, bindList, rove } from './list-keys';
+import { bindTablist, markTab, selectTab } from './tabs';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
@@ -444,7 +445,7 @@ function showNoSession(): void {
   active = null;
   for (const s of sessions) {
     s.container.classList.remove('active');
-    s.stripTab.classList.remove('active');
+    selectTab(s.stripTab, false);
   }
   sidebar.style.removeProperty('--session');
   treeTitle.textContent = project ? project.name : 'Нет проекта';
@@ -543,7 +544,7 @@ function activateSession(s: Session, keepPanel = false): void {
   if (document.hasFocus()) notifier.dismiss(s.id);
   for (const other of sessions) {
     other.container.classList.toggle('active', other === s);
-    other.stripTab.classList.toggle('active', other === s);
+    selectTab(other.stripTab, other === s);
   }
   empty.hidden = true;
   sidebar.style.setProperty('--session', s.color);
@@ -557,10 +558,10 @@ function activateSession(s: Session, keepPanel = false): void {
 
 function showInner(s: Session, file: FileTab | null): void {
   s.activeFile = file;
-  s.claudeTab.classList.toggle('active', !file);
+  selectTab(s.claudeTab, !file);
   s.termPane.classList.toggle('active', !file);
   for (const f of s.files) {
-    f.tab.classList.toggle('active', f === file);
+    selectTab(f.tab, f === file);
     f.pane.classList.toggle('active', f === file);
   }
   if (file) void file.viewer.load();
@@ -588,7 +589,7 @@ function fitSession(s: Session): void {
 }
 
 function makeTab(className: string, label: string, onClose?: () => void): HTMLElement {
-  const tab = el('div', `tab ${className}`);
+  const tab = markTab(el('div', `tab ${className}`));
   tab.append(el('span', 'icon'), el('span', 'label', label));
   if (onClose) {
     const close = el('button', 'close', '×');
@@ -692,6 +693,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const container = el('div', 'workspace-pane');
   container.style.setProperty('--session', color);
   const innerTabs = el('nav', 'inner-tabs');
+  bindTablist(innerTabs, 'Вкладки сессии');
   const innerPanes = el('div', 'inner-panes');
   const termPane = el('div', 'pane terminal');
   const host = el('div', 'term-host');
@@ -1116,8 +1118,8 @@ async function loadHistory(): Promise<void> {
 }
 
 function showSideView(history: boolean): void {
-  sideFiles.classList.toggle('active', !history);
-  sideHistory.classList.toggle('active', history);
+  selectTab(sideFiles, !history);
+  selectTab(sideHistory, history);
   treeHeader.hidden = treeEl.hidden = history;
   historyEl.hidden = !history;
   if (history) void loadHistory();
@@ -1228,6 +1230,10 @@ newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleSessionMenu(newSessionButton);
 });
+bindTablist(byId('side-tabs'), 'Боковая панель');
+bindTablist(sessionList, 'Сессии');
+selectTab(sideFiles, true);
+selectTab(sideHistory, false);
 sideFiles.addEventListener('click', () => showSideView(false));
 sideHistory.addEventListener('click', () => showSideView(true));
 bindList(repoMenu, '.menu-item');

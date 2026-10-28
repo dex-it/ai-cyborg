@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 116; с автотестом - 102, из них со smoke - 15; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 117; с автотестом - 103, из них со smoke - 15; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -107,6 +107,7 @@ date: 2026-10-26
 | FR-10005 | Версия приложения, воркспейс и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `test/workspaces.test.ts`, `scripts/smoke.mjs` |
 | FR-10006 | Уведомление, когда сессия ждёт человека | 10-ui-preferences | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/notify-args.test.ts`, `test/menu.test.ts` |
 | FR-10007 | Системное меню «Воркспейс» вместо меню проекта на панели | 10-ui-preferences | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-10008 | Вкладки управляются с клавиатуры | 10-ui-preferences | автотест | `test/tabs.test.ts` |
 | FR-11001 | Jira в свойствах проекта | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11002 | Кнопка «Статус» и карточка | 11-status-hub | smoke | `scripts/smoke.mjs` |
 | FR-11003 | Сбор и обновление данных | 11-status-hub | smoke | `scripts/smoke.mjs` |
