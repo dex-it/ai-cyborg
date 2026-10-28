@@ -393,7 +393,29 @@ select:disabled {
 }
 
 #history[hidden],
+#tree-filter {
+  flex: none;
+  width: auto;
+  margin: 0 10px 8px;
+}
+
+#tree .row.note {
+  color: var(--fg-dim);
+  cursor: default;
+}
+
+#tree .row.note:hover {
+  background: none;
+}
+
+#tree mark {
+  background: var(--accent-soft);
+  color: inherit;
+  border-radius: 2px;
+}
+
 #tree[hidden],
+#tree-filter[hidden],
 #tree-header[hidden] {
   display: none;
 }

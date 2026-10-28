@@ -106,6 +106,16 @@ export async function gitBranch(root: string): Promise<string | null> {
   }
 }
 
+/** Файлы под root относительно него, без игнорируемых .gitignore; null - root не в git. */
+export async function gitFiles(root: string): Promise<string[] | null> {
+  try {
+    const out = await git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+    return [...new Set(out.split('\0').filter(Boolean))];
+  } catch {
+    return null;
+  }
+}
+
 /** Путь относительно корня репозитория -> код состояния: M, A, D, R, U либо ? для неотслеживаемого. */
 export async function gitStatus(root: string): Promise<Record<string, string>> {
   let out: string;

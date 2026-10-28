@@ -91,6 +91,7 @@ const filePreview = byId('file-preview');
 const projectTrees = new Map<string, TreeView>();
 let preview: FileViewer | null = null;
 const treeHeader = byId('tree-header');
+const treeFilter = byId<HTMLInputElement>('tree-filter');
 const historyEl = byId('history');
 const sideFiles = byId<HTMLButtonElement>('side-files');
 const sideHistory = byId<HTMLButtonElement>('side-history');
@@ -434,6 +435,7 @@ function showNoSession(): void {
   treeEl.replaceChildren();
   closePreview();
   const tree = projectTree();
+  treeFilter.value = tree?.filter ?? '';
   tree?.setRoots(project!.repos.map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' })));
   void renderProjectTree(false);
   const hint = projectHint();
@@ -529,6 +531,7 @@ function activateSession(s: Session, keepPanel = false): void {
   sidebar.style.setProperty('--session', s.color);
   updateSessionLabels(s);
   s.tree.setRoots(treeRoots(s));
+  treeFilter.value = s.tree.filter;
   // Своё дерево заменится готовым целиком; очистка нужна только против чужого, иначе дерево мигает до ответа git status.
   if (!same) treeEl.replaceChildren();
   void renderTree(s, false);
@@ -1068,7 +1071,7 @@ async function loadHistory(): Promise<void> {
 function showSideView(history: boolean): void {
   sideFiles.classList.toggle('active', !history);
   sideHistory.classList.toggle('active', history);
-  treeHeader.hidden = treeEl.hidden = history;
+  treeHeader.hidden = treeFilter.hidden = treeEl.hidden = history;
   historyEl.hidden = !history;
   if (history) void loadHistory();
 }
@@ -1177,6 +1180,14 @@ const statusHub = new StatusHub({
 newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleSessionMenu(newSessionButton);
+});
+treeFilter.addEventListener('input', () => (active ? active.tree : projectTree())?.setFilter(treeFilter.value.trim()));
+treeFilter.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !treeFilter.value) return;
+  // Иначе Esc уйдёт дальше и закроет то, что открыто поверх.
+  event.stopPropagation();
+  treeFilter.value = '';
+  treeFilter.dispatchEvent(new Event('input'));
 });
 sideFiles.addEventListener('click', () => showSideView(false));
 sideHistory.addEventListener('click', () => showSideView(true));
