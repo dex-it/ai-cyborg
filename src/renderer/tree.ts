@@ -22,6 +22,9 @@ interface Entry {
 
 const api = window.cyborg;
 
+/** Опрос, не ответивший дольше этого, считается зависшим: следующий тик запускается, не дожидаясь его. */
+const POLL_STALE_MS = 30_000;
+
 function statusLabel(code: string): string {
   if (code === '?') return 'U';
   if (code === 'U') return '!';
@@ -96,6 +99,8 @@ export class TreeView {
   private readonly states = new Map<string, RootState>();
   private statusKey = '';
   private selected: string | null = null;
+  /** Когда начался ещё не законченный опрос; null - опрос не идёт. */
+  private pollStartedAt: number | null = null;
 
   constructor(
     private readonly onOpenFile: (path: string, root: TreeRoot) => void,
@@ -115,11 +120,31 @@ export class TreeView {
     this.statusKey = '';
   }
 
-  /** Строит дерево заново; null - git-состояние не менялось и onlyIfChanged просил не перерисовывать. */
+  /**
+   * Строит дерево заново; null - git-состояние не менялось и onlyIfChanged просил не перерисовывать.
+   * Опрос не накладывается сам на себя: пока предыдущий не закончил (медленный git status у большого репозитория или
+   * загруженной машины), очередной тик ничего не запускает. Отрисовки по клику и по событию не пропускаются.
+   */
   async render(onlyIfChanged: boolean): Promise<DocumentFragment | null> {
+    if (!onlyIfChanged) return this.build(false);
+    if (this.pollStartedAt !== null && Date.now() - this.pollStartedAt < POLL_STALE_MS) return null;
+    const started = Date.now();
+    this.pollStartedAt = started;
+    try {
+      return await this.build(true);
+    } finally {
+      if (this.pollStartedAt === started) this.pollStartedAt = null;
+    }
+  }
+
+  private async build(onlyIfChanged: boolean): Promise<DocumentFragment | null> {
     const roots = this.roots;
+    // Статус и ветка независимы: два запроса к git идут одновременно, а не друг за другом.
     const results = await Promise.all(
-      roots.map(async (root) => ({ status: await api.gitStatus(root.path), branch: await api.gitBranch(root.path) })),
+      roots.map(async (root) => {
+        const [status, branch] = await Promise.all([api.gitStatus(root.path), api.gitBranch(root.path)]);
+        return { status, branch };
+      }),
     );
     const key = JSON.stringify(results);
     if (onlyIfChanged && key === this.statusKey) return null;
