@@ -21,14 +21,19 @@ import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
+import { neighborAfterClose } from './neighbor';
+import { returnTarget } from './panel-return';
+import { RenderTickets } from './render-ticket';
+import { asMenuItem, bindList, rove } from './list-keys';
+import { bindTablist, markTab, selectTab } from './tabs';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
-import { TreeView, type TreeRoot } from './tree';
+import { bindTree, replaceTree, TreeView, type TreeRoot } from './tree';
 import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
-import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize } from './font-size';
+import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
@@ -78,8 +83,10 @@ const newSessionShortcut = shortcut(mac, 'Shift', 'N');
 const sidebar = byId('sidebar');
 const projectSelect = byId<HTMLSelectElement>('project-select');
 const treeEl = byId('tree');
+bindTree(treeEl, 'Файлы');
 const treeTitle = byId('tree-title');
 const treeMeta = byId('tree-meta');
+const treeBack = byId<HTMLButtonElement>('tree-back');
 const sessionList = byId('session-list');
 const newSessionButton = byId<HTMLButtonElement>('new-session');
 newSessionButton.title = `Новая сессия Claude Code (${newSessionShortcut})`;
@@ -112,7 +119,7 @@ const lastSessionOf = new Map<string, Session>();
 let active: Session | null = null;
 let colorIndex = 0;
 let fontSize = loadFontSize();
-let treeToken = 0;
+const treeTickets = new RenderTickets();
 // Вывод pty может прийти раньше, чем сессия создана в интерфейсе.
 const pendingData = new Map<number, string[]>();
 
@@ -145,6 +152,7 @@ function selectProject(next: Project | null, save = true): void {
   if (session) activateSession(session, panel.isOpen);
   else showNoSession();
   panel.setAvailable(hasSources(next));
+  updateBackButton(active);
   panel.onProjectChanged();
   statusHub.onProjectChanged();
   if (!historyEl.hidden) void loadHistory();
@@ -400,6 +408,20 @@ const sessionTitle = (s: Session): string =>
         ? `CC${s.id} · ${s.jira.key} ${s.jira.summary}`
         : `CC${s.id} · ${rootLabel(s)}`;
 
+/** Из сессии по MR или задаче - обратно к её строке в списке панели; кнопка видна, пока у проекта есть источники. */
+function updateBackButton(s: Session | null): void {
+  const target = s && panel.isAvailable ? returnTarget(s) : null;
+  treeBack.hidden = !target;
+  if (!target) return;
+  treeBack.textContent = target.label;
+  treeBack.title = target.title;
+}
+
+treeBack.addEventListener('click', () => {
+  const target = active ? returnTarget(active) : null;
+  if (target) panel.reveal(target.tab, target.key);
+});
+
 function updateSessionLabels(s: Session): void {
   const label = sessionTitle(s);
   const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
@@ -411,6 +433,7 @@ function updateSessionLabels(s: Session): void {
     treeTitle.title = tooltip;
     // Шапка обрезает путь слева через direction: rtl; LRM не даёт ведущему «/» уехать в конец.
     treeMeta.textContent = `‎${s.exited ? `завершена · ${s.cwd}` : s.cwd}`;
+    updateBackButton(s);
   }
 }
 
@@ -426,12 +449,13 @@ function showNoSession(): void {
   active = null;
   for (const s of sessions) {
     s.container.classList.remove('active');
-    s.stripTab.classList.remove('active');
+    selectTab(s.stripTab, false);
   }
   sidebar.style.removeProperty('--session');
   treeTitle.textContent = project ? project.name : 'Нет проекта';
   treeTitle.title = '';
   treeMeta.textContent = project ? 'нет активной сессии' : '';
+  updateBackButton(null);
   treeEl.replaceChildren();
   closePreview();
   const tree = projectTree();
@@ -473,12 +497,10 @@ function projectTree(): TreeView | null {
 async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
   const tree = active ? null : projectTree();
   if (!tree) return;
-  const token = ++treeToken;
+  const ticket = treeTickets.take(onlyIfChanged);
   const fragment = await tree.render(onlyIfChanged);
-  if (!fragment || token !== treeToken || active || projectTree() !== tree) return;
-  const scroll = treeEl.scrollTop;
-  treeEl.replaceChildren(fragment);
-  treeEl.scrollTop = scroll;
+  if (!fragment || !treeTickets.valid(ticket) || active || projectTree() !== tree) return;
+  replaceTree(treeEl, fragment);
 }
 
 function fileHeader(path: string, root: TreeRoot): HTMLElement {
@@ -525,8 +547,10 @@ function activateSession(s: Session, keepPanel = false): void {
   if (document.hasFocus()) notifier.dismiss(s.id);
   for (const other of sessions) {
     other.container.classList.toggle('active', other === s);
-    other.stripTab.classList.toggle('active', other === s);
+    selectTab(other.stripTab, other === s);
   }
+  // Полоса прокручивается: при десятке сессий активная вкладка (новая, «К сессии», уведомление) была бы за краем.
+  s.stripTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   empty.hidden = true;
   sidebar.style.setProperty('--session', s.color);
   updateSessionLabels(s);
@@ -540,10 +564,10 @@ function activateSession(s: Session, keepPanel = false): void {
 
 function showInner(s: Session, file: FileTab | null): void {
   s.activeFile = file;
-  s.claudeTab.classList.toggle('active', !file);
+  selectTab(s.claudeTab, !file);
   s.termPane.classList.toggle('active', !file);
   for (const f of s.files) {
-    f.tab.classList.toggle('active', f === file);
+    selectTab(f.tab, f === file);
     f.pane.classList.toggle('active', f === file);
   }
   if (file) void file.viewer.load();
@@ -556,12 +580,10 @@ function showInner(s: Session, file: FileTab | null): void {
 
 async function renderTree(s: Session, onlyIfChanged: boolean): Promise<void> {
   if (s !== active) return;
-  const token = ++treeToken;
+  const ticket = treeTickets.take(onlyIfChanged);
   const fragment = await s.tree.render(onlyIfChanged);
-  if (!fragment || token !== treeToken || s !== active) return;
-  const scroll = treeEl.scrollTop;
-  treeEl.replaceChildren(fragment);
-  treeEl.scrollTop = scroll;
+  if (!fragment || !treeTickets.valid(ticket) || s !== active) return;
+  replaceTree(treeEl, fragment);
 }
 
 function fitSession(s: Session): void {
@@ -571,7 +593,7 @@ function fitSession(s: Session): void {
 }
 
 function makeTab(className: string, label: string, onClose?: () => void): HTMLElement {
-  const tab = el('div', `tab ${className}`);
+  const tab = markTab(el('div', `tab ${className}`));
   tab.append(el('span', 'icon'), el('span', 'label', label));
   if (onClose) {
     const close = el('button', 'close', '×');
@@ -675,6 +697,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const container = el('div', 'workspace-pane');
   container.style.setProperty('--session', color);
   const innerTabs = el('nav', 'inner-tabs');
+  bindTablist(innerTabs, 'Вкладки сессии');
   const innerPanes = el('div', 'inner-panes');
   const termPane = el('div', 'pane terminal');
   const host = el('div', 'term-host');
@@ -801,11 +824,13 @@ function closeSession(s: Session, force: boolean): void {
   for (const f of s.files) f.viewer.dispose();
   s.stripTab.remove();
   s.container.remove();
+  // Вкладки идут в порядке создания: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
+  const peers = sessions.filter((x) => x.project === s.project);
   sessions.splice(sessions.indexOf(s), 1);
   if (lastSessionOf.get(s.project.id) === s) lastSessionOf.delete(s.project.id);
   taskSessions.remove(s);
   if (active === s) {
-    const next = sessions.find((x) => x.project === project);
+    const next = neighborAfterClose(peers, s) ?? sessions.find((x) => x.project === project);
     if (next) activateSession(next, panel.isOpen);
     else showNoSession();
   }
@@ -939,24 +964,44 @@ setInterval(() => {
 
 // ---------- запуск сессии ----------
 
+/** Меню выбора закрыто Escape либо выбором: фокус возвращается на кнопку, которая его открыла. */
+let menuOpener: HTMLElement | null = null;
+
+function closeRepoMenu(restoreFocus: boolean): void {
+  const hadFocus = repoMenu.contains(document.activeElement);
+  repoMenu.hidden = true;
+  if (restoreFocus && hadFocus && menuOpener?.isConnected) menuOpener.focus();
+  menuOpener = null;
+}
+
+function openRepoMenu(anchor: HTMLElement, label: string, focus: 'first' | 'none'): void {
+  const rect = anchor.getBoundingClientRect();
+  repoMenu.setAttribute('role', 'menu');
+  repoMenu.setAttribute('aria-label', label);
+  menuOpener = anchor;
+  repoMenu.style.top = `${rect.bottom + 2}px`;
+  repoMenu.hidden = false;
+  rove(repoMenu, '.menu-item');
+  if (focus === 'first') repoMenu.querySelector<HTMLElement>('.menu-item')?.focus();
+}
+
 function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPick: (repo: string) => void): void {
   repoMenu.replaceChildren(
     el('div', 'menu-title', title),
     ...repos.map((repo) => {
-      const item = el('div', 'menu-item');
+      const item = asMenuItem(el('div', 'menu-item'));
       item.append(el('span', 'repo-name', basename(repo)), el('span', 'repo-path', repo));
       item.addEventListener('click', () => {
-        repoMenu.hidden = true;
+        closeRepoMenu(true);
         onPick(repo);
       });
       return item;
     }),
   );
   const rect = anchor.getBoundingClientRect();
-  repoMenu.style.top = `${rect.bottom + 2}px`;
   repoMenu.style.left = '';
   repoMenu.style.right = `${window.innerWidth - rect.right}px`;
-  repoMenu.hidden = false;
+  openRepoMenu(anchor, title, 'first');
 }
 
 async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void> {
@@ -977,7 +1022,7 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
       error.hidden = false;
       return;
     }
-    repoMenu.hidden = true;
+    closeRepoMenu(true);
     void renderProjectTree(false);
   };
   const draw = (): void => {
@@ -985,7 +1030,8 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
     shown = all.filter((b) => b.name.toLowerCase().includes(query));
     list.replaceChildren(
       ...shown.slice(0, 200).map(({ name, remote: fromRemote }) => {
-        const item = el('div', `menu-item branch-item${name === current ? ' current' : ''}`);
+        const item = asMenuItem(el('div', `menu-item branch-item${name === current ? ' current' : ''}`), 'menuitemradio');
+        item.setAttribute('aria-checked', String(name === current));
         item.append(el('span', '', `${name === current ? '✓ ' : ''}${name}`));
         if (fromRemote) item.append(el('span', 'repo-path', 'только на сервере'));
         item.addEventListener('click', () => void pick(name));
@@ -993,6 +1039,7 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
       }),
     );
     if (!shown.length) list.append(el('div', 'menu-title', 'Нет веток'));
+    rove(list, '.menu-item');
   };
   filter.addEventListener('input', draw);
   filter.addEventListener('keydown', (event) => {
@@ -1001,17 +1048,16 @@ async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void
   draw();
   repoMenu.replaceChildren(el('div', 'menu-title', `Ветка ${root.label}`), filter, error, list);
   const rect = anchor.getBoundingClientRect();
-  repoMenu.style.top = `${rect.bottom + 2}px`;
   repoMenu.style.right = '';
   repoMenu.style.left = `${rect.left}px`;
-  repoMenu.hidden = false;
+  openRepoMenu(anchor, `Ветка ${root.label}`, 'none');
   filter.focus();
 }
 
 /** Кнопка «Новая сессия» (в полосе или на пустом экране): повторное нажатие при открытом меню закрывает его. */
 function toggleSessionMenu(anchor: HTMLElement): void {
   if (repoMenu.hidden) requestSession(anchor);
-  else repoMenu.hidden = true;
+  else closeRepoMenu(true);
 }
 
 function requestSession(anchor: HTMLElement = newSessionButton): void {
@@ -1033,10 +1079,12 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
   }
   historyEl.replaceChildren(
     ...entries.map((entry) => {
-      const item = el('div', 'menu-item history-item');
+      const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
       item.title = `Продолжить: ${entry.title}`;
       const remove = el('button', 'close', '×');
-      remove.title = 'Удалить сессию';
+      remove.title = 'Удалить сессию (Delete)';
+      // Запись в порядке табуляции одна, поэтому кнопка удаления с клавиатуры - Delete на записи.
+      remove.tabIndex = -1;
       remove.addEventListener('click', (event) => {
         event.stopPropagation();
         if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
@@ -1051,9 +1099,16 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
         remove,
       );
       item.addEventListener('click', () => void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err))));
+      item.addEventListener('keydown', (event) => {
+        if (event.target === item && event.key === 'Delete') {
+          event.preventDefault();
+          remove.click();
+        }
+      });
       return item;
     }),
   );
+  rove(historyEl, '.history-item');
 }
 
 async function loadHistory(): Promise<void> {
@@ -1069,8 +1124,8 @@ async function loadHistory(): Promise<void> {
 }
 
 function showSideView(history: boolean): void {
-  sideFiles.classList.toggle('active', !history);
-  sideHistory.classList.toggle('active', history);
+  selectTab(sideFiles, !history);
+  selectTab(sideHistory, history);
   treeHeader.hidden = treeFilter.hidden = treeEl.hidden = history;
   historyEl.hidden = !history;
   if (history) void loadHistory();
@@ -1189,16 +1244,24 @@ treeFilter.addEventListener('keydown', (event) => {
   treeFilter.value = '';
   treeFilter.dispatchEvent(new Event('input'));
 });
+bindTablist(byId('side-tabs'), 'Боковая панель');
+bindTablist(sessionList, 'Сессии');
+selectTab(sideFiles, true);
+selectTab(sideHistory, false);
 sideFiles.addEventListener('click', () => showSideView(false));
 sideHistory.addEventListener('click', () => showSideView(true));
+bindList(repoMenu, '.menu-item');
+historyEl.setAttribute('role', 'listbox');
+historyEl.setAttribute('aria-label', 'Прошлые сессии');
+bindList(historyEl, '.history-item');
 document.addEventListener('click', (event) => {
-  if (!repoMenu.contains(event.target as Node)) repoMenu.hidden = true;
+  if (!repoMenu.contains(event.target as Node)) closeRepoMenu(false);
 });
 window.addEventListener(
   'keydown',
   (event) => {
     if (commandBars.handleKey(event, active && !panel.isOpen ? active.command : null)) return;
-    if (event.key === 'Escape') repoMenu.hidden = true;
+    if (event.key === 'Escape' && !repoMenu.hidden) closeRepoMenu(true);
     if (commandKey(event) && !event.shiftKey && !event.altKey && event.key === '0') {
       event.preventDefault();
       event.stopPropagation();
@@ -1232,13 +1295,14 @@ function zoomTree(): void {
 zoomTree();
 
 // В capture до xterm: иначе колесо с клавишей команд прокрутит историю терминала.
+const wheelSteps = new WheelStepper();
 window.addEventListener(
   'wheel',
   (event) => {
     if (!commandKey(event)) return;
     event.preventDefault();
     event.stopPropagation();
-    setFontSize(stepFontSize(fontSize, event.deltaY));
+    setFontSize(stepFontSize(fontSize, wheelSteps.push(event.deltaY, event.timeStamp)));
   },
   { capture: true, passive: false },
 );

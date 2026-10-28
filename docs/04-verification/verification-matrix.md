@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 113; с автотестом - 99, из них со smoke - 15; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 125; с автотестом - 110, из них со smoke - 16; только smoke - 7; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -47,6 +47,8 @@ date: 2026-10-26
 | FR-1028 | Воркспейс - файл проектов и его выбор при запуске | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/launcher.test.ts`, `scripts/smoke.mjs` |
 | FR-1029 | Один воркспейс - один процесс, замок и «Недавние» | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-1030 | Окно первого запуска создаёт воркспейс | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/workspace-text.test.ts`, `scripts/smoke.mjs` |
+| FR-1031 | Возврат из сессии к её строке на панели | 01-tasks-panel | автотест | `test/panel-return.test.ts`, `test/tasks-view.test.ts` |
+| FR-1032 | Каналы ввода, размера и завершения сессии отбрасывают недопустимые аргументы | 01-tasks-panel | автотест | `test/session-args.test.ts`, `src/main/sessions.test.ts` |
 | FR-2001 | Источники MR - источники задач | 02-mr-view | автотест | `test/mrs.test.ts` |
 | NFR-2001 | Предел деталей MR и процессов CLI | 02-mr-view | автотест | `test/mrs.test.ts` |
 | FR-2002 | Выборка открытых MR со всех страниц | 02-mr-view | автотест | `test/mrs.test.ts` |
@@ -71,10 +73,14 @@ date: 2026-10-26
 | FR-3004 | Путь файла ОС | 03-path-drop | автотест | `test/drop-path.test.ts` |
 | FR-3005 | Бросок вне зон | 03-path-drop | smoke | `scripts/smoke.mjs` |
 | FR-4001 | Раскрытие каталога только по клику на него | 04-session-tree | автотест | `test/tree.test.ts` |
+| NFR-4001 | Обновление дерева и git-статуса не стоит лишнего времени | 04-session-tree | автотест | `test/tree.test.ts`, `src/main/git-filters.test.ts`, `src/main/git.test.ts` |
 | FR-4002 | Сворачивание корня | 04-session-tree | автотест | `test/tree.test.ts` |
 | FR-4003 | Раскрытие изолировано по сессии | 04-session-tree | автотест | `test/tree.test.ts` |
 | FR-4004 | Корни дерева сессии без повтора пути | 04-session-tree | автотест | `test/roots.test.ts`, `test/tree.test.ts` |
 | FR-4005 | Подпись и подсказка корня после ухода рабочего каталога | 04-session-tree | автотест | `test/roots.test.ts` |
+| FR-4006 | Дерево управляется с клавиатуры | 04-session-tree | автотест | `test/tree-keys.test.ts`, `test/tree.test.ts` |
+| FR-4007 | Клик по дереву не теряется при совпадении с опросом git | 04-session-tree | автотест | `test/render-ticket.test.ts` |
+| FR-4008 | Поиск файла по части имени | 04-session-tree | автотест + smoke | `test/tree-filter.test.ts`, `test/tree.test.ts`, `test/allowed-paths.test.ts`, `scripts/smoke.mjs` |
 | FR-5001 | Запуск одной командой | 05-macos-support | автотест | `test/launcher.test.ts` |
 | FR-5002 | Клавиши команд своей системы | 05-macos-support | автотест | `test/platform.test.ts` |
 | FR-5003 | Чтение журнала событий независимо от момента взвода наблюдателя | 05-macos-support | автотест | `src/main/sessions.test.ts` |
@@ -91,9 +97,11 @@ date: 2026-10-26
 | FR-7002 | Смена ветки `git switch` по имени из списка | 07-branch-switch | автотест | `test/git-branch.test.ts` |
 | FR-7003 | Отказ при работающей сессии | 07-branch-switch | автотест | `src/main/sessions.test.ts` |
 | FR-7004 | Отказ в репозитории с конфигом, исполняющим команды | 07-branch-switch | автотест | `test/git-branch.test.ts` |
+| FR-7005 | Меню выбора репозитория и ветки управляется с клавиатуры | 07-branch-switch | автотест | `test/list-keys.test.ts` |
 | FR-8001 | Список прошлых сессий проекта | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8002 | Продолжение прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8003 | Удаление прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
+| FR-8004 | Список прошлых сессий управляется с клавиатуры | 08-session-history | автотест | `test/list-keys.test.ts` |
 | FR-9001 | Инструкция изоляции в каждой сессии | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9002 | Порядок аргументов запуска | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9003 | Решает модель, Cyborg передаёт и следит | 09-session-isolation | автотест | `src/main/sessions.test.ts` |
@@ -104,6 +112,10 @@ date: 2026-10-26
 | FR-10005 | Версия приложения, воркспейс и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `test/workspaces.test.ts`, `scripts/smoke.mjs` |
 | FR-10006 | Уведомление, когда сессия ждёт человека | 10-ui-preferences | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/notify-args.test.ts`, `test/menu.test.ts` |
 | FR-10007 | Системное меню «Воркспейс» вместо меню проекта на панели | 10-ui-preferences | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-10008 | Вкладки управляются с клавиатуры | 10-ui-preferences | автотест | `test/tabs.test.ts` |
+| FR-10009 | Активная вкладка сессии видна в полосе | 10-ui-preferences | осмотр и демонстрация | - |
+| FR-10010 | Диалоги названы для программ чтения с экрана | 10-ui-preferences | автотест | `test/static-guards.test.ts` |
+| FR-10011 | После закрытия вкладки выбирается соседняя | 10-ui-preferences | автотест | `test/neighbor.test.ts` |
 | FR-11001 | Jira в свойствах проекта | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11002 | Кнопка «Статус» и карточка | 11-status-hub | smoke | `scripts/smoke.mjs` |
 | FR-11003 | Сбор и обновление данных | 11-status-hub | smoke | `scripts/smoke.mjs` |

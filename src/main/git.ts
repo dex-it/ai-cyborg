@@ -35,15 +35,14 @@ const exists = (p: fs.PathLike) => fs.promises.stat(p).then(() => true, () => fa
 // Сбор ключей не должен молча давать неполный набор: любая ошибка, кроме «нет совпадений», уходит наверх.
 async function repoFilterKeys(dir: string, depth = 0): Promise<Set<string>> {
   const keys = new Set<string>();
-  let raw: Buffer;
-  try {
-    raw = await gitRaw(dir, ['config', '--show-scope', '--null', '--name-only', '--get-regexp', FILTER_KEY.source], {
-      LC_ALL: 'C',
-    });
-  } catch (e) {
-    if ((e as { code?: unknown }).code !== 1) throw e;
-    raw = Buffer.alloc(0);
-  }
+  // Конфиг и индекс читаются независимо, поэтому параллельно; ошибка любого из них по-прежнему уходит наверх.
+  const [raw, indexRaw] = await Promise.all([
+    gitRaw(dir, ['config', '--show-scope', '--null', '--name-only', '--get-regexp', FILTER_KEY.source], { LC_ALL: 'C' }).catch((e) => {
+      if ((e as { code?: unknown }).code !== 1) throw e;
+      return Buffer.alloc(0);
+    }),
+    gitRaw(dir, ['ls-files', '--stage', '-z']),
+  ]);
   // LC_ALL=C выше: в UTF-8 локали `.` в ERE git не матчит невалидный UTF-8, и такой ключ не попал бы в вывод.
   // latin1 сохраняет байты один в один; ключ отбирает git, повторная проверка именем в JS расходилась бы с его ERE.
   const cfg = raw.toString('latin1').split('\0');
@@ -54,7 +53,7 @@ async function repoFilterKeys(dir: string, depth = 0): Promise<Set<string>> {
     keys.add(bytes.toString('utf8'));
   }
   // Путь gitlink может быть не UTF-8: строкой он не представим, поэтому читается байтами и в fs идёт как Buffer.
-  const index = (await gitRaw(dir, ['ls-files', '--stage', '-z'])).toString('latin1').split('\0');
+  const index = indexRaw.toString('latin1').split('\0');
   const populated: string[] = [];
   for (const entry of index) {
     if (!entry.startsWith('160000 ')) continue;

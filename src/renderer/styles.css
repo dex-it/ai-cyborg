@@ -392,7 +392,6 @@ select:disabled {
   padding: 0 6px 12px;
 }
 
-#history[hidden],
 #tree-filter {
   flex: none;
   width: auto;
@@ -414,8 +413,14 @@ select:disabled {
   border-radius: 2px;
 }
 
+#tree-back {
+  margin-top: 6px;
+}
+
+#history[hidden],
 #tree[hidden],
 #tree-filter[hidden],
+#tree-back[hidden],
 #tree-header[hidden] {
   display: none;
 }
@@ -611,8 +616,9 @@ select:disabled {
   box-shadow: inset 0 0 0 1.5px var(--fg-faint);
 }
 
+/* Завершённая сессия отличается кольцом вместо точки, а подпись остаётся читаемой: --fg-faint давал 2,6:1 на фоне полосы. */
 .tab.session.exited {
-  color: var(--fg-faint);
+  color: var(--fg-dim);
 }
 
 #session-strip > button {
@@ -998,7 +1004,7 @@ dialog h2 {
 
 .field input::placeholder,
 .field textarea::placeholder {
-  color: var(--fg-faint);
+  color: var(--fg-dim);
 }
 
 #project-repos,
@@ -1175,6 +1181,12 @@ label.disabled .hint {
 
 .task-row:hover {
   background: var(--bg-hover);
+}
+
+/* Строка, с которой ушли в сессию: на неё возвращаются. */
+.task-row.returned {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .task-item:last-child .task-row {

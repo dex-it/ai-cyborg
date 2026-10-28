@@ -299,9 +299,10 @@ ipcMain.handle('mrs:details', (_event, id: unknown) => {
   if (valid === null) throw new Error('Некорректные аргументы mrs:details');
   return mrs.details(valid);
 });
-ipcMain.on('session:input', (_event, id: number, data: string) => sessions.write(id, data));
-ipcMain.on('session:resize', (_event, id: number, cols: number, rows: number) => sessions.resize(id, cols, rows));
-ipcMain.on('session:kill', (_event, id: number) => sessions.kill(id));
+// Аргументы не проверены: SessionManager отбрасывает недопустимые (session-args.ts), главный процесс не бросает.
+ipcMain.on('session:input', (_event, id: unknown, data: unknown) => sessions.write(id, data));
+ipcMain.on('session:resize', (_event, id: unknown, cols: unknown, rows: unknown) => sessions.resize(id, cols, rows));
+ipcMain.on('session:kill', (_event, id: unknown) => sessions.kill(id));
 
 // Без ссылки уведомление собирает GC, и клик по нему уже некому обработать.
 const shownNotifications = new Map<number, Notification>();
