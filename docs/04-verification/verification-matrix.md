@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 115; с автотестом - 101, из них со smoke - 15; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
+Требований: 117; с автотестом - 103, из них со smoke - 15; только smoke - 7; ручная - 2; только осмотр и демонстрация - 5.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -92,9 +92,11 @@ date: 2026-10-26
 | FR-7002 | Смена ветки `git switch` по имени из списка | 07-branch-switch | автотест | `test/git-branch.test.ts` |
 | FR-7003 | Отказ при работающей сессии | 07-branch-switch | автотест | `src/main/sessions.test.ts` |
 | FR-7004 | Отказ в репозитории с конфигом, исполняющим команды | 07-branch-switch | автотест | `test/git-branch.test.ts` |
+| FR-7005 | Меню выбора репозитория и ветки управляется с клавиатуры | 07-branch-switch | автотест | `test/list-keys.test.ts` |
 | FR-8001 | Список прошлых сессий проекта | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8002 | Продолжение прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8003 | Удаление прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
+| FR-8004 | Список прошлых сессий управляется с клавиатуры | 08-session-history | автотест | `test/list-keys.test.ts` |
 | FR-9001 | Инструкция изоляции в каждой сессии | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9002 | Порядок аргументов запуска | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9003 | Решает модель, Cyborg передаёт и следит | 09-session-isolation | автотест | `src/main/sessions.test.ts` |
