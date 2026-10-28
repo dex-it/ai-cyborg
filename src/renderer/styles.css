@@ -597,8 +597,9 @@ select:disabled {
   box-shadow: inset 0 0 0 1.5px var(--fg-faint);
 }
 
+/* Завершённая сессия отличается кольцом вместо точки, а подпись остаётся читаемой: --fg-faint давал 2,6:1 на фоне полосы. */
 .tab.session.exited {
-  color: var(--fg-faint);
+  color: var(--fg-dim);
 }
 
 #session-strip > button {
@@ -984,7 +985,7 @@ dialog h2 {
 
 .field input::placeholder,
 .field textarea::placeholder {
-  color: var(--fg-faint);
+  color: var(--fg-dim);
 }
 
 #project-repos,
