@@ -13,6 +13,13 @@ export interface PanelView {
   loadedAt(): number | null;
   /** Перерисовать снимок без выборки: сессии задач могли открыться или закрыться. */
   repaint(): void;
+  /** Положение прокрутки списка: скрытая панель его теряет. */
+  getScroll(): number;
+  setScroll(top: number): void;
+  /** Метка строки, с которой ушли в сессию; null снимает. */
+  mark(key: string | null): void;
+  /** Подсветить строку и показать её; false - в списке её нет (другой фильтр, список не загружен). */
+  reveal(key: string): boolean;
 }
 
 type Tab = 'tasks' | 'mrs';
@@ -36,6 +43,9 @@ export class TrackerPanel {
   private readonly buttons = new Map<Tab, HTMLButtonElement>();
   private tab: Tab = 'tasks';
   private opened = false;
+  private available = false;
+  /** Прокрутка списка каждого вида на момент ухода с панели. */
+  private readonly scrolls: Record<Tab, number> = { tasks: 0, mrs: 0 };
 
   constructor(private readonly hosts: TrackerPanelHosts) {
     this.views = { tasks: new TasksView(hosts.tasks), mrs: new MrsView(hosts.mrs) };
@@ -66,6 +76,11 @@ export class TrackerPanel {
     return this.opened;
   }
 
+  /** Есть ли у проекта источник, то есть кнопки панели видны. */
+  get isAvailable(): boolean {
+    return this.available;
+  }
+
   private get view(): PanelView {
     return this.views[this.tab];
   }
@@ -91,9 +106,11 @@ export class TrackerPanel {
   }
 
   private select(tab: Tab): void {
+    this.scrolls[this.tab] = this.view.getScroll();
     this.tab = tab;
     this.mount();
     this.view.repaint();
+    this.view.setScroll(this.scrolls[tab]);
     this.panelEvent('tab');
   }
 
@@ -103,11 +120,25 @@ export class TrackerPanel {
     this.sessionsEl.classList.add('tasks-open');
     this.markButtons();
     this.view.repaint();
+    this.view.setScroll(this.scrolls[this.tab]);
     this.panelEvent('open');
+  }
+
+  /** Вернуться к строке списка, с которой ушли в сессию: открывает нужный вид, подсвечивает строку и показывает её. */
+  reveal(tab: Tab, key: string): void {
+    if (!this.opened) {
+      if (tab !== this.tab) {
+        this.tab = tab;
+        this.mount();
+      }
+      this.open();
+    } else if (tab !== this.tab) this.select(tab);
+    this.view.reveal(key);
   }
 
   close(): void {
     if (!this.opened) return;
+    this.scrolls[this.tab] = this.view.getScroll();
     this.opened = false;
     this.root.hidden = true;
     this.sessionsEl.classList.remove('tasks-open');
@@ -117,12 +148,17 @@ export class TrackerPanel {
 
   /** Кнопки есть, только когда у выбранного проекта включён источник; без него открытая панель закрывается. */
   setAvailable(available: boolean): void {
+    this.available = available;
     for (const button of this.buttons.values()) button.hidden = !available;
     if (!available) this.close();
   }
 
   onProjectChanged(): void {
-    for (const view of Object.values(this.views)) view.onProjectChanged();
+    for (const view of Object.values(this.views)) {
+      view.onProjectChanged();
+      view.mark(null);
+    }
+    this.scrolls.tasks = this.scrolls.mrs = 0;
     // Смена проекта - новый вопрос: идёт в обход флага загрузки, ответ прежнего отбросит токен.
     if (this.opened) this.panelEvent('project');
   }
