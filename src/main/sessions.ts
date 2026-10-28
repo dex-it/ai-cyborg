@@ -6,6 +6,7 @@ import { claudeArgs } from './claude-args.ts';
 import { parseSuggestions } from './suggestions.ts';
 import { writeJsonAtomic } from './jsonfile.ts';
 import { isAlive } from './pid.ts';
+import { validateInputArgs, validateResizeArgs, validateSessionId } from './session-args.ts';
 
 type Emit = (channel: string, payload: unknown) => void;
 type Spawn = typeof pty.spawn;
@@ -171,16 +172,31 @@ export class SessionManager {
     return [...this.sessions.values()].some((s) => s.dirs.includes(dir));
   }
 
-  write(id: number, data: string): void {
-    this.sessions.get(id)?.pty.write(data);
+  // Аргументы приходят из интерфейса и не проверены (session-args.ts): мусор молча отбрасывается. Вызов pty в try: процесс мог
+  // завершиться между проверкой и вызовом, и ioctl на закрытом дескрипторе бросает, а исключение в обработчике канала - ошибка главного процесса.
+  write(id: unknown, data: unknown): void {
+    const args = validateInputArgs(id, data);
+    if (args) this.guarded(args.id, (p) => p.write(args.data));
   }
 
-  resize(id: number, cols: number, rows: number): void {
-    if (cols > 0 && rows > 0) this.sessions.get(id)?.pty.resize(cols, rows);
+  resize(id: unknown, cols: unknown, rows: unknown): void {
+    const args = validateResizeArgs(id, cols, rows);
+    if (args) this.guarded(args.id, (p) => p.resize(args.cols, args.rows));
   }
 
-  kill(id: number): void {
-    this.sessions.get(id)?.pty.kill();
+  kill(id: unknown): void {
+    const valid = validateSessionId(id);
+    if (valid !== null) this.guarded(valid, (p) => p.kill());
+  }
+
+  private guarded(id: number, action: (proc: pty.IPty) => void): void {
+    const proc = this.sessions.get(id)?.pty;
+    if (!proc) return;
+    try {
+      action(proc);
+    } catch {
+      // Процесс уже завершён: onExit уберёт сессию.
+    }
   }
 
   killAll(): void {
