@@ -48,6 +48,7 @@ date: 2026-10-26
 | FR-1029 | Один воркспейс - один процесс, замок и «Недавние» | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-1030 | Окно первого запуска создаёт воркспейс | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/workspace-text.test.ts`, `scripts/smoke.mjs` |
 | FR-1031 | Возврат из сессии к её строке на панели | 01-tasks-panel | автотест | `test/panel-return.test.ts`, `test/tasks-view.test.ts` |
+| FR-1032 | Каналы ввода, размера и завершения сессии отбрасывают недопустимые аргументы | 01-tasks-panel | автотест | `test/session-args.test.ts`, `src/main/sessions.test.ts` |
 | FR-2001 | Источники MR - источники задач | 02-mr-view | автотест | `test/mrs.test.ts` |
 | NFR-2001 | Предел деталей MR и процессов CLI | 02-mr-view | автотест | `test/mrs.test.ts` |
 | FR-2002 | Выборка открытых MR со всех страниц | 02-mr-view | автотест | `test/mrs.test.ts` |
