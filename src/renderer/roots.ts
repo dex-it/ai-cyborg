@@ -11,22 +11,29 @@ export interface RootsInput {
   repos: string[];
 }
 
-const movedToOtherRepo = (s: RootsInput): boolean => s.root !== s.repo && s.repos.includes(s.root);
+const inside = (dir: string, repo: string): boolean => dir === repo || dir.startsWith(`${repo}/`) || dir.startsWith(`${repo}\\`);
+
+// Сессия уходит и в worktree репозитория из --add-dir (<репозиторий>/.claude/worktrees/<имя>); worktree вне проекта - стартового.
+function ownerRepo(s: RootsInput): string {
+  const owners = s.repos.filter((r) => inside(s.root, r));
+  return owners.length ? owners.reduce((a, b) => (b.length > a.length ? b : a)) : s.repo;
+}
 
 export function rootLabel(s: RootsInput): string {
-  return s.root === s.repo || movedToOtherRepo(s) ? basename(s.root) : `${basename(s.repo)} ⎇ ${basename(s.root)}`;
+  const owner = ownerRepo(s);
+  return s.root === owner ? basename(s.root) : `${basename(owner)} ⎇ ${basename(s.root)}`;
 }
 
 /** Свой корень первым, затем прочие репозитории проекта; путь корня не повторяется. */
 export function treeRoots(s: RootsInput): TreeRoot[] {
-  const moved = movedToOtherRepo(s);
+  const owner = ownerRepo(s);
   const own: TreeRoot = {
     path: s.root,
     label: rootLabel(s),
-    hint: s.root === s.repo ? 'репозиторий сессии' : moved ? 'другой репозиторий проекта, куда перешёл рабочий каталог сессии' : `worktree репозитория ${s.repo}`,
+    hint: s.root === s.repo ? 'репозиторий сессии' : s.root === owner ? 'другой репозиторий проекта, куда перешёл рабочий каталог сессии' : `worktree репозитория ${owner}`,
   };
   const others = s.repos
-    .filter((r) => r !== s.root && (r !== s.repo || moved))
+    .filter((r) => r !== owner)
     .map((r) => ({
       path: r,
       label: basename(r),
