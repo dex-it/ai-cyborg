@@ -26,6 +26,22 @@ describe('treeRoots', () => {
     assert.equal(rootLabel({ repo: '/x/A', root: '/x/B', repos: ['/x/A', '/x/B'] }), 'B');
   });
 
+  it('worktree другого репозитория проекта: подписан его репозиторием, стартовый остаётся в дереве', () => {
+    const s = { repo: '/x/front', root: '/x/back/.claude/worktrees/v2', repos: ['/x/front', '/x/back'] };
+    const [own, start, ...rest] = treeRoots(s);
+    assert.equal(own.label, 'back ⎇ v2');
+    assert.match(own.hint, /worktree репозитория \/x\/back/);
+    assert.equal(start.path, '/x/front');
+    assert.match(start.hint, /запущена/);
+    assert.deepEqual(rest, []);
+    assert.equal(rootLabel(s), 'back ⎇ v2');
+  });
+
+  it('worktree стартового внутри него: подпись прежняя, прочие репозитории на месте', () => {
+    assert.deepEqual(paths({ repo: '/x/front', root: '/x/front/.claude/worktrees/v2', repos: ['/x/front', '/x/back'] }), ['/x/front/.claude/worktrees/v2', '/x/back']);
+    assert.equal(rootLabel({ repo: '/x/front', root: '/x/front/.claude/worktrees/v2', repos: ['/x/front', '/x/back'] }), 'front ⎇ v2');
+  });
+
   it('worktree сохраняет подпись и подсказку про worktree', () => {
     const [own] = treeRoots({ repo: '/x/A', root: '/x/W', repos: ['/x/A'] });
     assert.equal(own.label, 'A ⎇ W');
