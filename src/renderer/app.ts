@@ -22,6 +22,7 @@ import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
 import { findMr, mrSessionLabel, mrTooltip } from './mr-model';
 import { returnTarget } from './panel-return';
+import { RenderTickets } from './render-ticket';
 import { asMenuItem, bindList, rove } from './list-keys';
 import { bindTablist, markTab, selectTab } from './tabs';
 import { TrackerPanel } from './panel';
@@ -116,7 +117,7 @@ const lastSessionOf = new Map<string, Session>();
 let active: Session | null = null;
 let colorIndex = 0;
 let fontSize = loadFontSize();
-let treeToken = 0;
+const treeTickets = new RenderTickets();
 // Вывод pty может прийти раньше, чем сессия создана в интерфейсе.
 const pendingData = new Map<number, string[]>();
 
@@ -493,9 +494,9 @@ function projectTree(): TreeView | null {
 async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
   const tree = active ? null : projectTree();
   if (!tree) return;
-  const token = ++treeToken;
+  const ticket = treeTickets.take(onlyIfChanged);
   const fragment = await tree.render(onlyIfChanged);
-  if (!fragment || token !== treeToken || active || projectTree() !== tree) return;
+  if (!fragment || !treeTickets.valid(ticket) || active || projectTree() !== tree) return;
   replaceTree(treeEl, fragment);
 }
 
@@ -575,9 +576,9 @@ function showInner(s: Session, file: FileTab | null): void {
 
 async function renderTree(s: Session, onlyIfChanged: boolean): Promise<void> {
   if (s !== active) return;
-  const token = ++treeToken;
+  const ticket = treeTickets.take(onlyIfChanged);
   const fragment = await s.tree.render(onlyIfChanged);
-  if (!fragment || token !== treeToken || s !== active) return;
+  if (!fragment || !treeTickets.valid(ticket) || s !== active) return;
   replaceTree(treeEl, fragment);
 }
 
