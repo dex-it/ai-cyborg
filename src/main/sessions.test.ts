@@ -259,3 +259,60 @@ test('SessionManager: предложение снимается, когда мо
   assert.deepEqual(suggests(), [1, 0, 1, 1, 0], 'запрос разрешения снял предложение');
   manager.kill(id);
 });
+
+// Менеджер с pty, записывающим вызовы; throwing - pty, бросающий на каждом вызове (процесс завершился, дескриптор закрыт).
+function recordingManager(t: { after: (fn: () => void) => void }, throwing = false) {
+  const calls: unknown[][] = [];
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const record = (name: string) => (...args: unknown[]) => {
+    calls.push([name, ...args]);
+    if (throwing) throw new Error(`${name}: pty закрыт`);
+  };
+  let exit: (e: { exitCode: number }) => void = () => {};
+  const spawn = () => ({ onData: () => {}, onExit: (cb: typeof exit) => (exit = cb), write: record('write'), resize: record('resize'), kill: record('kill') });
+  const manager = new SessionManager(userData, () => {}, spawn as any);
+  const id = manager.create(os.tmpdir(), []);
+  t.after(() => exit({ exitCode: 0 })); // закрывает наблюдателя файла событий
+  return { manager, id, calls };
+}
+
+test('SessionManager: допустимые ввод, размер и kill доходят до pty', (t) => {
+  const { manager, id, calls } = recordingManager(t);
+  manager.write(id, 'ls\r');
+  manager.write(id, 'я'.repeat(200 * 1024));
+  manager.resize(id, 100, 30);
+  manager.kill(id);
+  assert.deepEqual(
+    calls.map((c) => c[0]),
+    ['write', 'write', 'resize', 'kill'],
+  );
+  assert.deepEqual(calls[0], ['write', 'ls\r']);
+  assert.deepEqual(calls[2], ['resize', 100, 30]);
+});
+
+test('SessionManager: мусорные аргументы не бросают и до pty не доходят', (t) => {
+  const { manager, id, calls } = recordingManager(t);
+  const junk: unknown[] = [12345, null, undefined, {}, ['x'], true, NaN, Infinity, '1', -1, 1.5, 1e9, Symbol('s'), 1n];
+  for (const bad of junk) {
+    assert.doesNotThrow(() => manager.write(id, typeof bad === 'string' ? 12 : bad)); // строка - допустимые данные
+    assert.doesNotThrow(() => manager.write(bad, 'x'));
+    assert.doesNotThrow(() => manager.resize(id, bad, 24));
+    assert.doesNotThrow(() => manager.resize(id, 80, bad));
+    assert.doesNotThrow(() => manager.resize(bad, 80, 24));
+    assert.doesNotThrow(() => manager.kill(bad));
+  }
+  assert.doesNotThrow(() => manager.write(id, 'x'.repeat(5 * 1024 * 1024)));
+  assert.doesNotThrow(() => manager.resize(id, 1e9, 1e9));
+  assert.doesNotThrow(() => manager.resize(id, 0, 0));
+  assert.doesNotThrow(() => manager.write(999, 'нет такой сессии'));
+  assert.deepEqual(calls, []);
+});
+
+test('SessionManager: pty, бросающий на вызове, не роняет вызывающего', (t) => {
+  const { manager, id, calls } = recordingManager(t, true);
+  assert.doesNotThrow(() => manager.write(id, 'x'));
+  assert.doesNotThrow(() => manager.resize(id, 80, 24));
+  assert.doesNotThrow(() => manager.kill(id));
+  assert.equal(calls.length, 3);
+});
