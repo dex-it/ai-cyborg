@@ -22,7 +22,6 @@
           <div id="tree-meta"></div>
           <button id="tree-back" hidden></button>
         </header>
-        <input id="tree-filter" class="menu-filter" type="search" aria-label="Найти файл" placeholder="Найти файл" title="Файлы, в имени которых есть набранное; Esc - сбросить" spellcheck="false" />
         <div id="tree"></div>
         <div id="history" hidden></div>
       </aside>
@@ -175,6 +174,17 @@
           <button type="button" id="prompts-save" class="primary">Сохранить</button>
         </footer>
       </form>
+    </dialog>
+
+    <dialog id="search-dialog" aria-labelledby="search-dialog-title">
+      <h2 id="search-dialog-title">Поиск файла</h2>
+      <div class="search-bar">
+        <input id="search-input" role="combobox" aria-expanded="true" aria-controls="search-results" aria-autocomplete="list" aria-label="Часть имени файла" placeholder="Часть имени файла" autocomplete="off" spellcheck="false" />
+        <button type="button" id="search-case" class="search-toggle" aria-pressed="false" aria-label="Учитывать регистр" title="Учитывать регистр">Aa</button>
+        <button type="button" id="search-regex" class="search-toggle" aria-pressed="false" aria-label="Регулярное выражение" title="Регулярное выражение">.*</button>
+      </div>
+      <div id="search-status" role="status" aria-live="polite"></div>
+      <div id="search-results" role="listbox" aria-label="Найденные файлы"></div>
     </dialog>
 
     <script src="vs/loader.js"></script>

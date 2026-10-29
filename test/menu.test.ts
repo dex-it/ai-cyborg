@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_FILES_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -22,6 +22,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   editProject() {},
   editCommands() {},
   editPrompts() {},
+  searchFiles() {},
   ...over,
 });
 
@@ -111,6 +112,28 @@ describe('appMenuTemplate', () => {
     assert.notEqual(item?.enabled, false);
     (item?.click as () => void)();
     assert.deepEqual(calls, ['prompts']);
+  });
+
+  describe('меню «Поиск»', () => {
+    const searchItem = (platform: NodeJS.Platform, over: Partial<WorkspaceMenu> = {}) => {
+      const menu = appMenuTemplate(platform, () => {}, notifications, workspaceMenu(over)).find((item) => item.label === 'Поиск');
+      return submenu(menu).find((item) => item.id === SEARCH_FILES_MENU_ID);
+    };
+
+    it('«Найти файл…»: Cmd+P на macOS, Ctrl+Shift+P на Linux (Ctrl+P в терминале - readline)', () => {
+      assert.equal(searchItem('darwin')?.label, 'Найти файл…');
+      assert.equal(searchItem('darwin')?.accelerator, 'Cmd+P');
+      assert.equal(searchItem('linux')?.accelerator, 'Ctrl+Shift+P');
+    });
+
+    it('доступен только при проекте и вызывает переданную функцию', () => {
+      assert.equal(searchItem('linux', { hasProject: false })?.enabled, false);
+      const calls: string[] = [];
+      const item = searchItem('darwin', { searchFiles: () => calls.push('files') });
+      assert.equal(item?.enabled, true);
+      (item?.click as () => void)();
+      assert.deepEqual(calls, ['files']);
+    });
   });
 
   it('клики вызывают переданные функции, «Недавние» отдают путь', () => {
