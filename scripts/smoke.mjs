@@ -452,9 +452,6 @@ async function main() {
   assert.deepEqual(await barButtons(), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись'], 'под терминалом нет встроенных кнопок');
   await barButton('Сливай');
   await waitFor('«Сливай» отправил текст с Enter', async () => (await squeezed()).includes('got:[сливай]'));
-  await barButton('Мердж');
-  await waitFor('«Мердж» без PR назвал причину', async () => /PR\/MR/.test(await barNotice()));
-  assert.ok(!(await squeezed()).includes('смерджи'), 'текст с неразрешённым {pr} ушёл в сессию');
 
   await clickMenu(mainEv, 'Кнопки команд…');
   await waitFor('диалог кнопок открыт', async () => (await ev('document.querySelector("#commands-dialog").open')) === true);
@@ -464,14 +461,17 @@ async function main() {
   assert.deepEqual(opened.map((b) => b.label), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись'], 'редактор не показал встроенные кнопки');
   assert.ok(opened.every((b) => b.description), 'у встроенных кнопок в редакторе нет описаний');
   const setEditor = (value) => ev(`window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#commands-dialog")).setValue(${JSON.stringify(value)})`);
-  await setEditor('[{"label":"A"}]');
+  await setEditor('[{"label":"A","text":""}]');
   await ev('document.querySelector("#commands-save").click()');
   await waitFor('негодная кнопка названа в диалоге', async () => /Кнопка 1 \(«A»\): text/.test(await text('#commands-error')));
   assert.ok(await ev('document.querySelector("#commands-dialog").open'), 'диалог закрылся при ошибке');
   await setEditor(
     JSON.stringify([
+      { label: 'Приберись' },
+      { label: 'Сливай' },
       { label: 'Ветка', text: 'ветка {branch}', submit: true, hotkey: 'Alt+B' },
       { label: 'Задача', text: 'задача {task}', submit: true },
+      { label: 'PR', text: 'смерджи PR {pr}', submit: true },
       { label: 'Предложи', text: 'suggest', submit: true },
       { label: 'Спроси', text: 'ask', submit: true },
       { label: 'Вставка', text: 'без ввода', submit: false },
@@ -479,15 +479,19 @@ async function main() {
   );
   await ev('document.querySelector("#commands-save").click()');
   await waitFor('диалог закрыт сохранением', async () => (await ev('document.querySelector("#commands-dialog").open')) === false);
-  await waitFor('кнопки из воркспейса на полосе без перезапуска', async () => (await barButtons()).join() === 'Сливай,Сделай PR,Мердж,Приберись,Ветка,Задача,Предложи,Спроси,Вставка');
+  await waitFor('кнопки из воркспейса на полосе без перезапуска, встроенные переставлены', async () => (await barButtons()).join() === 'Приберись,Сливай,Сделай PR,Мердж,Ветка,Задача,PR,Предложи,Спроси,Вставка');
   const stored = JSON.parse(readFileSync(legacyFile, 'utf8'));
-  assert.equal(stored.commands.length, 5, 'кнопки не легли в файл воркспейса');
+  assert.equal(stored.commands.length, 8, 'кнопки не легли в файл воркспейса');
+  assert.deepEqual(stored.commands.slice(0, 2), [{ label: 'Приберись' }, { label: 'Сливай' }], 'перестановка встроенных не записана местами');
   assert.equal(stored.projects.length, 2, 'запись кнопок затёрла проекты');
 
   await barButton('Ветка');
   await waitFor('{branch} подставлена веткой сессии', async () => (await squeezed()).includes('got:[веткаmain]'));
   await barButton('Задача');
   await waitFor('{task} подставлена ключом задачи Jira', async () => (await squeezed()).includes('got:[задачаSMK-1]'));
+  await barButton('PR');
+  await waitFor('{pr} без PR назвал причину', async () => /PR\/MR/.test(await barNotice()));
+  assert.ok(!(await squeezed()).includes('смерджи'), 'текст с неразрешённым {pr} ушёл в сессию');
   const before = ((await squeezed()).match(/got:\[веткаmain\]/g) ?? []).length;
   await combo(1, 'b', 'KeyB', 66);
   await waitFor('сочетание Alt+B нажало «Ветка»', async () => ((await squeezed()).match(/got:\[веткаmain\]/g) ?? []).length === before + 1);
@@ -521,7 +525,20 @@ async function main() {
   writeFileSync(legacyFile, JSON.stringify({ ...stored, commands: [...stored.commands, { label: 'Внешняя', text: 'снаружи', submit: true }] }));
   await ev('window.dispatchEvent(new Event("focus"))');
   await waitFor('правка файла снаружи подхвачена', async () => (await barButtons()).includes('Внешняя'));
-  log('кнопки-команды: встроенные, правка в Monaco, подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью');
+
+  // Общий набор: правится в том же диалоге, лежит в userData и ложится под кнопки воркспейса.
+  await clickMenu(mainEv, 'Кнопки команд…');
+  await waitFor('диалог кнопок открыт для общего набора', async () => (await ev('document.querySelector("#commands-dialog").open')) === true);
+  await ev('document.querySelector("#commands-scope-global").click()');
+  await waitFor('редактор показал общий набор', async () => (await ev('document.querySelector("#commands-scope-global").getAttribute("aria-pressed")')) === 'true');
+  await waitFor('в общем наборе только встроенные', async () => JSON.parse(await editorValue()).length === 4);
+  await setEditor(JSON.stringify([{ label: 'Общая', text: 'для всех', submit: true }]));
+  await ev('document.querySelector("#commands-save").click()');
+  await waitFor('диалог закрыт сохранением общего набора', async () => (await ev('document.querySelector("#commands-dialog").open')) === false);
+  await waitFor('общая кнопка между встроенными и кнопками воркспейса', async () => (await barButtons()).join().startsWith('Приберись,Сливай,Сделай PR,Мердж,Общая,Ветка'));
+  assert.deepEqual(JSON.parse(readFileSync(join(userData, 'commands.json'), 'utf8')), [{ label: 'Общая', text: 'для всех', submit: true }], 'общий набор не лёг в userData');
+  assert.ok(!JSON.parse(readFileSync(legacyFile, 'utf8')).commands.some((b) => b.label === 'Общая'), 'общая кнопка попала в файл воркспейса');
+  log('кнопки-команды: встроенные, правка в Monaco, подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью, общий набор');
 
   // FR-12009: промпты кнопок запуска сессий - действующий набор в Monaco, правка доходит до первого сообщения следующей сессии.
   const startedWith = async (key) => {

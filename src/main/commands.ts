@@ -11,6 +11,8 @@ export interface CommandButton {
   description?: string;
   /** true - кнопка скрыта (так отключается и встроенная: удалённая из файла вернулась бы из набора по умолчанию). */
   disabled?: boolean;
+  /** Запись `{ "label" }` без прочих полей: только место кнопки нижнего слоя, содержимое берётся у неё. */
+  ref?: true;
 }
 
 export const MAX_COMMANDS = 30;
@@ -20,11 +22,17 @@ export const DESCRIPTION_MAX = 200;
 /** Предел текста файла кнопок, принимаемого главным процессом от интерфейса. */
 export const MAX_COMMANDS_TEXT = 200_000;
 
-/** Кнопки по умолчанию, общие для всех воркспейсов: фразы, которыми Claude Code понимает типовое действие. */
+/** Встроенные кнопки, нижний слой под общим набором и набором воркспейса: фразы, которыми Claude Code понимает типовое действие. */
 export const DEFAULT_COMMANDS: readonly CommandButton[] = [
   { label: 'Сливай', text: 'сливай', submit: true, hotkey: 'F1', description: 'Фраза «сливай»: слить PR текущей ветки.' },
   { label: 'Сделай PR', text: 'сделай PR', submit: true, hotkey: 'F2', description: 'Фраза «сделай PR»: открыть PR из текущей ветки.' },
-  { label: 'Мердж', text: 'смерджи PR {pr}', submit: false, hotkey: 'F3', description: 'Вставляет «смерджи PR» со ссылкой на PR ветки без Enter: проверьте и нажмите Enter сами. Нужен открытый PR/MR ветки.' },
+  {
+    label: 'Мердж',
+    text: 'открой PR текущей ветки, если его ещё нет, и смерджи его в целевую ветку',
+    submit: false,
+    hotkey: 'F3',
+    description: 'Вставляет без Enter просьбу открыть PR ветки, если его нет, и слить его в целевую ветку: проверьте и нажмите Enter сами.',
+  },
   { label: 'Приберись', text: 'приберись', submit: true, hotkey: 'F4', description: 'Фраза «приберись»: убрать за собой, например слитые ветки.' },
 ];
 
@@ -127,6 +135,10 @@ export function parseCommands(raw: unknown, mac: boolean): ParsedCommands {
       problems.push(`${at}: label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`);
       return;
     }
+    if (isRef(item)) {
+      commands.push({ label: label.trim(), text: '', submit: false, ref: true });
+      return;
+    }
     if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX || CONTROL.test(text)) {
       problems.push(`${at}: text - непустая строка до ${TEXT_MAX} знаков в одну строку`);
       return;
@@ -154,15 +166,77 @@ export function parseCommands(raw: unknown, mac: boolean): ParsedCommands {
 
 const sameLabel = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** Встроенные кнопки и дополнения воркспейса: одноимённая кнопка заменяет встроенную на её месте, остальные идут следом; сочетание достаётся первой. */
+const canonicalJson = (value: unknown): string =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? JSON.stringify(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+    : JSON.stringify(value);
+const sameEntry = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
+
+/**
+ * Копия встроенной кнопки: до общего набора редактор записывал встроенные кнопки в файл воркспейса целиком.
+ * Такая запись ничего не меняет, поэтому не заслоняет кнопку общего набора с той же подписью.
+ */
+const isBuiltinCopy = (item: unknown): boolean => {
+  const label = labelOf(item);
+  const builtin = label === null ? undefined : DEFAULT_COMMANDS.find((d) => sameLabel(d.label, label));
+  return builtin !== undefined && sameEntry(item, builtin);
+};
+
+function isRef(item: unknown): boolean {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) return false;
+  const keys = Object.keys(item);
+  return keys.length === 1 && keys[0] === 'label';
+}
+
+const placesOnly = (item: unknown): boolean => isRef(item) || (item as CommandButton | null)?.ref === true || isBuiltinCopy(item);
+
+interface Placed<B, L> {
+  below?: B;
+  own?: L;
+}
+
+/** Записи слоя идут в своём порядке, неупомянутая кнопка нижнего слоя - сразу за упомянутой перед ней: слой называет только то, что двигает. */
+function placeLayer<B, L>(base: readonly B[], layer: readonly L[], same: (below: B, own: L) => boolean): Placed<B, L>[] {
+  const out: Placed<B, L>[] = [];
+  const firstOf = (below: B): number => layer.findIndex((own) => same(below, own));
+  const emit = (index: number): void => {
+    const below = base.find((b) => firstOf(b) === index);
+    out.push(below === undefined ? { own: layer[index] } : { below, own: layer[index] });
+  };
+  let next = 0;
+  for (const below of base) {
+    const at = firstOf(below);
+    if (at === -1) out.push({ below });
+    else for (; next <= at; next++) emit(next);
+  }
+  for (; next < layer.length; next++) emit(next);
+  return out;
+}
+
+const labelsMatch = (below: CommandButton, own: unknown): boolean => labelOf(own) !== null && sameLabel(below.label, labelOf(own) as string);
+
+/** Слой набора поверх нижнего: одноимённая кнопка заменяет нижнюю, порядок - по placeLayer; скрытые остаются, их убирает mergeCommands. */
+export function layerCommands(base: readonly CommandButton[], extra: readonly CommandButton[]): CommandButton[] {
+  return placeLayer(base, extra, labelsMatch).flatMap(({ below, own }) => {
+    if (own === undefined) return below ? [below] : [];
+    if (below !== undefined) return [placesOnly(own) ? below : own];
+    // Повтор подписи нижней кнопки и место без кнопки ниже на полосу не попадают: их называет mergeCommands.
+    return own.ref || base.some((b) => labelsMatch(b, own)) ? [] : [own];
+  });
+}
+
+/** Нижний слой кнопок воркспейса: встроенные кнопки под общим набором из userData. */
+export const globalBase = (raw: unknown, mac: boolean): CommandButton[] => layerCommands(DEFAULT_COMMANDS, parseCommands(raw, mac).commands);
+
+/** Нижний слой и дополнения: одноимённая кнопка заменяет нижнюю на её месте, остальные идут следом; сочетание достаётся первой. */
 export function mergeCommands(defaults: readonly CommandButton[], extra: readonly CommandButton[], mac: boolean): ParsedCommands {
-  const all = defaults.map((d) => extra.find((e) => sameLabel(e.label, d.label)) ?? d);
-  all.push(...extra.filter((e) => !defaults.some((d) => sameLabel(e.label, d.label))));
+  const all = layerCommands(defaults, extra);
   // Скрытая кнопка не занимает сочетание и не попадает на полосу.
   const merged = all.filter((button) => !button.disabled);
   const problems: string[] = [];
   // Вторая запись с подписью встроенной кнопки не попадает на полосу: молча терять её нельзя.
   for (const d of defaults) if (extra.filter((e) => sameLabel(e.label, d.label)).length > 1) problems.push(`«${d.label}»: подпись встроенной кнопки повторена, действует первая запись`);
+  for (const e of extra) if (e.ref && !defaults.some((d) => sameLabel(d.label, e.label))) problems.push(`«${e.label}»: запись только с label задаёт место кнопки, а кнопки с такой подписью ниже нет`);
   const taken = new Map<string, string>();
   const commands = merged.map((button) => {
     if (!button.hotkey) return button;
@@ -182,7 +256,7 @@ export function mergeCommands(defaults: readonly CommandButton[], extra: readonl
 }
 
 /** Текст для редактора и проверка того, что из него вернулось; любая замеченная проблема - отказ, файл не пишется. Сочетания должны годиться на обеих системах. */
-export function checkCommandsText(text: string, mac: boolean): { ok: true; commands: unknown[] } | { ok: false; error: string } {
+export function checkCommandsText(text: string, mac: boolean, base: readonly CommandButton[] = DEFAULT_COMMANDS): { ok: true; commands: unknown[] } | { ok: false; error: string } {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -196,7 +270,7 @@ export function checkCommandsText(text: string, mac: boolean): { ok: true; comma
     const other = button.hotkey ? parseHotkey(button.hotkey, !mac) : null;
     return other && 'error' in other ? [`«${button.label}»: сочетание ${button.hotkey} не годится на ${mac ? 'Linux и Windows' : 'macOS'}: ${other.error}`] : [];
   });
-  const problems = [...parsed.problems, ...elsewhere, ...mergeCommands(DEFAULT_COMMANDS, parsed.commands, mac).problems];
+  const problems = [...parsed.problems, ...elsewhere, ...mergeCommands(base, parsed.commands, mac).problems];
   return problems.length ? { ok: false, error: problems.join('\n') } : { ok: true, commands: raw };
 }
 
@@ -204,27 +278,52 @@ const labelOf = (item: unknown): string | null =>
   typeof item === 'object' && item !== null && typeof (item as { label?: unknown }).label === 'string' ? (item as { label: string }).label : null;
 
 /**
- * Действующий набор в том виде, как он записывается в файл: встроенные кнопки (с описаниями) и записи файла как они есть, в порядке полосы.
+ * Действующий набор в том виде, как он записывается в файл: кнопки нижнего слоя (с описаниями) и записи файла как они есть, в порядке полосы.
  * Записи файла берутся без разбора, чтобы негодную запись можно было увидеть и поправить, а не потерять при сохранении.
  */
-export function effectiveCommands(raw: unknown): unknown[] {
-  const own = Array.isArray(raw) ? raw : [];
-  const found = (label: string): unknown => own.find((item) => labelOf(item) !== null && sameLabel(labelOf(item) as string, label));
-  const placed = DEFAULT_COMMANDS.map((d) => found(d.label));
-  const merged: unknown[] = DEFAULT_COMMANDS.map((d, i) => placed[i] ?? d);
-  merged.push(...own.filter((item) => !placed.includes(item)));
-  return merged;
+export function effectiveCommands(raw: unknown, base: readonly CommandButton[] = DEFAULT_COMMANDS): unknown[] {
+  return placeLayer(base, Array.isArray(raw) ? raw : [], labelsMatch).map(({ below, own }) => (own === undefined || (below !== undefined && placesOnly(own)) ? below : own));
 }
 
-export const commandsToText = (raw: unknown): string => JSON.stringify(effectiveCommands(raw), null, 2);
+export const commandsToText = (raw: unknown, base: readonly CommandButton[] = DEFAULT_COMMANDS): string => JSON.stringify(effectiveCommands(raw, base), null, 2);
+
+const orderOf = (layer: readonly unknown[], base: readonly CommandButton[]): string =>
+  placeLayer(base, layer, labelsMatch)
+    .map(({ below, own }) => (below?.label ?? labelOf(own) ?? '').toLowerCase())
+    .join('\n');
+
+/** Копия кнопки нижнего слоя в файле заслонила бы её правку: она сворачивается в `{ "label" }` и остаётся, только если держит порядок. */
+export function ownEntries(commands: readonly unknown[], base: readonly CommandButton[]): unknown[] {
+  let kept = commands.map((item) => {
+    const below = base.find((b) => labelsMatch(b, item));
+    return below !== undefined && (placesOnly(item) || sameEntry(item, below)) ? { label: labelOf(item) } : item;
+  });
+  const wanted = orderOf(kept, base);
+  for (const item of [...kept]) {
+    if (!isRef(item)) continue;
+    const without = kept.filter((other) => other !== item);
+    if (orderOf(without, base) === wanted) kept = without;
+  }
+  return kept;
+}
+
+/** Набор кнопок как его отдаёт главный процесс: общий файл userData и поле `commands` файла воркспейса, оба как записаны. */
+export interface CommandsConfig {
+  global: unknown;
+  /** Общий файл есть, но не прочитан или не JSON. */
+  globalProblem?: string;
+  workspace: unknown;
+}
+
+export type CommandsScope = 'global' | 'workspace';
 
 /** Запись из редактора: текст проверяется заново (интерфейсу не доверяют), ошибка проверки или записи - в ответе, а не исключением. */
-export function saveCommandsText(text: unknown, store: { saveCommands(commands: unknown[]): void }, mac: boolean): { error?: string } {
+export function saveCommandsText(text: unknown, store: { saveCommands(commands: unknown[]): void }, mac: boolean, base: readonly CommandButton[] = DEFAULT_COMMANDS): { error?: string } {
   if (typeof text !== 'string' || text.length > MAX_COMMANDS_TEXT) return { error: 'Некорректный текст кнопок' };
-  const checked = checkCommandsText(text, mac);
+  const checked = checkCommandsText(text, mac, base);
   if (!checked.ok) return { error: checked.error };
   try {
-    store.saveCommands(checked.commands);
+    store.saveCommands(ownEntries(checked.commands, base));
   } catch (error) {
     return { error: (error as Error).message };
   }

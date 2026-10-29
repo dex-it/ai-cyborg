@@ -1827,6 +1827,16 @@ label.disabled .hint {
   line-height: 1.5;
 }
 
+.commands-scopes {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.commands-scopes .search-toggle {
+  font-family: inherit;
+}
+
 .commands-example {
   margin: 0 0 12px;
   padding: 8px 10px;
