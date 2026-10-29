@@ -18,7 +18,13 @@ export interface ConfigEditorDeps {
   reveal(): Promise<void>;
 }
 
-export function initConfigEditor(deps: ConfigEditorDeps): { open(): Promise<void> } {
+export interface ConfigEditor {
+  open(): Promise<void>;
+  /** Открытый диалог перечитывает текст через load (незаписанная правка спрашивает подтверждение); false - человек остался при правке. */
+  reload(): Promise<boolean>;
+}
+
+export function initConfigEditor(deps: ConfigEditorDeps): ConfigEditor {
   const dialog = byId<HTMLDialogElement>(`${deps.prefix}-dialog`);
   const host = byId(`${deps.prefix}-editor`);
   const problemsEl = byId(`${deps.prefix}-problems`);
@@ -69,22 +75,32 @@ export function initConfigEditor(deps: ConfigEditorDeps): { open(): Promise<void
     editor = null;
   });
 
+  async function fill(): Promise<void> {
+    initial = await deps.load();
+    showError('');
+    const problems = deps.problems();
+    problemsEl.textContent = problems.length ? `Замечания к текущему файлу:\n${problems.join('\n')}` : '';
+    problemsEl.hidden = !problems.length;
+    if (!dialog.open) dialog.showModal();
+    const created = await createJsonEditor(host, initial, () => void save());
+    if (!dialog.open) {
+      created.dispose();
+      return;
+    }
+    editor = created;
+    editor.focus();
+  }
+
   return {
     async open(): Promise<void> {
-      if (dialog.open) return;
-      initial = await deps.load();
-      showError('');
-      const problems = deps.problems();
-      problemsEl.textContent = problems.length ? `Замечания к текущему файлу:\n${problems.join('\n')}` : '';
-      problemsEl.hidden = !problems.length;
-      dialog.showModal();
-      const created = await createJsonEditor(host, initial, () => void save());
-      if (!dialog.open) {
-        created.dispose();
-        return;
-      }
-      editor = created;
-      editor.focus();
+      if (!dialog.open) await fill();
+    },
+    async reload(): Promise<boolean> {
+      if (!dialog.open || !discardable()) return false;
+      editor?.dispose();
+      editor = null;
+      await fill();
+      return true;
     },
   };
 }

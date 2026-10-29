@@ -7,14 +7,18 @@ import {
   DESCRIPTION_MAX,
   effectiveCommands,
   expandCommand,
+  globalBase,
   hotkeyMatches,
   LABEL_MAX,
   MAX_COMMANDS,
   mergeCommands,
+  ownEntries,
   parseCommands,
   parseHotkey,
   placeholdersOf,
+  saveCommandsText,
   TEXT_MAX,
+  type CommandButton,
   type Hotkey,
 } from '../src/main/commands';
 
@@ -83,7 +87,7 @@ describe('Кнопки: разбор commands', () => {
       [
         { label: 'Ок', text: 'ok' },
         { label: '', text: 'x' },
-        { label: 'Без текста' },
+        { label: 'Без текста', text: ' ' },
         { label: 'Две строки', text: 'a\nb' },
         { label: 'Submit', text: 's', submit: 'да' },
         { label: 'x'.repeat(LABEL_MAX + 1), text: 't' },
@@ -143,7 +147,7 @@ describe('Кнопки: встроенные и из воркспейса', () =
       assert.ok(b.label.length <= LABEL_MAX && b.text.length <= TEXT_MAX);
       assert.equal(parseCommands([b], true).problems.length, 0, b.label);
     }
-    assert.equal(DEFAULT_COMMANDS.find((b) => b.text.includes('{pr}'))?.submit, false, 'кнопка с PR не отправляется сама');
+    assert.equal(DEFAULT_COMMANDS.find((b) => b.label === 'Мердж')?.submit, false, 'слияние PR не отправляется само');
     assert.deepEqual(DEFAULT_COMMANDS.map((b) => b.hotkey), ['F1', 'F2', 'F3', 'F4']);
   });
 });
@@ -158,7 +162,7 @@ describe('Кнопки: проверка текста редактора', () =>
   it('не JSON, не массив и любая замеченная проблема - отказ с причиной', () => {
     assert.match((checkCommandsText('[{', true) as { error: string }).error, /^Не JSON/);
     assert.match((checkCommandsText('{"a":1}', true) as { error: string }).error, /Нужен массив/);
-    assert.match((checkCommandsText('[{"label":"A"}]', true) as { error: string }).error, /text/);
+    assert.match((checkCommandsText('[{"label":"A"}]', true) as { error: string }).error, /«A»: запись только с label задаёт место кнопки/);
     assert.match((checkCommandsText('[{"label":"A","text":"a","submt":true}]', true) as { error: string }).error, /неизвестное поле submt/);
     const dup = checkCommandsText('[{"label":"A","text":"a","hotkey":"Alt+S"},{"label":"B","text":"b","hotkey":"Alt+S"}]', true);
     assert.match((dup as { error: string }).error, /уже у кнопки «A»/);
@@ -191,10 +195,27 @@ describe('Кнопки: проверка текста редактора', () =>
   it('действующий набор: одноимённая запись файла стоит на месте встроенной, негодная запись не теряется', () => {
     const replaced = { label: 'сливай', text: 'merge it', submit: true };
     const broken = { label: 'Битая', text: 'a\nb' };
-    const list = effectiveCommands([broken, replaced]);
+    const list = effectiveCommands([replaced, broken]);
     assert.deepEqual(list[0], replaced);
-    assert.deepEqual(list.slice(1, DEFAULT_COMMANDS.length), DEFAULT_COMMANDS.slice(1));
+    assert.deepEqual(list.slice(1, DEFAULT_COMMANDS.length), DEFAULT_COMMANDS.slice(1), 'неназванные встроенные идут за названной перед ними');
     assert.deepEqual(list.at(-1), broken, 'запись с ошибкой остаётся в тексте, чтобы её поправили');
+  });
+
+  it('порядок записей двигает и встроенные кнопки; кнопка, которую слой не назвал, идёт за названной перед ней', () => {
+    const mine = { label: 'Моя', text: 'м' };
+    const list = effectiveCommands([mine, { label: 'Приберись' }, { label: 'Сливай' }]) as CommandButton[];
+    assert.deepEqual(list.map((b) => b.label), ['Моя', 'Приберись', 'Сливай', 'Сделай PR', 'Мердж']);
+    assert.deepEqual(list[1], DEFAULT_COMMANDS[3], 'запись только с label берёт содержимое встроенной');
+    const { commands } = mergeCommands(DEFAULT_COMMANDS, parseCommands([mine, { label: 'Приберись' }, { label: 'Сливай' }], true).commands, true);
+    assert.deepEqual(commands.map((b) => b.label), ['Моя', 'Приберись', 'Сливай', 'Сделай PR', 'Мердж']);
+    assert.equal(commands[1].hotkey, 'F4');
+  });
+
+  it('запись слоя: копии нижних кнопок сворачиваются в label и остаются, только если держат порядок', () => {
+    assert.deepEqual(ownEntries(JSON.parse(commandsToText(undefined)), DEFAULT_COMMANDS), [], 'встроенные на своих местах в файл не пишутся');
+    const moved = [DEFAULT_COMMANDS[3], ...DEFAULT_COMMANDS.slice(0, 3)];
+    assert.deepEqual(ownEntries(moved, DEFAULT_COMMANDS), [{ label: 'Приберись' }, { label: 'Сливай' }]);
+    assert.deepEqual(effectiveCommands(ownEntries(moved, DEFAULT_COMMANDS)), moved);
   });
 
   it('действующий набор: повтор подписи встроенной кнопки не теряется, а идёт в конец', () => {
@@ -311,5 +332,46 @@ describe('Кнопки команд: замечания проверки', () =>
       }
     }
     assert.equal(parseCommands([{ label: '👨‍💻 Код', text: 'a' }], true).commands.length, 1, 'ZWJ в эмодзи допустим');
+  });
+});
+
+describe('Кнопки: общий набор и набор воркспейса', () => {
+  const shared = [{ label: 'Мердж', text: 'смерджи {pr}', submit: true, hotkey: 'F3' }, { label: 'Фикс', text: 'исправь', submit: true, hotkey: 'F5' }];
+  const base = globalBase(shared, true);
+
+  it('общий набор ложится на встроенные: замена на месте, новые следом', () => {
+    assert.deepEqual(base.map((b) => b.label), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись', 'Фикс']);
+    assert.equal(base[2].text, 'смерджи {pr}');
+  });
+
+  it('воркспейс заменяет и скрывает общую кнопку, свои идут следом', () => {
+    const own = parseCommands([{ label: 'фикс', text: 'чини тут', submit: true }, { label: 'Сливай', text: 'сливай', disabled: true }, { label: 'New', text: '/new' }], true).commands;
+    const { commands } = mergeCommands(base, own, true);
+    assert.deepEqual(commands.map((b) => b.label), ['фикс', 'Сделай PR', 'Мердж', 'Приберись', 'New']);
+    assert.equal(commands.find((b) => b.label === 'фикс')?.hotkey, undefined, 'замена целиком: сочетание общей кнопки не наследуется');
+  });
+
+  it('копия встроенной кнопки в файле воркспейса не заслоняет общую кнопку', () => {
+    const copies = parseCommands(JSON.parse(commandsToText(undefined)), true).commands;
+    const { commands } = mergeCommands(base, copies, true);
+    assert.equal(commands.find((b) => b.label === 'Мердж')?.text, 'смерджи {pr}');
+    assert.equal(effectiveCommands(JSON.parse(commandsToText(undefined)), base).length, base.length);
+  });
+
+  it('сочетание общей кнопки занято: кнопка воркспейса без него и замечание при записи', () => {
+    const text = JSON.stringify([{ label: 'New', text: '/new', hotkey: 'F5' }]);
+    assert.equal(checkCommandsText(text, true).ok, true);
+    assert.match((checkCommandsText(text, true, base) as { error: string }).error, /F5 уже у кнопки «Фикс»/);
+  });
+
+  it('запись слоя хранит только отличия от нижнего: правка общего набора доходит до воркспейса', () => {
+    const saved: unknown[][] = [];
+    const store = { saveCommands: (c: unknown[]) => void saved.push(c) };
+    const mine = { label: 'New', text: '/new', submit: true };
+    assert.deepEqual(saveCommandsText(commandsToText([mine], base), store, true, base), {});
+    assert.deepEqual(saved, [[mine]]);
+    const changed = { ...shared[1], text: 'исправь всё' };
+    const edited = (JSON.parse(commandsToText(undefined, base)) as CommandButton[]).map((b) => (b.label === 'Фикс' ? changed : b));
+    assert.deepEqual(ownEntries(edited, base), [changed]);
   });
 });
