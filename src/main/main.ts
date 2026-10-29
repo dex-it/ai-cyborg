@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell } from 'electron';
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
-import { saveCommandsText } from './commands';
+import { globalBase, saveCommandsText, type CommandsConfig } from './commands';
+import { CommandStore } from './command-store';
 import { savePromptsText } from './prompts';
 import { PromptStore } from './prompt-store';
 import { openablePath, webUrl } from './open-path';
@@ -64,6 +65,7 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
 const prompts = new PromptStore(path.join(userData, 'prompts.json'));
+const globalCommands = new CommandStore(path.join(userData, 'commands.json'));
 type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
 // Инстанс без воркспейса (отмена окна первого запуска): проектов нет, писать некуда.
 const noWorkspace: Projects = {
@@ -206,8 +208,17 @@ ipcMain.handle('projects:problem', () => {
   return projects.problem();
 });
 ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
-ipcMain.handle('commands:load', () => projects.loadCommands());
-ipcMain.handle('commands:save', (_event, text: unknown) => saveCommandsText(text, projects, process.platform === 'darwin'));
+ipcMain.handle('commands:load', (): CommandsConfig => {
+  const { raw, problem } = globalCommands.read();
+  return { global: raw, ...(problem ? { globalProblem: problem } : {}), workspace: projects.loadCommands() };
+});
+ipcMain.handle('commands:save', (_event, text: unknown, scope: unknown) => {
+  const mac = process.platform === 'darwin';
+  if (scope === 'global') return saveCommandsText(text, globalCommands, mac);
+  if (scope !== 'workspace') return { error: 'Неизвестный набор кнопок' };
+  // Подписи и сочетания воркспейса проверяются против того, что под ним: встроенных кнопок с общим набором.
+  return saveCommandsText(text, projects, mac, globalBase(globalCommands.read().raw, mac));
+});
 ipcMain.handle('prompts:load', () => prompts.read());
 ipcMain.handle('path:open', async (_event, file: unknown) => {
   const target = openablePath(file, os.homedir());
@@ -219,7 +230,7 @@ ipcMain.handle('url:open', async (_event, url: unknown) => {
   if (target) await shell.openExternal(target);
 });
 ipcMain.handle('config:reveal', (_event, kind: unknown) => {
-  const file = kind === 'prompts' ? prompts.file : kind === 'commands' ? current.file : null;
+  const file = kind === 'prompts' ? prompts.file : kind === 'commands' ? current.file : kind === 'commands-global' ? globalCommands.file : null;
   if (file) return showInSystemApp(file);
 });
 ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, prompts));
