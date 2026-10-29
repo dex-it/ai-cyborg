@@ -221,11 +221,11 @@ async function terminate(proc, tail) {
   assert.ok(exited, `приложение не завершилось по SIGTERM за 8 с\n${tail?.() ?? ''}`);
 }
 
-// Пункт системного меню по подписям «Воркспейс» -> подпись; клик в главном процессе.
-const clickMenu = (mainEv, label) =>
+// Пункт системного меню по подписям меню -> подпись («Воркспейс» по умолчанию); клик в главном процессе.
+const clickMenu = (mainEv, label, menu = 'Воркспейс') =>
   mainEv(`(() => {
     const { Menu } = process.mainModule.require('electron');
-    const item = Menu.getApplicationMenu().items.find((i) => i.label === 'Воркспейс').submenu.items.find((i) => i.label === ${JSON.stringify(label)});
+    const item = Menu.getApplicationMenu().items.find((i) => i.label === ${JSON.stringify(menu)}).submenu.items.find((i) => i.label === ${JSON.stringify(label)});
     if (!item) throw new Error('нет пункта ${label}');
     item.click();
     return item.enabled;
@@ -259,15 +259,29 @@ async function main() {
   assert.match(await text('#tree'), /\bM\b/, 'изменённый файл без отметки M git-статуса');
   log('проект, дерево и git-статус');
 
-  const filterTree = (value) =>
-    ev(`(() => { const f = document.querySelector('#tree-filter'); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event('input')); })()`);
-  await filterTree('A.T');
-  await waitFor('совпадение фильтра подсвечено', async () => (await ev('document.querySelector("#tree mark")?.textContent ?? ""')) === 'a.t');
-  await filterTree('нет-такого');
-  await waitFor('фильтр без совпадений', async () => /нет совпадений/.test(await text('#tree')) && !/a\.txt/.test(await text('#tree')));
-  await filterTree('');
-  await waitFor('дерево без фильтра', async () => /a\.txt/.test(await text('#tree')) && !(await ev('!!document.querySelector("#tree mark")')));
-  log('поиск в дереве: часть имени без учёта регистра, без совпадений, сброс');
+  // Окно поиска не висит на экране: его открывает пункт меню «Поиск».
+  assert.equal(await ev('document.querySelector("#search-dialog").open'), false, 'окно поиска открыто без вызова');
+  assert.equal(await ev('!!document.querySelector("#tree-filter")'), false, 'постоянное поле поиска над деревом осталось');
+  assert.equal(await clickMenu(mainEv, 'Найти файл…', 'Поиск'), true, '«Найти файл…» недоступен при выбранном проекте');
+  await waitFor('окно поиска открыто', async () => ev('document.querySelector("#search-dialog").open'));
+  const searchFor = (value) =>
+    ev(`(() => { const f = document.querySelector('#search-input'); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event('input')); })()`);
+  const toggle = (id) => ev(`document.querySelector('#${id}').click()`);
+  await searchFor('A.T');
+  await waitFor('найден a.txt, часть имени подсвечена', async () => (await ev('document.querySelector("#search-results mark")?.textContent ?? ""')) === 'a.t');
+  await searchFor('нет-такого');
+  await waitFor('нет совпадений', async () => /Нет совпадений/.test(await text('#search-status')) && !(await ev('!!document.querySelector("#search-results [role=option]")')));
+  await toggle('search-regex');
+  await searchFor('(');
+  await waitFor('негодное выражение названо, а не брошено', async () => /Выражение не разобрано/.test(await text('#search-status')) && (await ev('document.querySelector("#search-input").getAttribute("aria-invalid")')) === 'true');
+  await searchFor('^a\\.t.t$');
+  await waitFor('регулярное выражение находит a.txt', async () => (await ev('document.querySelector("#search-results [role=option]")?.textContent ?? ""')).startsWith('a.txt'));
+  await toggle('search-regex');
+  await searchFor('a.t');
+  await waitFor('снова подстрока', async () => /Найдено/.test(await text('#search-status')));
+  await combo(0, 'Enter', 'Enter', 13);
+  await waitFor('Enter открыл файл и закрыл окно', async () => !(await ev('document.querySelector("#search-dialog").open')) && /a\.txt/.test(await text('#file-preview .file-header')));
+  log('поиск файла: меню, часть имени без учёта регистра, нет совпадений, регулярное выражение и его ошибка, Enter открывает файл');
 
   assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
   log('заголовок окна с проектом и версией');

@@ -6,6 +6,7 @@ export const PROJECT_NEW_MENU_ID = 'project-new';
 export const PROJECT_PROPERTIES_MENU_ID = 'project-properties';
 export const COMMANDS_MENU_ID = 'commands-edit';
 export const PROMPTS_MENU_ID = 'prompts-edit';
+export const SEARCH_FILES_MENU_ID = 'search-files';
 
 /** Подпись пункта «Недавних»: домашний каталог - «~». */
 export function recentLabel(file: string, home: string): string {
@@ -25,6 +26,7 @@ export interface WorkspaceMenu {
   editProject(): void;
   editCommands(): void;
   editPrompts(): void;
+  searchFiles(): void;
 }
 
 /**
@@ -112,5 +114,18 @@ export function appMenuTemplate(
     label: 'Вид',
     submenu: [notificationsItem, { type: 'separator' }, { role: 'toggleDevTools', label: 'Инструменты разработчика' }, { role: 'togglefullscreen', label: 'Во весь экран' }],
   };
-  return [first, workspaceMenu, editMenu, viewMenu, windowMenu];
+  // Ctrl+P в терминале Linux - клавиша readline (предыдущая команда), поэтому там окно поиска вызывается с Shift.
+  const searchMenu: MenuItemConstructorOptions = {
+    label: 'Поиск',
+    submenu: [
+      {
+        id: SEARCH_FILES_MENU_ID,
+        label: 'Найти файл…',
+        accelerator: platform === 'darwin' ? 'Cmd+P' : 'Ctrl+Shift+P',
+        enabled: workspace.hasProject,
+        click: () => workspace.searchFiles(),
+      },
+    ],
+  };
+  return [first, workspaceMenu, editMenu, searchMenu, viewMenu, windowMenu];
 }

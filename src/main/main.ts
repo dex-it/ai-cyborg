@@ -12,7 +12,7 @@ import { listDir, readTextFile, walkFiles } from './files';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from './menu';
+import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_FILES_MENU_ID, type WorkspaceMenu } from './menu';
 import { validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
@@ -347,8 +347,10 @@ ipcMain.on('notifications:state', (_event, enabled: boolean) => {
 });
 ipcMain.on('project:selected', (_event, selected: unknown) => {
   menuState.hasProject = selected === true;
-  const item = Menu.getApplicationMenu()?.getMenuItemById(PROJECT_PROPERTIES_MENU_ID);
-  if (item) item.enabled = menuState.hasProject;
+  for (const id of [PROJECT_PROPERTIES_MENU_ID, SEARCH_FILES_MENU_ID]) {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+    if (item) item.enabled = menuState.hasProject;
+  }
 });
 ipcMain.handle('fs:list', (_event, dir: unknown) => paths.list(dir));
 ipcMain.handle('fs:files', (_event, root: unknown) => paths.files(root));
@@ -409,6 +411,7 @@ function rebuildMenu(): void {
     editProject: () => win?.webContents.send('menu:project', 'edit'),
     editCommands: () => win?.webContents.send('menu:commands'),
     editPrompts: () => win?.webContents.send('menu:prompts'),
+    searchFiles: () => win?.webContents.send('menu:search', 'files'),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(

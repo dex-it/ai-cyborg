@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 125; с автотестом - 110, из них со smoke - 16; только smoke - 7; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 129; с автотестом - 114, из них со smoke - 19; только smoke - 7; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -80,7 +80,6 @@ date: 2026-10-26
 | FR-4005 | Подпись и подсказка корня после ухода рабочего каталога | 04-session-tree | автотест | `test/roots.test.ts` |
 | FR-4006 | Дерево управляется с клавиатуры | 04-session-tree | автотест | `test/tree-keys.test.ts`, `test/tree.test.ts` |
 | FR-4007 | Клик по дереву не теряется при совпадении с опросом git | 04-session-tree | автотест | `test/render-ticket.test.ts` |
-| FR-4008 | Поиск файла по части имени | 04-session-tree | автотест + smoke | `test/tree-filter.test.ts`, `test/tree.test.ts`, `test/allowed-paths.test.ts`, `scripts/smoke.mjs` |
 | FR-5001 | Запуск одной командой | 05-macos-support | автотест | `test/launcher.test.ts` |
 | FR-5002 | Клавиши команд своей системы | 05-macos-support | автотест | `test/platform.test.ts` |
 | FR-5003 | Чтение журнала событий независимо от момента взвода наблюдателя | 05-macos-support | автотест | `src/main/sessions.test.ts` |
@@ -138,3 +137,8 @@ date: 2026-10-26
 | FR-12008 | Предложенные кнопки на полосе | 12-command-buttons | smoke | `scripts/smoke.mjs` |
 | FR-12009 | Промпты кнопок запуска сессий: поле `prompts` и сборка первого сообщения | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/mrs.test.ts`, `test/trackers.test.ts`, `test/jira.test.ts`, `test/ipc-error.test.ts`, `scripts/smoke.mjs` |
 | FR-12010 | Правка промптов в Monaco | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-13001 | Окно поиска вызывается из меню и сочетанием, на экране его нет | 13-file-search | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-13002 | Поиск файла по части имени | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `scripts/smoke.mjs` |
+| FR-13003 | Запрос регулярным выражением | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `scripts/smoke.mjs` |
+| FR-13004 | Окно поиска управляется с клавиатуры | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
+| FR-13005 | Список файлов корня | 13-file-search | автотест | `test/file-list.test.ts`, `test/allowed-paths.test.ts` |

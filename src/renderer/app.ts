@@ -26,6 +26,7 @@ import { returnTarget } from './panel-return';
 import { RenderTickets } from './render-ticket';
 import { asMenuItem, bindList, rove } from './list-keys';
 import { bindTablist, markTab, selectTab } from './tabs';
+import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
@@ -98,7 +99,6 @@ const filePreview = byId('file-preview');
 const projectTrees = new Map<string, TreeView>();
 let preview: FileViewer | null = null;
 const treeHeader = byId('tree-header');
-const treeFilter = byId<HTMLInputElement>('tree-filter');
 const historyEl = byId('history');
 const sideFiles = byId<HTMLButtonElement>('side-files');
 const sideHistory = byId<HTMLButtonElement>('side-history');
@@ -459,7 +459,6 @@ function showNoSession(): void {
   treeEl.replaceChildren();
   closePreview();
   const tree = projectTree();
-  treeFilter.value = tree?.filter ?? '';
   tree?.setRoots(project!.repos.map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' })));
   void renderProjectTree(false);
   const hint = projectHint();
@@ -555,7 +554,6 @@ function activateSession(s: Session, keepPanel = false): void {
   sidebar.style.setProperty('--session', s.color);
   updateSessionLabels(s);
   s.tree.setRoots(treeRoots(s));
-  treeFilter.value = s.tree.filter;
   // Своё дерево заменится готовым целиком; очистка нужна только против чужого, иначе дерево мигает до ответа git status.
   if (!same) treeEl.replaceChildren();
   void renderTree(s, false);
@@ -1126,7 +1124,7 @@ async function loadHistory(): Promise<void> {
 function showSideView(history: boolean): void {
   selectTab(sideFiles, !history);
   selectTab(sideHistory, history);
-  treeHeader.hidden = treeFilter.hidden = treeEl.hidden = history;
+  treeHeader.hidden = treeEl.hidden = history;
   historyEl.hidden = !history;
   if (history) void loadHistory();
 }
@@ -1236,14 +1234,6 @@ newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleSessionMenu(newSessionButton);
 });
-treeFilter.addEventListener('input', () => (active ? active.tree : projectTree())?.setFilter(treeFilter.value.trim()));
-treeFilter.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || !treeFilter.value) return;
-  // Иначе Esc уйдёт дальше и закроет то, что открыто поверх.
-  event.stopPropagation();
-  treeFilter.value = '';
-  treeFilter.dispatchEvent(new Event('input'));
-});
 bindTablist(byId('side-tabs'), 'Боковая панель');
 bindTablist(sessionList, 'Сессии');
 selectTab(sideFiles, true);
@@ -1339,6 +1329,12 @@ const commandEditor = initCommandEditor({ problems: () => commandBars.configProb
 api.on<void>('menu:commands', () => void commandEditor.open());
 const promptEditor = initPromptEditor();
 api.on<void>('menu:prompts', () => void promptEditor.open());
+// Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта.
+const searchDialog = new SearchDialog({
+  roots: () => (active ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),
+  open: (path, root) => (active ? openFile(active, path, root) : void showPreview(path, root)),
+});
+api.on<SearchMode>('menu:search', (mode) => searchDialog.open(mode));
 
 void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, loaded]) => {
   workspaceFile = info.file;
