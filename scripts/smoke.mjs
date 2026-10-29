@@ -288,15 +288,12 @@ async function main() {
   const cursorLine = () => ev('window.monaco?.editor.getEditors().map((e) => e.getPosition()?.lineNumber).filter(Boolean).join(",") ?? ""');
   assert.equal(await clickMenu(mainEv, 'Найти в файлах…', 'Поиск'), true, '«Найти в файлах…» недоступен');
   await waitFor('окно открыто на «Текст»', async () => (await ev('document.querySelector("#search-dialog").open')) && (await modeSelected(1)) === 'true');
-  await ev("window.__errs = []; window.addEventListener('unhandledrejection', (e) => window.__errs.push(String(e.reason))); window.addEventListener('error', (e) => window.__errs.push(e.message));");
   await searchFor('CHAN');
   await waitFor('строка найдена, совпадение подсвечено', async () => {
     const status = await text('#search-status');
     const mark = await ev('document.querySelector("#search-results mark")?.textContent ?? ""');
     if (status.includes('Найдено 1') && mark === 'chan') return true;
-    const direct = await ev(`Promise.race([window.cyborg.searchText({ root: ${JSON.stringify(repo)}, query: 'chan', options: { regex: false, caseSensitive: false, wholeWord: false } }).then((r) => JSON.stringify(r), (e) => 'ОШИБКА ' + e), new Promise((r) => setTimeout(() => r('ТАЙМАУТ'), 6000))])`);
-    const dbg = await ev('JSON.stringify({ sd: window.__sd ?? null, errs: window.__errs ?? null, mode: document.querySelector("#search-modes [aria-selected=true]")?.textContent })');
-    throw new Error(`отладка ${dbg}; подпись «${status}», подсветка «${mark}», результаты «${await text('#search-results')}», прямой вызов: ${direct}`);
+    throw new Error(`подпись «${status}», подсветка «${mark}», результаты «${await text('#search-results')}»`);
   });
   assert.match(await text('#search-results'), /changed[\s\S]*a\.txt:2/, 'строка результата: текст и «файл:строка»');
   await toggle('search-word');
