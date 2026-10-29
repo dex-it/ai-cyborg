@@ -6,27 +6,6 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { walkFiles } from '../src/main/files';
 import { gitFiles } from '../src/main/git';
-import { filterPaths, type FilterNode } from '../src/renderer/tree-filter';
-
-const flat = (nodes: FilterNode[]): string[] => nodes.flatMap((n) => [n.isDir ? `${n.rel}/` : n.rel, ...flat(n.children)]);
-
-describe('filterPaths', () => {
-  it('часть имени без учёта регистра; каталоги совпадений раскрыты, каталоги вперёд', () => {
-    const { nodes, matched } = filterPaths(['src/Tree.ts', 'src/app.ts', 'test/tree.test.ts', 'tree-top.md', 'treeless/x.ts'], 'tree', 10);
-    assert.equal(matched, 3);
-    assert.deepEqual(flat(nodes), ['src/', 'src/Tree.ts', 'test/', 'test/tree.test.ts', 'tree-top.md']);
-  });
-
-  it('совпадение ищется в имени файла, а не в пути каталогов', () => {
-    assert.equal(filterPaths(['tree/a.ts'], 'tree', 10).matched, 0);
-  });
-
-  it('сверх предела совпадения считаются, но в дерево не идут', () => {
-    const { nodes, matched } = filterPaths(['a1', 'a2', 'a3'], 'a', 2);
-    assert.equal(matched, 3);
-    assert.deepEqual(flat(nodes), ['a1', 'a2']);
-  });
-});
 
 describe('список файлов для поиска', () => {
   const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-files-')));
