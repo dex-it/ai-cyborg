@@ -289,7 +289,12 @@ async function main() {
   assert.equal(await clickMenu(mainEv, 'Найти в файлах…', 'Поиск'), true, '«Найти в файлах…» недоступен');
   await waitFor('окно открыто на «Текст»', async () => (await ev('document.querySelector("#search-dialog").open')) && (await modeSelected(1)) === 'true');
   await searchFor('CHAN');
-  await waitFor('строка найдена, совпадение подсвечено', async () => (await text('#search-status')).includes('Найдено 1') && (await ev('document.querySelector("#search-results mark")?.textContent ?? ""')) === 'chan');
+  await waitFor('строка найдена, совпадение подсвечено', async () => {
+    const status = await text('#search-status');
+    const mark = await ev('document.querySelector("#search-results mark")?.textContent ?? ""');
+    if (status.includes('Найдено 1') && mark === 'chan') return true;
+    throw new Error(`подпись «${status}», подсветка «${mark}», результаты «${await text('#search-results')}»`);
+  });
   assert.match(await text('#search-results'), /changed[\s\S]*a\.txt:2/, 'строка результата: текст и «файл:строка»');
   await toggle('search-word');
   await waitFor('целое слово: «chan» не слово', async () => /Нет совпадений/.test(await text('#search-status')));
