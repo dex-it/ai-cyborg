@@ -293,7 +293,8 @@ async function main() {
     const status = await text('#search-status');
     const mark = await ev('document.querySelector("#search-results mark")?.textContent ?? ""');
     if (status.includes('Найдено 1') && mark === 'chan') return true;
-    throw new Error(`подпись «${status}», подсветка «${mark}», результаты «${await text('#search-results')}»`);
+    const direct = await ev(`Promise.race([window.cyborg.searchText({ root: ${JSON.stringify(repo)}, query: 'chan', options: { regex: false, caseSensitive: false, wholeWord: false } }).then((r) => JSON.stringify(r), (e) => 'ОШИБКА ' + e), new Promise((r) => setTimeout(() => r('ТАЙМАУТ'), 6000))])`);
+    throw new Error(`подпись «${status}», подсветка «${mark}», результаты «${await text('#search-results')}», прямой вызов: ${direct}`);
   });
   assert.match(await text('#search-results'), /changed[\s\S]*a\.txt:2/, 'строка результата: текст и «файл:строка»');
   await toggle('search-word');
