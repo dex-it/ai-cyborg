@@ -230,6 +230,7 @@ export class SearchDialog {
         ask({ root: root.path, query, options: { ...last.options } }).catch((error: unknown): SearchReply => ({ hits: [], truncated: false, error: String(error) })),
       ),
     );
+    (window as unknown as { __sd?: unknown[] }).__sd = [...((window as unknown as { __sd?: unknown[] }).__sd ?? []), { ticket, requested: this.requested, cancelled: replies.map((r) => !!r.cancelled), hits: replies.map((r) => r.hits.length), error: replies.map((r) => r.error ?? null) }];
     if (ticket !== this.requested || replies.some((reply) => reply.cancelled)) return;
     const hits: { root: number; hit: LineHit }[] = [];
     let truncated = false;
