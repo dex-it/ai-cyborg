@@ -221,11 +221,11 @@ async function terminate(proc, tail) {
   assert.ok(exited, `приложение не завершилось по SIGTERM за 8 с\n${tail?.() ?? ''}`);
 }
 
-// Пункт системного меню по подписям «Воркспейс» -> подпись; клик в главном процессе.
-const clickMenu = (mainEv, label) =>
+// Пункт системного меню по подписям меню -> подпись («Воркспейс» по умолчанию); клик в главном процессе.
+const clickMenu = (mainEv, label, menu = 'Воркспейс') =>
   mainEv(`(() => {
     const { Menu } = process.mainModule.require('electron');
-    const item = Menu.getApplicationMenu().items.find((i) => i.label === 'Воркспейс').submenu.items.find((i) => i.label === ${JSON.stringify(label)});
+    const item = Menu.getApplicationMenu().items.find((i) => i.label === ${JSON.stringify(menu)}).submenu.items.find((i) => i.label === ${JSON.stringify(label)});
     if (!item) throw new Error('нет пункта ${label}');
     item.click();
     return item.enabled;
@@ -259,15 +259,68 @@ async function main() {
   assert.match(await text('#tree'), /\bM\b/, 'изменённый файл без отметки M git-статуса');
   log('проект, дерево и git-статус');
 
-  const filterTree = (value) =>
-    ev(`(() => { const f = document.querySelector('#tree-filter'); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event('input')); })()`);
-  await filterTree('A.T');
-  await waitFor('совпадение фильтра подсвечено', async () => (await ev('document.querySelector("#tree mark")?.textContent ?? ""')) === 'a.t');
-  await filterTree('нет-такого');
-  await waitFor('фильтр без совпадений', async () => /нет совпадений/.test(await text('#tree')) && !/a\.txt/.test(await text('#tree')));
-  await filterTree('');
-  await waitFor('дерево без фильтра', async () => /a\.txt/.test(await text('#tree')) && !(await ev('!!document.querySelector("#tree mark")')));
-  log('поиск в дереве: часть имени без учёта регистра, без совпадений, сброс');
+  // Окно поиска не висит на экране: его открывает пункт меню «Поиск».
+  assert.equal(await ev('document.querySelector("#search-dialog").open'), false, 'окно поиска открыто без вызова');
+  assert.equal(await ev('!!document.querySelector("#tree-filter")'), false, 'постоянное поле поиска над деревом осталось');
+  assert.equal(await clickMenu(mainEv, 'Найти файл…', 'Поиск'), true, '«Найти файл…» недоступен при выбранном проекте');
+  await waitFor('окно поиска открыто', async () => ev('document.querySelector("#search-dialog").open'));
+  const searchFor = (value) =>
+    ev(`(() => { const f = document.querySelector('#search-input'); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event('input')); })()`);
+  const toggle = (id) => ev(`document.querySelector('#${id}').click()`);
+  await searchFor('A.T');
+  await waitFor('найден a.txt, часть имени подсвечена', async () => (await ev('document.querySelector("#search-results mark")?.textContent ?? ""')) === 'a.t');
+  await searchFor('нет-такого');
+  await waitFor('нет совпадений', async () => /Нет совпадений/.test(await text('#search-status')) && !(await ev('!!document.querySelector("#search-results [role=option]")')));
+  await toggle('search-regex');
+  await searchFor('(');
+  await waitFor('негодное выражение названо, а не брошено', async () => /Выражение не разобрано/.test(await text('#search-status')) && (await ev('document.querySelector("#search-input").getAttribute("aria-invalid")')) === 'true');
+  await searchFor('^a\\.t.t$');
+  await waitFor('регулярное выражение находит a.txt', async () => (await ev('document.querySelector("#search-results [role=option]")?.textContent ?? ""')).startsWith('a.txt'));
+  await toggle('search-regex');
+  await searchFor('a.t');
+  await waitFor('снова подстрока', async () => /Найдено/.test(await text('#search-status')));
+  await combo(0, 'Enter', 'Enter', 13);
+  await waitFor('Enter открыл файл и закрыл окно', async () => !(await ev('document.querySelector("#search-dialog").open')) && /a\.txt/.test(await text('#file-preview .file-header')));
+  log('поиск файла: меню, часть имени без учёта регистра, нет совпадений, регулярное выражение и его ошибка, Enter открывает файл');
+
+  // Поиск по содержимому: меню открывает окно сразу в нужном виде, результат - строка, Enter переходит к ней.
+  const modeSelected = (index) => ev(`document.querySelectorAll('#search-modes [role=tab]')[${index}].getAttribute('aria-selected')`);
+  const cursorLine = () => ev('window.monaco?.editor.getEditors().map((e) => e.getPosition()?.lineNumber).filter(Boolean).join(",") ?? ""');
+  assert.equal(await clickMenu(mainEv, 'Найти в файлах…', 'Поиск'), true, '«Найти в файлах…» недоступен');
+  await waitFor('окно открыто на «Текст»', async () => (await ev('document.querySelector("#search-dialog").open')) && (await modeSelected(1)) === 'true');
+  await searchFor('CHAN');
+  await waitFor('строка найдена, совпадение подсвечено', async () => {
+    const status = await text('#search-status');
+    const mark = await ev('document.querySelector("#search-results mark")?.textContent ?? ""');
+    if (status.includes('Найдено 1') && mark === 'chan') return true;
+    throw new Error(`подпись «${status}», подсветка «${mark}», результаты «${await text('#search-results')}»`);
+  });
+  assert.match(await text('#search-results'), /changed[\s\S]*a\.txt:2/, 'строка результата: текст и «файл:строка»');
+  await toggle('search-word');
+  await waitFor('целое слово: «chan» не слово', async () => /Нет совпадений/.test(await text('#search-status')));
+  await toggle('search-word');
+  await toggle('search-regex');
+  await searchFor('^ch.*ed$');
+  await waitFor('выражение находит строку', async () => (await text('#search-status')).includes('Найдено 1'));
+  await searchFor('(');
+  await waitFor('негодное выражение git названо', async () => /Выражение не разобрано/.test(await text('#search-status')) && (await ev('document.querySelector("#search-input").getAttribute("aria-invalid")')) === 'true');
+  await toggle('search-regex');
+  await searchFor('changed');
+  await waitFor('снова подстрока', async () => (await text('#search-status')).includes('Найдено 1'));
+  await combo(0, 'Enter', 'Enter', 13);
+  await waitFor('Enter открыл файл на строке 2', async () => !(await ev('document.querySelector("#search-dialog").open')) && (await cursorLine()).split(',').includes('2'));
+  log('поиск в файлах: меню, подсветка, целое слово, выражение и его ошибка, Enter переходит к строке');
+
+  assert.equal(await clickMenu(mainEv, 'Найти в изменениях…', 'Поиск'), true, '«Найти в изменениях…» недоступен');
+  await waitFor('окно открыто на «Изменения»', async () => (await ev('document.querySelector("#search-dialog").open')) && (await modeSelected(2)) === 'true');
+  await searchFor('changed');
+  await waitFor('найдена добавленная строка со знаком +', async () => (await text('#search-status')).includes('Найдено 1') && (await text('#search-results .search-sign')) === '+');
+  await searchFor('hello');
+  await waitFor('неизменённая строка в изменениях не ищется', async () => /Нет совпадений/.test(await text('#search-status')));
+  await ev('document.querySelectorAll("#search-modes [role=tab]")[0].click()');
+  await waitFor('вид «Файлы» по клику на вкладку', async () => (await modeSelected(0)) === 'true');
+  await ev('document.querySelector("#search-dialog").close()');
+  log('поиск в изменениях: знак строки, неизменённое не находится, вкладки видов');
 
   assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
   log('заголовок окна с проектом и версией');

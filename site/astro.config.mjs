@@ -77,6 +77,7 @@ export default defineConfig({
             { slug: 'features', label: 'Обзор' },
             'features/sessions',
             'features/tree',
+            'features/search',
             'features/tasks-mrs',
             'features/status',
             'features/commands',

@@ -9,10 +9,13 @@ import { savePromptsText } from './prompts';
 import { PromptStore } from './prompt-store';
 import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile, walkFiles } from './files';
+import { gitDiffSearch, gitGrep } from './git-search';
+import { SearchRunner } from './search-run';
+import type { SearchReply } from '../shared/search-pattern';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, type WorkspaceMenu } from './menu';
+import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, type WorkspaceMenu } from './menu';
 import { validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
@@ -78,11 +81,15 @@ const noWorkspace: Projects = {
 let projects: Projects = noWorkspace;
 let current: { file: string | null; legacy: boolean } = { file: null, legacy: false };
 let heldLock: string | null = null;
+// Поиск одного вида идёт один: новый запрос отменяет прежний и его git.
+const searches = new SearchRunner();
 const paths = createPathHandlers({
   allowed: new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]),
   liveDirs: () => sessions.liveDirs(),
   listDir,
   listFiles: async (root) => (await gitFiles(root)) ?? walkFiles(root),
+  searchText: (request) => searches.run<SearchReply>(`text:${request.root}`, (signal) => gitGrep(request, signal), { hits: [], truncated: false }),
+  searchChanges: (request) => searches.run<SearchReply>(`changes:${request.root}`, (signal) => gitDiffSearch(request, signal), { hits: [], truncated: false }),
   readTextFile,
   gitRoot,
   gitBranch,
@@ -347,11 +354,15 @@ ipcMain.on('notifications:state', (_event, enabled: boolean) => {
 });
 ipcMain.on('project:selected', (_event, selected: unknown) => {
   menuState.hasProject = selected === true;
-  const item = Menu.getApplicationMenu()?.getMenuItemById(PROJECT_PROPERTIES_MENU_ID);
-  if (item) item.enabled = menuState.hasProject;
+  for (const id of [PROJECT_PROPERTIES_MENU_ID, ...Object.values(SEARCH_MENU_IDS)]) {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+    if (item) item.enabled = menuState.hasProject;
+  }
 });
 ipcMain.handle('fs:list', (_event, dir: unknown) => paths.list(dir));
 ipcMain.handle('fs:files', (_event, root: unknown) => paths.files(root));
+ipcMain.handle('search:text', (_event, request: unknown) => paths.searchText(request));
+ipcMain.handle('search:changes', (_event, request: unknown) => paths.searchChanges(request));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('git:root', (_event, dir: unknown) => paths.root(dir));
 ipcMain.handle('git:branch', (_event, root: unknown) => paths.branch(root));
@@ -409,6 +420,7 @@ function rebuildMenu(): void {
     editProject: () => win?.webContents.send('menu:project', 'edit'),
     editCommands: () => win?.webContents.send('menu:commands'),
     editPrompts: () => win?.webContents.send('menu:prompts'),
+    search: (mode) => win?.webContents.send('menu:search', mode),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(

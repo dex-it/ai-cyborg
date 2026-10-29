@@ -23,9 +23,8 @@ class FakeNode {
   getAttribute(name: string): string | null {
     return this.attrs[name] ?? null;
   }
-  append(...nodes: (FakeNode | string)[]): void {
-    for (const item of nodes) {
-      const n = typeof item === 'string' ? Object.assign(new FakeNode(), { textContent: item }) : item;
+  append(...nodes: FakeNode[]): void {
+    for (const n of nodes) {
       n.parentElement = this;
       this.children.push(n);
     }
@@ -51,13 +50,6 @@ const fs: Record<string, { name: string; isDir: boolean }[]> = {
   '/o/a': [{ name: 'y.txt', isDir: false }],
 };
 
-// Что отдаёт канал fs:files по корням и сколько раз его спросили.
-const filePaths: Record<string, string[]> = {
-  '/r': ['README.md', 'a/c/deep.txt', 'a/x.txt', 'b/Readme.txt', 'f.txt'],
-  '/o': ['a/y.txt', 'notes/readme-old.md'],
-};
-const listed: string[] = [];
-
 (globalThis as any).document = {
   createElement: () => new FakeNode(),
   createDocumentFragment: () => new FakeNode(),
@@ -67,10 +59,6 @@ const listed: string[] = [];
     gitStatus: async () => ({}),
     gitBranch: async () => null,
     listDir: async (dir: string) => (fs[dir] ?? []).map((e) => ({ ...e })),
-    listFiles: async (root: string) => {
-      listed.push(root);
-      return filePaths[root] ?? [];
-    },
   },
 };
 
@@ -292,106 +280,5 @@ describe('TreeView: опрос git', () => {
       Date.now = realNow;
       restore();
     }
-  });
-});
-
-describe('TreeView: поиск по части имени', () => {
-  type Filtered = View & { setRoots(r: typeof roots): void; setFilter(text: string): void; filter: string };
-  const makeFiltered = async () => {
-    const { TreeView } = await import('../src/renderer/tree');
-    const view = new TreeView(() => {}, () => {}) as unknown as Filtered;
-    view.setRoots(roots);
-    return view;
-  };
-  const text = (node: FakeNode): string => node.textContent + node.children.map(text).join('');
-  // Строки с путём в подсказке; пояснения («нет совпадений», «ещё N») подсказки не имеют.
-  const entries = (frag: FakeNode) => frag.children.filter((row) => row.title);
-  const entry = (frag: FakeNode, title: string) => entries(frag).find((row) => row.title === title);
-  const notes = (frag: FakeNode) => frag.children.filter((row) => !row.title).map(text);
-  const files = (frag: FakeNode) => entries(frag).filter((row) => row.className.includes('file')).map((row) => row.title);
-
-  it('остаются файлы с набранным в имени без учёта регистра, во всех корнях и в нераскрытых каталогах', async () => {
-    const view = await makeFiltered();
-    view.setFilter('readme');
-    const frag = (await view.render(false))!;
-    assert.deepEqual(files(frag), ['/r/b/Readme.txt', '/r/README.md', '/o/notes/readme-old.md']);
-    assert.equal(entry(frag, '/r/a'), undefined, 'каталог без совпадений скрыт');
-    assert.equal(entry(frag, '/r/b')!.getAttribute('aria-expanded'), 'true', 'каталог совпадения раскрыт');
-    assert.equal(entry(frag, '/o/notes')!.getAttribute('aria-expanded'), 'true', 'и в свёрнутом корне');
-  });
-
-  it('ищет в имени, а не в пути: имя каталога не считается', async () => {
-    const view = await makeFiltered();
-    view.setFilter('notes');
-    const frag = (await view.render(false))!;
-    assert.deepEqual(files(frag), []);
-    assert.equal(entry(frag, '/o/notes'), undefined);
-    assert.deepEqual(notes(frag), ['нет совпадений', 'нет совпадений'], 'по строке под каждым корнем');
-  });
-
-  it('совпавшая часть имени лежит в mark, остальное рядом с ней', async () => {
-    const view = await makeFiltered();
-    view.setFilter('ead');
-    const frag = (await view.render(false))!;
-    const name = entry(frag, '/r/README.md')!.children.find((c) => c.className === 'name')!;
-    assert.deepEqual(name.children.map((c) => c.textContent), ['R', 'EAD', 'ME.md']);
-  });
-
-  it('роли ARIA в найденном: treeitem с глубиной от корня, у файла aria-selected, у каталога aria-expanded', async () => {
-    const view = await makeFiltered();
-    view.setFilter('deep');
-    const frag = (await view.render(false))!;
-    const deep = entry(frag, '/r/a/c/deep.txt')!;
-    assert.equal(deep.getAttribute('role'), 'treeitem');
-    assert.equal(deep.getAttribute('aria-level'), '4');
-    assert.equal(deep.getAttribute('aria-selected'), 'false');
-    assert.equal(entry(frag, '/r/a')!.getAttribute('aria-expanded'), 'true');
-    assert.equal(entry(frag, '/r/a/c')!.getAttribute('aria-level'), '3');
-  });
-
-  it('больше предела: показаны первые 500, ниже строка «ещё N - уточните запрос»', async () => {
-    const view = await makeFiltered();
-    const saved = filePaths['/r'];
-    filePaths['/r'] = Array.from({ length: 520 }, (_, i) => `many/file${String(i).padStart(3, '0')}.txt`);
-    try {
-      view.setFilter('file');
-      const frag = (await view.render(false))!;
-      assert.equal(files(frag).filter((title) => title.startsWith('/r/many/')).length, 500);
-      assert.ok(notes(frag).includes('ещё 20 - уточните запрос'));
-    } finally {
-      filePaths['/r'] = saved;
-    }
-  });
-
-  it('список файлов перечитывается только при смене git status, а не на каждое нажатие', async () => {
-    const view = await makeFiltered();
-    listed.length = 0;
-    for (const query of ['r', 're', 'rea']) {
-      view.setFilter(query);
-      await view.render(false);
-    }
-    assert.deepEqual(listed, ['/r', '/o'], 'по одному запросу на корень');
-    const api = (globalThis as any).window.cyborg;
-    const status = api.gitStatus;
-    api.gitStatus = async () => ({ 'f.txt': 'M' });
-    try {
-      await view.render(false);
-    } finally {
-      api.gitStatus = status;
-    }
-    assert.deepEqual(listed, ['/r', '/o', '/r', '/o'], 'после смены статуса список перечитан');
-  });
-
-  it('клик по корню при фильтре его не сворачивает; пустой фильтр возвращает обычное дерево', async () => {
-    const view = await makeFiltered();
-    view.setFilter('readme');
-    const frag = (await view.render(false))!;
-    entries(frag).find((row) => row.className.includes('root'))!.click();
-    assert.ok(entry((await view.render(false))!, '/r/README.md'), 'корень не свернулся');
-    view.setFilter('');
-    const plain = (await view.render(false))!;
-    assert.ok(entry(plain, '/r/f.txt'));
-    assert.equal(entry(plain, '/r/b/Readme.txt'), undefined, 'вернулись раскрытия по умолчанию');
-    assert.equal(view.filter, '');
   });
 });

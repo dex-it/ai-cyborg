@@ -72,7 +72,31 @@ export class FileViewer {
     private readonly body: HTMLElement,
   ) {}
 
-  async load(): Promise<void> {
+  /** Окончание последнего чтения: переход к строке ждёт, пока в редакторе появится содержимое. */
+  private loading: Promise<void> = Promise.resolve();
+
+  load(): Promise<void> {
+    this.loading = this.read();
+    return this.loading;
+  }
+
+  /** Строка по номеру в центр окна и кратко подсвечена; у диф-редактора - в рабочей версии файла. */
+  async reveal(line: number): Promise<void> {
+    await this.loading;
+    const editor = this.editor ?? this.diff?.getModifiedEditor();
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const target = Math.min(Math.max(1, Math.trunc(line)), model.getLineCount());
+    editor.revealLineInCenter(target);
+    editor.setPosition({ lineNumber: target, column: 1 });
+    const mark = editor.createDecorationsCollection([
+      { range: { startLineNumber: target, startColumn: 1, endLineNumber: target, endColumn: 1 }, options: { isWholeLine: true, className: 'search-target-line' } },
+    ]);
+    window.setTimeout(() => mark.clear(), 2000);
+    editor.focus();
+  }
+
+  private async read(): Promise<void> {
     const [result, original] = await Promise.all([window.cyborg.readFile(this.path), window.cyborg.gitHeadContent(this.path)]);
     if (result.content === undefined) {
       this.dispose();

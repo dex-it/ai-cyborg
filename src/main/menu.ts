@@ -6,6 +6,9 @@ export const PROJECT_NEW_MENU_ID = 'project-new';
 export const PROJECT_PROPERTIES_MENU_ID = 'project-properties';
 export const COMMANDS_MENU_ID = 'commands-edit';
 export const PROMPTS_MENU_ID = 'prompts-edit';
+export type SearchMode = 'files' | 'text' | 'changes';
+/** Пункты меню «Поиск» по режимам; доступны, пока выбран проект. */
+export const SEARCH_MENU_IDS: Record<SearchMode, string> = { files: 'search-files', text: 'search-text', changes: 'search-changes' };
 
 /** Подпись пункта «Недавних»: домашний каталог - «~». */
 export function recentLabel(file: string, home: string): string {
@@ -25,6 +28,7 @@ export interface WorkspaceMenu {
   editProject(): void;
   editCommands(): void;
   editPrompts(): void;
+  search(mode: SearchMode): void;
 }
 
 /**
@@ -112,5 +116,32 @@ export function appMenuTemplate(
     label: 'Вид',
     submenu: [notificationsItem, { type: 'separator' }, { role: 'toggleDevTools', label: 'Инструменты разработчика' }, { role: 'togglefullscreen', label: 'Во весь экран' }],
   };
-  return [first, workspaceMenu, editMenu, viewMenu, windowMenu];
+  // Ctrl+P в терминале Linux - клавиша readline (предыдущая команда), поэтому там окно поиска вызывается с Shift.
+  const searchMenu: MenuItemConstructorOptions = {
+    label: 'Поиск',
+    submenu: [
+      {
+        id: SEARCH_MENU_IDS.files,
+        label: 'Найти файл…',
+        accelerator: platform === 'darwin' ? 'Cmd+P' : 'Ctrl+Shift+P',
+        enabled: workspace.hasProject,
+        click: () => workspace.search('files'),
+      },
+      {
+        id: SEARCH_MENU_IDS.text,
+        label: 'Найти в файлах…',
+        accelerator: 'CmdOrCtrl+Shift+F',
+        enabled: workspace.hasProject,
+        click: () => workspace.search('text'),
+      },
+      {
+        id: SEARCH_MENU_IDS.changes,
+        label: 'Найти в изменениях…',
+        accelerator: 'CmdOrCtrl+Shift+D',
+        enabled: workspace.hasProject,
+        click: () => workspace.search('changes'),
+      },
+    ],
+  };
+  return [first, workspaceMenu, editMenu, searchMenu, viewMenu, windowMenu];
 }
