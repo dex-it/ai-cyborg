@@ -1324,12 +1324,12 @@ splitter.addEventListener('mousedown', (down) => {
   window.addEventListener('mouseup', up);
 });
 
-// Кнопки-команды живут в файле воркспейса: правка в нём (редактором Cyborg или чужим) подхватывается без перезапуска (FR-12006).
+// Кнопки-команды живут в общем файле и в файле воркспейса: правка в них (редактором Cyborg или чужим) подхватывается без перезапуска (FR-12006).
 function reloadCommands(): Promise<void> {
-  return api.loadCommands().then((raw) => commandBars.setConfig(raw));
+  return api.loadCommands().then((config) => commandBars.setConfig(config));
 }
 window.addEventListener('focus', () => void reloadCommands());
-const commandEditor = initCommandEditor({ problems: () => commandBars.configProblems, saved: () => void reloadCommands() });
+const commandEditor = initCommandEditor({ mac, problems: () => commandBars.configProblems, saved: () => void reloadCommands() });
 api.on<void>('menu:commands', () => void commandEditor.open());
 const promptEditor = initPromptEditor();
 api.on<void>('menu:prompts', () => void promptEditor.open());

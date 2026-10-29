@@ -1,14 +1,16 @@
-// Полоса кнопок-команд под терминалом сессии (фича 12): кнопки из встроенного набора и файла воркспейса, отправка текста в сессию.
+// Полоса кнопок-команд под терминалом сессии (фича 12): встроенные кнопки, общий набор и набор воркспейса, отправка текста в сессию.
 
 import {
   DEFAULT_COMMANDS,
   expandCommand,
   hotkeyMatches,
+  layerCommands,
   mergeCommands,
   parseCommands,
   parseHotkey,
   placeholdersOf,
   type CommandButton,
+  type CommandsConfig,
   type Hotkey,
   type Placeholder,
   type PlaceholderValues,
@@ -84,15 +86,18 @@ export class CommandBars {
     this.running.delete(target);
   }
 
-  /** Поле commands файла воркспейса как оно записано (или undefined); перерисовка только при изменении. */
-  setConfig(raw: unknown): void {
-    const key = JSON.stringify(raw ?? null);
+  /** Общий набор и поле commands воркспейса как записаны; перерисовка только при изменении. */
+  setConfig(config: CommandsConfig): void {
+    const key = JSON.stringify([config.global ?? null, config.globalProblem ?? null, config.workspace ?? null]);
     if (key === this.loaded) return;
     this.loaded = key;
-    const user = parseCommands(raw, this.deps.mac);
-    const merged = mergeCommands(DEFAULT_COMMANDS, user.commands, this.deps.mac);
+    const shared = parseCommands(config.global, this.deps.mac);
+    const sharedMerged = mergeCommands(DEFAULT_COMMANDS, shared.commands, this.deps.mac);
+    const user = parseCommands(config.workspace, this.deps.mac);
+    const merged = mergeCommands(layerCommands(DEFAULT_COMMANDS, shared.commands), user.commands, this.deps.mac);
     this.commands = merged.commands;
-    this.problems = [...user.problems, ...merged.problems];
+    const sharedProblems = [...shared.problems, ...sharedMerged.problems].map((problem) => `Общие: ${problem}`);
+    this.problems = [...(config.globalProblem ? [config.globalProblem] : []), ...sharedProblems, ...user.problems, ...merged.problems.filter((p) => !sharedMerged.problems.includes(p))];
     this.bound = merged.commands.flatMap((button) => {
       const hotkey = button.hotkey ? parseHotkey(button.hotkey, this.deps.mac) : null;
       return hotkey && !('error' in hotkey) ? [{ button, hotkey }] : [];

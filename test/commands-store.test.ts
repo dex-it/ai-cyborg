@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { MAX_COMMANDS_TEXT, saveCommandsText } from '../src/main/commands';
+import { CommandStore } from '../src/main/command-store';
 import { ProjectStore, type ProjectsState } from '../src/main/projects';
 
 let dir: string;
@@ -93,5 +94,24 @@ describe('saveCommandsText: запись из редактора', () => {
       },
     };
     assert.deepEqual(saveCommandsText('[]', store, true), { error: 'диск полон' });
+  });
+});
+
+describe('CommandStore: общий набор кнопок в userData', () => {
+  const shared = () => path.join(dir, 'commands.json');
+
+  it('нет файла - undefined без замечания; записанный массив читается как есть', () => {
+    const store = new CommandStore(shared());
+    assert.deepEqual(store.read(), { raw: undefined });
+    store.saveCommands([button]);
+    assert.deepEqual(store.read(), { raw: [button] });
+  });
+
+  it('повреждённый файл - замечание при чтении, запись его не затирает', () => {
+    fs.writeFileSync(shared(), '[oops');
+    const store = new CommandStore(shared());
+    assert.match(store.read().problem ?? '', /не разобран/);
+    assert.throws(() => store.saveCommands([button]), /кнопки записаны не были/);
+    assert.equal(fs.readFileSync(shared(), 'utf8'), '[oops');
   });
 });

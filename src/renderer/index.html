@@ -129,14 +129,25 @@
     <dialog id="commands-dialog" aria-labelledby="commands-dialog-title">
       <form method="dialog">
         <h2 id="commands-dialog-title">Кнопки команд</h2>
+        <div class="commands-scopes" role="group" aria-label="Набор кнопок">
+          <button type="button" id="commands-scope-global" class="search-toggle" aria-pressed="false">Общие</button>
+          <button type="button" id="commands-scope-workspace" class="search-toggle" aria-pressed="true">Этот воркспейс</button>
+        </div>
+        <p class="hint" id="commands-hint-global" hidden>
+          Общий набор - для всех воркспейсов: встроенные кнопки (Сливай, Сделай PR, Мердж, Приберись) и ваши. Хранится в <code>commands.json</code> в папке настроек
+          Cyborg. Воркспейс может заменить или скрыть любую кнопку отсюда.
+        </p>
+        <p class="hint" id="commands-hint-workspace">
+          Набор этого воркспейса поверх общего: здесь видны общие кнопки и кнопки воркспейса. В файл воркспейса пишутся только кнопки, отличные от общих, поэтому
+          правка общего набора доходит и сюда.
+        </p>
         <p class="hint">
-          Действующий набор: встроенные кнопки (Сливай, Сделай PR, Мердж, Приберись) и ваши. Что здесь записано, то и сохранится в файле воркспейса.
-          Кнопка с тем же <code>label</code>, что у встроенной, заменяет её. Поля: <code>label</code>, <code>text</code> (одна строка),
+          Кнопка с тем же <code>label</code>, что у встроенной или общей, заменяет её. Поля: <code>label</code>, <code>text</code> (одна строка),
           <code>description</code> (что делает кнопка - подсказка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
           только вставка), <code>hotkey</code> (<code>F5</code>, <code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>), <code>disabled</code>
           (<code>true</code> - скрыть кнопку; так отключается и встроенная). В <code>text</code> работают <code>{branch}</code>, <code>{pr}</code>,
-          <code>{task}</code>. Встроенную кнопку, удалённую из списка, редактор вернёт при следующем открытии (скройте её через <code>disabled</code>), порядок
-          встроенных кнопок не меняется. Файл воркспейса перечитывается сам.
+          <code>{task}</code>. Порядок строк - порядок кнопок на полосе, встроенные и общие тоже можно переставить. Встроенную или общую кнопку, удалённую из
+          списка, редактор вернёт при следующем открытии (скройте её через <code>disabled</code>). Файлы перечитываются сами.
         </p>
         <pre class="commands-example">[
   { "label": "Тесты", "text": "прогони тесты", "submit": true, "hotkey": "F5" },
