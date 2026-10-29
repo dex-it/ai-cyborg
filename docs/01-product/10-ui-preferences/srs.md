@@ -76,10 +76,10 @@ quality-checks: входных записей нет
 ### FR-10002 Фильтры и сортировка панелей переживают перезапуск
 
 - **Требование:** панель задач запоминает «Назначено мне» и сортировку, выбор меток - у каждого проекта отдельно (FR-1022); панель MR/PR -
-  фильтр и сортировку. Хранилище окна недоступно - настройка действует до закрытия окна, ошибки нет. Сохранённое значение вне набора
+  фильтр и сортировку; окно поиска - вид и переключатели «Aa», «W», «.*» (FR-13001, FR-13003). Хранилище окна недоступно - настройка действует до закрытия окна, ошибки нет. Сохранённое значение вне набора
   допустимых (в том числе вариант, снятый в новой версии) читается как значение по умолчанию.
 - **traced from:** BR-10001.
-- **источник:** код `prefs.ts`, `tasks.ts` (`cyborg.tasks.assigned`, `cyborg.tasks.sort`), `mrs.ts` (`cyborg.mrs.filter`, `cyborg.mrs.sort`); D-01, D-03.
+- **источник:** код `prefs.ts`, `tasks.ts` (`cyborg.tasks.assigned`, `cyborg.tasks.sort`), `mrs.ts` (`cyborg.mrs.filter`, `cyborg.mrs.sort`), `search-dialog.ts` (`cyborg.search.mode`, `cyborg.search.regex`, `cyborg.search.caseSensitive`, `cyborg.search.wholeWord`); D-01, D-03.
 - **rationale:** reason - не выбирать одно и то же при каждом запуске; assumptions - D-01; relationships - FR-1004, FR-1005, FR-1022;
   design constraints - нет.
 - **verification:** испытание - `test/prefs.test.ts` (запись и чтение, недоступное хранилище, `readChoice`: допустимое, снятый вариант,
@@ -217,7 +217,7 @@ quality-checks: входных записей нет
 
 ## 15. Logical database requirements
 
-Настройки окна - ключи `cyborg.fontSize`, `cyborg.tasks.assigned`, `cyborg.tasks.sort`, `cyborg.mrs.filter`, `cyborg.mrs.sort`, `cyborg.notifications` и ключ выбора меток
+Настройки окна - ключи `cyborg.fontSize`, `cyborg.tasks.assigned`, `cyborg.tasks.sort`, `cyborg.mrs.filter`, `cyborg.mrs.sort`, `cyborg.search.mode`, `cyborg.search.regex`, `cyborg.search.caseSensitive`, `cyborg.search.wholeWord`, `cyborg.notifications` и ключ выбора меток
 каждого проекта в `localStorage` окна; порядок репозиториев - поле `repos` проекта.
 
 ## 16. Design constraints

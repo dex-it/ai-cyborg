@@ -514,7 +514,7 @@ function fileHeader(path: string, root: TreeRoot): HTMLElement {
   return header;
 }
 
-async function showPreview(path: string, root: TreeRoot): Promise<void> {
+async function showPreview(path: string, root: TreeRoot, line?: number): Promise<void> {
   closePreview();
   const header = fileHeader(path, root);
   const close = el('button', 'close', '×');
@@ -527,6 +527,7 @@ async function showPreview(path: string, root: TreeRoot): Promise<void> {
   empty.hidden = true;
   preview = new FileViewer(path, body);
   await preview.load();
+  if (line !== undefined) void preview.reveal(line);
 }
 
 function closePreview(): void {
@@ -835,10 +836,12 @@ function closeSession(s: Session, force: boolean): void {
   panel.repaint();
 }
 
-function openFile(s: Session, path: string, root: TreeRoot): void {
+function openFile(s: Session, path: string, root: TreeRoot, line?: number): void {
   const existing = s.files.find((f) => f.viewer.path === path);
   if (existing) {
     showInner(s, existing);
+    // Панель файла только что показана: редактору нужен кадр, чтобы взять размер, прежде чем прокручивать.
+    if (line !== undefined) requestAnimationFrame(() => void existing.viewer.reveal(line));
     return;
   }
   const pane = el('div', 'pane file');
@@ -854,6 +857,7 @@ function openFile(s: Session, path: string, root: TreeRoot): void {
   s.files.push(file);
   labelFiles(s);
   showInner(s, file);
+  if (line !== undefined) requestAnimationFrame(() => void file.viewer.reveal(line));
 }
 
 function labelFiles(s: Session): void {
@@ -1332,7 +1336,7 @@ api.on<void>('menu:prompts', () => void promptEditor.open());
 // Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта.
 const searchDialog = new SearchDialog({
   roots: () => (active ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),
-  open: (path, root) => (active ? openFile(active, path, root) : void showPreview(path, root)),
+  open: (path, root, line) => (active ? openFile(active, path, root, line) : void showPreview(path, root, line)),
 });
 api.on<SearchMode>('menu:search', (mode) => searchDialog.open(mode));
 

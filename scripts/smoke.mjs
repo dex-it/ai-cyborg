@@ -283,6 +283,40 @@ async function main() {
   await waitFor('Enter открыл файл и закрыл окно', async () => !(await ev('document.querySelector("#search-dialog").open')) && /a\.txt/.test(await text('#file-preview .file-header')));
   log('поиск файла: меню, часть имени без учёта регистра, нет совпадений, регулярное выражение и его ошибка, Enter открывает файл');
 
+  // Поиск по содержимому: меню открывает окно сразу в нужном виде, результат - строка, Enter переходит к ней.
+  const modeSelected = (index) => ev(`document.querySelectorAll('#search-modes [role=tab]')[${index}].getAttribute('aria-selected')`);
+  const cursorLine = () => ev('window.monaco?.editor.getEditors().map((e) => e.getPosition()?.lineNumber).filter(Boolean).join(",") ?? ""');
+  assert.equal(await clickMenu(mainEv, 'Найти в файлах…', 'Поиск'), true, '«Найти в файлах…» недоступен');
+  await waitFor('окно открыто на «Текст»', async () => (await ev('document.querySelector("#search-dialog").open')) && (await modeSelected(1)) === 'true');
+  await searchFor('CHAN');
+  await waitFor('строка найдена, совпадение подсвечено', async () => (await text('#search-status')).includes('Найдено 1') && (await ev('document.querySelector("#search-results mark")?.textContent ?? ""')) === 'chan');
+  assert.match(await text('#search-results'), /changed[\s\S]*a\.txt:2/, 'строка результата: текст и «файл:строка»');
+  await toggle('search-word');
+  await waitFor('целое слово: «chan» не слово', async () => /Нет совпадений/.test(await text('#search-status')));
+  await toggle('search-word');
+  await toggle('search-regex');
+  await searchFor('^ch.*ed$');
+  await waitFor('выражение находит строку', async () => (await text('#search-status')).includes('Найдено 1'));
+  await searchFor('(');
+  await waitFor('негодное выражение git названо', async () => /Выражение не разобрано/.test(await text('#search-status')) && (await ev('document.querySelector("#search-input").getAttribute("aria-invalid")')) === 'true');
+  await toggle('search-regex');
+  await searchFor('changed');
+  await waitFor('снова подстрока', async () => (await text('#search-status')).includes('Найдено 1'));
+  await combo(0, 'Enter', 'Enter', 13);
+  await waitFor('Enter открыл файл на строке 2', async () => !(await ev('document.querySelector("#search-dialog").open')) && (await cursorLine()).split(',').includes('2'));
+  log('поиск в файлах: меню, подсветка, целое слово, выражение и его ошибка, Enter переходит к строке');
+
+  assert.equal(await clickMenu(mainEv, 'Найти в изменениях…', 'Поиск'), true, '«Найти в изменениях…» недоступен');
+  await waitFor('окно открыто на «Изменения»', async () => (await ev('document.querySelector("#search-dialog").open')) && (await modeSelected(2)) === 'true');
+  await searchFor('changed');
+  await waitFor('найдена добавленная строка со знаком +', async () => (await text('#search-status')).includes('Найдено 1') && (await text('#search-results .search-sign')) === '+');
+  await searchFor('hello');
+  await waitFor('неизменённая строка в изменениях не ищется', async () => /Нет совпадений/.test(await text('#search-status')));
+  await ev('document.querySelectorAll("#search-modes [role=tab]")[0].click()');
+  await waitFor('вид «Файлы» по клику на вкладку', async () => (await modeSelected(0)) === 'true');
+  await ev('document.querySelector("#search-dialog").close()');
+  log('поиск в изменениях: знак строки, неизменённое не находится, вкладки видов');
+
   assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
   log('заголовок окна с проектом и версией');
 

@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 129; с автотестом - 114, из них со smoke - 19; только smoke - 7; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 133; с автотестом - 117, из них со smoke - 21; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -139,6 +139,10 @@ date: 2026-10-26
 | FR-12010 | Правка промптов в Monaco | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-13001 | Окно поиска вызывается из меню и сочетанием, на экране его нет | 13-file-search | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-13002 | Поиск файла по части имени | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `scripts/smoke.mjs` |
-| FR-13003 | Запрос регулярным выражением | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `scripts/smoke.mjs` |
-| FR-13004 | Окно поиска управляется с клавиатуры | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
+| FR-13003 | Запрос: подстрока, регистр, целое слово, регулярное выражение | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `test/git-search.test.ts`, `scripts/smoke.mjs` |
+| FR-13004 | Окно поиска управляется с клавиатуры | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `test/tabs.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
 | FR-13005 | Список файлов корня | 13-file-search | автотест | `test/file-list.test.ts`, `test/allowed-paths.test.ts` |
+| FR-13006 | Поиск по содержимому файлов | 13-file-search | автотест + smoke | `test/git-search.test.ts`, `scripts/smoke.mjs` |
+| FR-13007 | Поиск по изменениям | 13-file-search | автотест + smoke | `test/git-search.test.ts`, `scripts/smoke.mjs` |
+| FR-13008 | Каналы поиска проверяют аргументы, отменяют устаревшее и ограничены | 13-file-search | автотест | `test/git-search.test.ts`, `test/allowed-paths.test.ts` |
+| FR-13009 | Переход к найденной строке | 13-file-search | smoke | `scripts/smoke.mjs` |

@@ -1873,6 +1873,30 @@ label.disabled .hint {
   font-size: 14px;
 }
 
+#search-modes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.search-mode {
+  height: 26px;
+  padding: 0 12px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-dim);
+}
+
+.search-mode.active {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.search-mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .search-bar {
   display: flex;
   gap: 6px;
@@ -1901,7 +1925,7 @@ label.disabled .hint {
   min-width: 36px;
   height: 32px;
   padding: 0 8px;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 .search-toggle[aria-pressed='true'] {
@@ -1938,7 +1962,42 @@ label.disabled .hint {
   flex: none;
 }
 
-.search-name mark {
+.search-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.search-text + .search-dir {
+  flex: none;
+  max-width: 40%;
+}
+
+.search-sign {
+  flex: none;
+  width: 12px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-align: center;
+}
+
+.search-sign.added {
+  color: var(--added);
+}
+
+.search-sign.removed {
+  color: var(--deleted);
+}
+
+.search-target-line {
+  background: var(--accent-soft);
+}
+
+.search-hit mark {
   background: transparent;
   color: var(--accent);
   font-weight: 600;

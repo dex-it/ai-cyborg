@@ -178,9 +178,11 @@
 
     <dialog id="search-dialog" aria-labelledby="search-dialog-title">
       <h2 id="search-dialog-title">Поиск файла</h2>
+      <div id="search-modes"></div>
       <div class="search-bar">
         <input id="search-input" role="combobox" aria-expanded="true" aria-controls="search-results" aria-autocomplete="list" aria-label="Часть имени файла" placeholder="Часть имени файла" autocomplete="off" spellcheck="false" />
         <button type="button" id="search-case" class="search-toggle" aria-pressed="false" aria-label="Учитывать регистр" title="Учитывать регистр">Aa</button>
+        <button type="button" id="search-word" class="search-toggle" aria-pressed="false" aria-label="Целое слово" title="Целое слово">W</button>
         <button type="button" id="search-regex" class="search-toggle" aria-pressed="false" aria-label="Регулярное выражение" title="Регулярное выражение">.*</button>
       </div>
       <div id="search-status" role="status" aria-live="polite"></div>
