@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // Конфиг репозитория из cwd не доверенный: ключи, исполняющие команды, отключаются при каждом вызове.
-const SAFE_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+export const SAFE_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
 
 function gitRaw(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -78,7 +78,7 @@ async function repoFilterKeys(dir: string, depth = 0): Promise<Set<string>> {
   return keys;
 }
 
-async function filterOverrides(root: string): Promise<NodeJS.ProcessEnv> {
+export async function filterOverrides(root: string): Promise<NodeJS.ProcessEnv> {
   const base = Number(process.env.GIT_CONFIG_COUNT) || 0;
   const keys = [...(await repoFilterKeys(root))];
   const env: NodeJS.ProcessEnv = { GIT_CONFIG_COUNT: String(base + keys.length) };

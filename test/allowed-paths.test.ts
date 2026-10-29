@@ -131,6 +131,8 @@ describe('обработчики каналов fs:* и git:*', () => {
       liveDirs: () => live,
       listDir: (dir) => record('listDir')(dir).then(() => []),
       listFiles: (root) => record('listFiles')(root).then(() => []),
+      searchText: (request) => record('searchText')(request.root).then(() => ({ hits: [], truncated: false })),
+      searchChanges: (request) => record('searchChanges')(request.root).then(() => ({ hits: [], truncated: false })),
       readTextFile: (file) => record('readTextFile')(file).then(() => ({ content: '' })),
       gitRoot: (dir) => record('gitRoot')(dir).then(() => path.dirname(dir)),
       gitBranch: record('gitBranch'),
@@ -167,6 +169,24 @@ describe('обработчики каналов fs:* и git:*', () => {
     await handlers.status(repo);
     await handlers.headContent(file);
     assert.deepEqual(calls.map((c) => c.split(':')[0]), ['listDir', 'listFiles', 'readTextFile', 'gitRoot', 'gitBranch', 'gitStatus', 'gitHeadContent']);
+  });
+
+  it('каналы поиска: путь вне репозиториев и негодный аргумент отклоняются до git, в репозитории - отвечают', async () => {
+    const repo = mkdir('repo');
+    const { handlers, calls } = setup(repo);
+    const options = { regex: false, caseSensitive: false, wholeWord: false };
+    for (const outside of ['/etc', path.dirname(repo), `${repo}-evil`]) {
+      await assert.rejects(async () => handlers.searchText({ root: outside, query: 'x', options }), OUTSIDE);
+      await assert.rejects(async () => handlers.searchChanges({ root: outside, query: 'x', options }), OUTSIDE);
+    }
+    for (const bad of [undefined, 42, { root: repo }, { root: repo, query: '', options }, { root: repo, query: 'x', options: { regex: 1 } }]) {
+      await assert.rejects(async () => handlers.searchText(bad), /Некорректные аргументы поиска/);
+      await assert.rejects(async () => handlers.searchChanges(bad), /Некорректные аргументы поиска/);
+    }
+    assert.deepEqual(calls, []);
+    await handlers.searchText({ root: repo, query: 'x', options });
+    await handlers.searchChanges({ root: repo, query: 'x', options });
+    assert.deepEqual(calls, [`searchText:${repo}`, `searchChanges:${repo}`]);
   });
 
   it('сессия ушла из репозиториев (cd): её cwd и git-корень разрешены, соседний каталог - нет', async () => {

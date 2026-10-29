@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { SearchReply, SearchRequest } from '../shared/search-pattern';
 import type { DirEntry } from './files';
+import { validateSearchRequest } from './search-args';
 
 const OUTSIDE = 'Путь вне репозиториев проектов и каталогов сессий';
 
@@ -61,6 +63,8 @@ export class AllowedPaths {
 }
 
 export interface PathHandlerDeps {
+  searchText: (request: SearchRequest) => Promise<SearchReply>;
+  searchChanges: (request: SearchRequest) => Promise<SearchReply>;
   allowed: AllowedPaths;
   /** Каталоги и cwd живых сессий. */
   liveDirs: () => string[];
@@ -76,6 +80,13 @@ export interface PathHandlerDeps {
 /** Обработчики каналов fs:* и git:* над путём из интерфейса: каждый сперва проверяет путь. */
 export function createPathHandlers(deps: PathHandlerDeps) {
   const allowed: AllowedPaths = deps.allowed;
+  /** Форма аргумента и путь корня проверяются до git. */
+  const searchRequest = (request: unknown): SearchRequest => {
+    const valid = validateSearchRequest(request);
+    if (!valid) throw new Error('Некорректные аргументы поиска');
+    allowed.assert(valid.root);
+    return valid;
+  };
   return {
     list(dir: unknown) {
       allowed.assert(dir);
@@ -84,6 +95,14 @@ export function createPathHandlers(deps: PathHandlerDeps) {
     files(root: unknown) {
       allowed.assert(root);
       return deps.listFiles(root);
+    },
+    /** Поиск по содержимому файлов корня. */
+    searchText(request: unknown) {
+      return deps.searchText(searchRequest(request));
+    },
+    /** Поиск по изменениям корня против HEAD. */
+    searchChanges(request: unknown) {
+      return deps.searchChanges(searchRequest(request));
     },
     read(file: unknown) {
       allowed.assert(file);

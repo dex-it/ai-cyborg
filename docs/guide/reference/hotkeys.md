@@ -12,6 +12,8 @@ description: "Сочетания клавиш Cyborg на Linux и macOS."
 | Вставить в терминал | `Ctrl+Shift+V` | `Cmd+V` |
 | Выйти | `Ctrl+Q` | `Cmd+Q` |
 | Найти файл (меню «Поиск») | `Ctrl+Shift+P` | `Cmd+P` |
+| Найти в файлах | `Ctrl+Shift+F` | `Cmd+Shift+F` |
+| Найти в изменениях | `Ctrl+Shift+D` | `Cmd+Shift+D` |
 | Новая строка в промпте | `Shift+Enter` | `Shift+Enter` |
 
 Подсказка у кнопки «Новая сессия» и текст пустого экрана называют сочетание вашей системы.

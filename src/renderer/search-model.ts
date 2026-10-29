@@ -1,30 +1,16 @@
 /** Модель окна поиска: сравнение запроса с именем, подбор и порядок результатов, перемещение по списку. Без DOM. */
 
-export interface SearchOptions {
-  /** Запрос - регулярное выражение JavaScript, а не подстрока. */
-  regex: boolean;
-  caseSensitive: boolean;
-}
+import { isHeavyPattern, MAX_PATTERN_LENGTH, patternOf, type MatchRange, type SearchOptions } from '../shared/search-pattern';
 
-/** Совпавшая часть имени: [start, end) по индексам строки. */
-export interface MatchRange {
-  start: number;
-  end: number;
-}
+export { MAX_PATTERN_LENGTH };
+export type { MatchRange, SearchOptions };
 
 export type Matcher = { ok: true; match: (text: string) => MatchRange | null } | { ok: false; error: string };
 
-/** Длиннее выражение не разбирается: страхует от вставки целого текста в поле. */
-export const MAX_PATTERN_LENGTH = 200;
-
-/**
- * У RegExp JavaScript нет таймаута, поэтому выражение с квантором над группой, внутри которой тоже квантор
- * (`(a+)+`, `(.*)*`, `(a|b*)+`), отклоняется: на нём движок уходит в экспоненциальный перебор и вешает окно.
- */
-const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d+,\d*\})/;
-
+/** Запрос разобран в сравнение с текстом; негодное выражение - причина строкой, исключения нет. */
 export function compileMatcher(query: string, options: SearchOptions): Matcher {
-  if (!options.regex) {
+  const pattern = patternOf(query, options);
+  if (!pattern) {
     const needle = options.caseSensitive ? query : query.toLocaleLowerCase();
     return {
       ok: true,
@@ -34,18 +20,20 @@ export function compileMatcher(query: string, options: SearchOptions): Matcher {
       },
     };
   }
-  if (query.length > MAX_PATTERN_LENGTH) return { ok: false, error: `Выражение длиннее ${MAX_PATTERN_LENGTH} знаков` };
-  if (NESTED_QUANTIFIER.test(query)) return { ok: false, error: 'Выражение слишком сложное: квантор над группой с квантором' };
-  let pattern: RegExp;
+  if (options.regex) {
+    if (query.length > MAX_PATTERN_LENGTH) return { ok: false, error: `Выражение длиннее ${MAX_PATTERN_LENGTH} знаков` };
+    if (isHeavyPattern(query)) return { ok: false, error: 'Выражение слишком сложное: квантор над группой с квантором' };
+  }
+  let compiled: RegExp;
   try {
-    pattern = new RegExp(query, options.caseSensitive ? '' : 'i');
+    compiled = new RegExp(pattern.source, pattern.flags);
   } catch (error) {
     return { ok: false, error: `Выражение не разобрано: ${(error as Error).message.replace(/^Invalid regular expression: /, '')}` };
   }
   return {
     ok: true,
     match: (text) => {
-      const found = pattern.exec(text);
+      const found = compiled.exec(text);
       return found ? { start: found.index, end: found.index + found[0].length } : null;
     },
   };
@@ -96,6 +84,12 @@ export function matchFiles(entries: FileEntry[], matcher: Matcher & { ok: true }
 export function resultSummary(shown: number, total: number): string {
   if (!total) return 'Нет совпадений';
   return total > shown ? `Найдено ${total}, показаны первые ${shown}` : `Найдено ${total}`;
+}
+
+/** Подпись под полем для поиска по строкам: найдено, обрезано пределом либо нет совпадений. */
+export function lineSummary(shown: number, truncated: boolean): string {
+  if (!shown) return 'Нет совпадений';
+  return truncated ? `Показаны первые ${shown}, уточните запрос` : `Найдено ${shown}`;
 }
 
 /** Следующий активный результат по клавише стрелки; по кругу. null - клавиша не для списка или список пуст. */

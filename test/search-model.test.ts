@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { compileMatcher, matchFiles, moveActive, resultSummary, MAX_PATTERN_LENGTH, type FileEntry, type SearchOptions } from '../src/renderer/search-model';
+import { compileMatcher, lineSummary, matchFiles, moveActive, resultSummary, MAX_PATTERN_LENGTH, type FileEntry, type SearchOptions } from '../src/renderer/search-model';
 
-const plain: SearchOptions = { regex: false, caseSensitive: false };
+const plain: SearchOptions = { regex: false, caseSensitive: false, wholeWord: false };
 const matcher = (query: string, options: SearchOptions = plain) => {
   const m = compileMatcher(query, options);
   assert.ok(m.ok, 'выражение разобрано');
@@ -18,7 +18,7 @@ describe('compileMatcher: подстрока', () => {
   });
 
   it('с учётом регистра', () => {
-    const exact = { regex: false, caseSensitive: true };
+    const exact: SearchOptions = { ...plain, caseSensitive: true };
     assert.equal(matcher('Data', exact).match('data.txt'), null);
     assert.deepEqual(matcher('data', exact).match('data.txt'), { start: 0, end: 4 });
   });
@@ -29,8 +29,34 @@ describe('compileMatcher: подстрока', () => {
   });
 });
 
+describe('compileMatcher: целое слово', () => {
+  const word: SearchOptions = { ...plain, wholeWord: true };
+
+  it('совпадение не примыкает к буквам, цифрам и подчёркиванию, кириллица тоже', () => {
+    assert.deepEqual(matcher('main', word).match('the main.ts'), { start: 4, end: 8 });
+    assert.equal(matcher('main', word).match('domain.ts'), null);
+    assert.equal(matcher('main', word).match('main_x.ts'), null);
+    assert.equal(matcher('main', word).match('main2.ts'), null);
+    assert.deepEqual(matcher('мир', word).match('Привет мир'), { start: 7, end: 10 });
+    assert.equal(matcher('мир', word).match('мирный'), null);
+  });
+
+  it('знаки выражения в слове - обычные знаки; регистр по переключателю', () => {
+    assert.deepEqual(matcher('a.b', word).match('see a.b!'), { start: 4, end: 7 });
+    assert.equal(matcher('a.b', word).match('axb'), null);
+    assert.equal(matcher('Main', { ...word, caseSensitive: true }).match('main'), null);
+  });
+
+  it('с выражением: слово вокруг всего выражения', () => {
+    const both: SearchOptions = { ...word, regex: true };
+    assert.deepEqual(matcher('v\\d+', both).match('ver v12 end'), { start: 4, end: 7 });
+    assert.equal(matcher('v\\d+', both).match('rev12'), null);
+    assert.equal(matcher('v\\d', both).match('v12'), null, 'выражение не должно оборваться посреди слова');
+  });
+});
+
 describe('compileMatcher: регулярное выражение', () => {
-  const re: SearchOptions = { regex: true, caseSensitive: false };
+  const re: SearchOptions = { ...plain, regex: true };
 
   it('находит по выражению и отдаёт границы', () => {
     assert.deepEqual(matcher('\\d+', re).match('file12.ts'), { start: 4, end: 6 });
@@ -40,7 +66,7 @@ describe('compileMatcher: регулярное выражение', () => {
 
   it('регистр: без учёта по умолчанию, с учётом по переключателю', () => {
     assert.ok(matcher('readme', re).match('README.md'));
-    assert.equal(matcher('readme', { regex: true, caseSensitive: true }).match('README.md'), null);
+    assert.equal(matcher('readme', { ...plain, regex: true, caseSensitive: true }).match('README.md'), null);
   });
 
   it('негодное выражение - сообщение, а не исключение', () => {
@@ -107,6 +133,12 @@ describe('resultSummary и moveActive', () => {
     assert.equal(resultSummary(0, 0), 'Нет совпадений');
     assert.equal(resultSummary(3, 3), 'Найдено 3');
     assert.equal(resultSummary(500, 620), 'Найдено 620, показаны первые 500');
+  });
+
+  it('подпись поиска по строкам', () => {
+    assert.equal(lineSummary(0, false), 'Нет совпадений');
+    assert.equal(lineSummary(7, false), 'Найдено 7');
+    assert.equal(lineSummary(500, true), 'Показаны первые 500, уточните запрос');
   });
 
   it('стрелки идут по кругу, прочие клавиши и пустой список - null', () => {

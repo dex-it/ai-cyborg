@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_FILES_MENU_ID, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_MENU_IDS, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -22,7 +22,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   editProject() {},
   editCommands() {},
   editPrompts() {},
-  searchFiles() {},
+  search() {},
   ...over,
 });
 
@@ -115,24 +115,36 @@ describe('appMenuTemplate', () => {
   });
 
   describe('меню «Поиск»', () => {
-    const searchItem = (platform: NodeJS.Platform, over: Partial<WorkspaceMenu> = {}) => {
-      const menu = appMenuTemplate(platform, () => {}, notifications, workspaceMenu(over)).find((item) => item.label === 'Поиск');
-      return submenu(menu).find((item) => item.id === SEARCH_FILES_MENU_ID);
-    };
+    const searchItems = (platform: NodeJS.Platform, over: Partial<WorkspaceMenu> = {}) =>
+      submenu(appMenuTemplate(platform, () => {}, notifications, workspaceMenu(over)).find((item) => item.label === 'Поиск'));
+    const searchItem = (mode: SearchMode, platform: NodeJS.Platform = 'darwin', over: Partial<WorkspaceMenu> = {}) =>
+      searchItems(platform, over).find((item) => item.id === SEARCH_MENU_IDS[mode]);
 
-    it('«Найти файл…»: Cmd+P на macOS, Ctrl+Shift+P на Linux (Ctrl+P в терминале - readline)', () => {
-      assert.equal(searchItem('darwin')?.label, 'Найти файл…');
-      assert.equal(searchItem('darwin')?.accelerator, 'Cmd+P');
-      assert.equal(searchItem('linux')?.accelerator, 'Ctrl+Shift+P');
+    it('три пункта: файл, содержимое, изменения - с подписями и сочетаниями', () => {
+      assert.deepEqual(searchItems('darwin').map((i) => i.label), ['Найти файл…', 'Найти в файлах…', 'Найти в изменениях…']);
+      assert.equal(searchItem('files', 'darwin')?.accelerator, 'Cmd+P');
+      assert.equal(searchItem('files', 'linux')?.accelerator, 'Ctrl+Shift+P', 'Ctrl+P в терминале Linux - readline');
+      for (const platform of ['darwin', 'linux'] as const) {
+        assert.equal(searchItem('text', platform)?.accelerator, 'CmdOrCtrl+Shift+F');
+        assert.equal(searchItem('changes', platform)?.accelerator, 'CmdOrCtrl+Shift+D');
+      }
     });
 
-    it('доступен только при проекте и вызывает переданную функцию', () => {
-      assert.equal(searchItem('linux', { hasProject: false })?.enabled, false);
-      const calls: string[] = [];
-      const item = searchItem('darwin', { searchFiles: () => calls.push('files') });
-      assert.equal(item?.enabled, true);
-      (item?.click as () => void)();
-      assert.deepEqual(calls, ['files']);
+    it('сочетания не повторяются и не занимают «Новую сессию» и выход', () => {
+      const keys = searchItems('linux').map((i) => i.accelerator);
+      assert.equal(new Set(keys).size, keys.length);
+      for (const taken of ['CmdOrCtrl+Shift+N', 'CmdOrCtrl+Q', 'CmdOrCtrl+0']) assert.ok(!keys.includes(taken as never));
+    });
+
+    it('доступны только при проекте и вызывают переданную функцию со своим режимом', () => {
+      for (const mode of ['files', 'text', 'changes'] as const) {
+        assert.equal(searchItem(mode, 'linux', { hasProject: false })?.enabled, false, mode);
+        const calls: string[] = [];
+        const item = searchItem(mode, 'darwin', { search: (m) => calls.push(m) });
+        assert.equal(item?.enabled, true);
+        (item?.click as () => void)();
+        assert.deepEqual(calls, [mode]);
+      }
     });
   });
 
