@@ -634,7 +634,7 @@ async function firstRun() {
   ({ ev } = await cdp(pageAfter.webSocketDebuggerUrl));
   await waitFor('проект в новом окне', async () => /Основной/.test(await text0(ev, '#project-select')));
   const newTitle = await ev('document.title');
-  assert.match(newTitle, new RegExp(`^Основной - team - Cyborg v\\.${version.replaceAll('.', '\\.')}`), `заголовок: проект, воркспейс, приложение; получено «${newTitle}»`);
+  assert.match(newTitle, new RegExp(`^team - Основной - Cyborg v\\.${version.replaceAll('.', '\\.')}`), `заголовок: воркспейс, проект, приложение; получено «${newTitle}»`);
   assert.equal((await started.pages()).length, 1, 'после создания не одно окно');
   const written = JSON.parse(readFileSync(wsFile, 'utf8'));
   assert.equal(written.projects.length, 1);
