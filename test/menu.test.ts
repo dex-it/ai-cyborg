@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_MENU_IDS, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type ExtensionsTab, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -23,6 +23,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   editCommands() {},
   editPrompts() {},
   search() {},
+  extensions() {},
   ...over,
 });
 
@@ -48,7 +49,7 @@ describe('appMenuTemplate', () => {
       const unlabeled = (items: MenuItemConstructorOptions[]): string[] =>
         items.flatMap((item) => [
           ...(item.type !== 'separator' && !item.label ? [String(item.role)] : []),
-          ...(item.label && /[A-Za-z]/.test(item.label.replace('Cyborg', '')) ? [item.label] : []),
+          ...(item.label && /[A-Za-z]/.test(item.label.replace('Cyborg', '').replace('MCP', '')) ? [item.label] : []),
           ...(Array.isArray(item.submenu) ? unlabeled(item.submenu) : []),
         ]);
       assert.deepEqual(unlabeled(appMenuTemplate(platform, () => {}, notifications, workspaceMenu())), []);
@@ -144,6 +145,33 @@ describe('appMenuTemplate', () => {
         assert.equal(item?.enabled, true);
         (item?.click as () => void)();
         assert.deepEqual(calls, [mode]);
+      }
+    });
+  });
+
+  describe('меню «Расширения»', () => {
+    const items = (platform: NodeJS.Platform, over: Partial<WorkspaceMenu> = {}) =>
+      submenu(appMenuTemplate(platform, () => {}, notifications, workspaceMenu(over)).find((item) => item.label === 'Расширения'));
+
+    it('пункты по вкладкам окна, сочетание у магазинов и никакого повтора', () => {
+      const found = items('linux');
+      assert.deepEqual(found.filter((i) => i.id).map((i) => i.id), Object.values(EXTENSIONS_MENU_IDS));
+      assert.equal(found.find((i) => i.id === EXTENSIONS_MENU_IDS.marketplaces)?.accelerator, 'CmdOrCtrl+Shift+X');
+      const keys = found.map((i) => i.accelerator).filter(Boolean);
+      assert.equal(new Set(keys).size, keys.length);
+      const search = submenu(appMenuTemplate('linux', () => {}, notifications, workspaceMenu()).find((i) => i.label === 'Поиск')).map((i) => i.accelerator);
+      for (const key of keys) assert.ok(!search.includes(key as never), `${key} занято поиском`);
+    });
+
+    it('доступны только при проекте и открывают свою вкладку', () => {
+      for (const tab of ['marketplaces', 'installed', 'mcp', 'hubs'] as ExtensionsTab[]) {
+        const id = EXTENSIONS_MENU_IDS[tab];
+        assert.equal(items('linux', { hasProject: false }).find((i) => i.id === id)?.enabled, false, tab);
+        const calls: string[] = [];
+        const item = items('darwin', { extensions: (t) => calls.push(t) }).find((i) => i.id === id);
+        assert.equal(item?.enabled, true);
+        (item?.click as () => void)();
+        assert.deepEqual(calls, [tab]);
       }
     });
   });
