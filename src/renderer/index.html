@@ -200,6 +200,52 @@
       <div id="search-results" role="listbox" aria-label="Найденные файлы"></div>
     </dialog>
 
+    <dialog id="ext-dialog" aria-labelledby="ext-title">
+      <h2 id="ext-title">Расширения</h2>
+      <div id="ext-tabs"></div>
+      <div class="ext-bar">
+        <div id="ext-views" role="group" aria-label="Область">
+          <button type="button" class="search-toggle ext-view" data-view="session" aria-pressed="false" title="Репозиторий активной сессии и общее для пользователя">Сессия</button>
+          <button type="button" class="search-toggle ext-view" data-view="project" aria-pressed="false" title="Все репозитории проекта и общее для пользователя">Проект</button>
+          <button type="button" class="search-toggle ext-view" data-view="everywhere" aria-pressed="false" title="Только то, что действует во всех проектах и воркспейсах">Везде</button>
+        </div>
+        <input id="ext-filter" type="text" aria-label="Фильтр по имени и описанию" placeholder="Имя или описание" autocomplete="off" spellcheck="false" />
+        <button type="button" id="ext-case" class="search-toggle" aria-pressed="false" aria-label="Учитывать регистр" title="Учитывать регистр">Aa</button>
+        <button type="button" id="ext-regex" class="search-toggle" aria-pressed="false" aria-label="Регулярное выражение" title="Регулярное выражение">.*</button>
+      </div>
+      <div id="ext-note"></div>
+      <div id="ext-status" role="status" aria-live="polite"></div>
+      <div id="ext-tree"></div>
+      <form id="ext-action" hidden>
+        <h3 id="ext-action-title"></h3>
+        <p id="ext-action-text"></p>
+        <label class="field" id="ext-action-name-field"><span>Название</span><input id="ext-action-name" autocomplete="off" /></label>
+        <label class="field" id="ext-action-source-field"><span id="ext-action-source-label">Адрес</span><input id="ext-action-source" autocomplete="off" spellcheck="false" /></label>
+        <label class="field" id="ext-action-scope-field">
+          <span>Куда</span>
+          <select id="ext-action-scope">
+            <option value="user">Везде: для вас во всех проектах и воркспейсах</option>
+            <option value="local">Локально: только для вас в репозитории</option>
+            <option value="project">Проект: в .claude/settings.json репозитория, попадёт в коммит</option>
+          </select>
+        </label>
+        <label class="field" id="ext-action-dir-field"><span>Репозиторий</span><select id="ext-action-dir"></select></label>
+        <div id="ext-action-result" role="status" aria-live="polite"></div>
+        <div class="ext-action-buttons">
+          <button type="button" id="ext-action-cancel">Отмена</button>
+          <button type="submit" id="ext-action-run" class="primary">Выполнить</button>
+        </div>
+      </form>
+      <footer>
+        <button type="button" id="ext-refresh" title="Перечитать магазины, плагины и серверы">Обновить</button>
+        <button type="button" id="ext-probe" hidden title="Запускает программы серверов и ходит по сети: перечень серверов Claude Code проверяет командой claude mcp list">Проверить связь</button>
+        <button type="button" id="ext-add-market" hidden>Подключить магазин…</button>
+        <button type="button" id="ext-add-hub" hidden>Добавить хаб…</button>
+        <span class="spacer"></span>
+        <button type="button" id="ext-close">Закрыть</button>
+      </footer>
+    </dialog>
+
     <script src="vs/loader.js"></script>
     <script src="app.js"></script>
   </body>

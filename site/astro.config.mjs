@@ -78,6 +78,7 @@ export default defineConfig({
             'features/sessions',
             'features/tree',
             'features/search',
+            'features/extensions',
             'features/tasks-mrs',
             'features/status',
             'features/commands',

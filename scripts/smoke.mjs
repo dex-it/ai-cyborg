@@ -3,7 +3,7 @@
 // по DevTools Protocol и проверяет: окно, дерево с git-статусом, клавиши команд своей системы, сессию в pty,
 // слежение за рабочим каталогом сессии по событиям хуков, размер шрифта и завершение по SIGTERM при живой сессии.
 // Нужен дисплей (на Linux - xvfb-run).
-// Ничего не пишет вне временного каталога, свой `claude` и ~/.claude не трогает.
+// Ничего не пишет вне временного каталога, свой `claude` и ~/.claude не трогает (CLAUDE_CONFIG_DIR указывает в него).
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -53,11 +53,41 @@ writeFileSync(
   fakeSuggest,
   JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'Готово.\n\n<!-- cyborg-buttons: [{"label":"Оболочка","text":"!echo pwned","submit":true},{"label":"Отправь","text":"отправь это","submit":true},{"label":"Вставь","text":"вставь это"},{"label":"Лишняя","text":"лишняя"}] -->' }) + '\n',
 );
+// Данные Claude Code для окна «Расширения»: каталог настроек, магазин на диске, личный скилл и сервер MCP с «секретом» в адресе.
+const claudeHome = join(base, 'claude-home');
+const market = join(base, 'market');
+const pluginLog = join(fakeBin, 'plugin.log');
+for (const dir of [join(claudeHome, 'skills', 'own-skill'), join(market, '.claude-plugin'), join(market, 'plugins', 'smk-plugin', 'skills', 'smk-skill')]) mkdirSync(dir, { recursive: true });
+writeFileSync(join(claudeHome, 'skills', 'own-skill', 'SKILL.md'), '---\ndescription: Личный скилл пробы\n---\n');
+writeFileSync(join(claudeHome, '.claude.json'), JSON.stringify({ mcpServers: { 'smk-mcp': { type: 'http', url: 'https://mcp.example.com/p?k=SMOKE_SECRET', headers: { Authorization: 'SMOKE_SECRET' } } } }));
+writeFileSync(
+  join(market, '.claude-plugin', 'marketplace.json'),
+  JSON.stringify({ name: 'smoke-market', plugins: [{ name: 'smk-plugin', source: './plugins/smk-plugin', description: 'Плагин пробы' }, { name: 'smk-remote', source: { source: 'url', url: 'https://example.invalid/r.git' }, description: 'Удалённый плагин пробы' }] }),
+);
+writeFileSync(join(market, 'plugins', 'smk-plugin', 'skills', 'smk-skill', 'SKILL.md'), '---\ndescription: Скилл плагина пробы\n---\n');
+
 // Подставной claude: SessionStart при старте, по строке `cd <dir>` - событие с новым cwd, строка, оканчивающаяся на `suggest`, - ответ с кнопками, на `ask` - запрос человека (вставленный без Enter текст остаётся в строке ввода), остальной ввод эхом.
 const fakeClaude = join(fakeBin, 'claude');
 writeFileSync(
   fakeClaude,
   `#!/bin/sh
+# Подкоманды окна «Расширения» отвечают и выходят, не открывая сессию; вызовы плагинов пишутся в журнал.
+case "$1" in
+  --version) echo "2.1.314 (Claude Code)"; exit 0;;
+  plugin)
+    echo "$*" >> "$FAKE_PLUGIN_LOG"
+    case "$2 $3" in
+      "marketplace list") printf '[{"name":"smoke-market","source":"directory","path":"%s","installLocation":"%s"}]\\n' "$SMOKE_MARKET" "$SMOKE_MARKET";;
+      "list --json") printf '[{"id":"smk-plugin@smoke-market","version":"1.0.0","scope":"user","enabled":true,"installPath":"%s/plugins/smk-plugin"}]\\n' "$SMOKE_MARKET";;
+      "install "*|"uninstall "*) printf '{"command":"%s","outcome":"ok","message":"Готово: %s"}\\n' "$2" "$3";;
+      "marketplace add") printf '{"command":"marketplace-add","outcome":"ok","message":"Магазин подключён"}\\n';;
+      "marketplace remove") echo "✔ Successfully removed marketplace: $4";;
+    esac
+    exit 0;;
+  mcp)
+    printf 'Checking MCP server health…\\n\\nsmk-mcp: https://mcp.example.com (HTTP) - ✔ Connected\\nclaude.ai Gmail: https://gmailmcp.example.com/mcp/v1 - ✔ Connected\\n'
+    exit 0;;
+esac
 printf '{"hook_event_name":"SessionStart","cwd":"%s"}\\n' "$PWD" >> "$CYBORG_EVENTS"
 echo "fake-claude ready"
 echo "ARGS: $*"
@@ -196,7 +226,7 @@ async function launch(dataDir, args = [], cwd = root) {
   const proc = spawn(electron, [root, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
     cwd,
     // Смоук, запущенный из сессии Cyborg, унаследовал бы её CYBORG_CWD, и относительный --workspace считался бы не от cwd.
-    env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CYBORG_'))), PATH: `${fakeBin}:${process.env.PATH}`, SHELL: fakeShell, FAKE_SUGGEST: fakeSuggest, FAKE_ARGS_LOG: fakeArgsLog },
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CYBORG_'))), PATH: `${fakeBin}:${process.env.PATH}`, SHELL: fakeShell, FAKE_SUGGEST: fakeSuggest, FAKE_ARGS_LOG: fakeArgsLog, FAKE_PLUGIN_LOG: pluginLog, SMOKE_MARKET: market, CLAUDE_CONFIG_DIR: claudeHome },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -322,6 +352,87 @@ async function main() {
   await ev('document.querySelector("#search-dialog").close()');
   log('поиск в изменениях: знак строки, неизменённое не находится, вкладки видов');
 
+  // Окно «Расширения»: меню открывает вкладку, область и фильтр меняют состав, действия идут вызовами `claude plugin`, секреты MCP на экран не попадают.
+  const extOpen = () => ev('document.querySelector("#ext-dialog").open');
+  const extRows = () => ev('[...document.querySelectorAll("#ext-tree [role=treeitem] .ext-label")].map((l) => l.textContent).join("|")');
+  const extTab = (index) => ev(`document.querySelectorAll('#ext-tabs [role=tab]')[${index}].click()`);
+  const extSet = (id, value) => ev(`(() => { const f = document.querySelector('#${id}'); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event('input')); })()`);
+  const extButton = (row, label) =>
+    ev(`(() => {
+      const r = [...document.querySelectorAll('#ext-tree [role=treeitem]')].find((x) => x.querySelector('.ext-label')?.textContent === ${JSON.stringify(row)});
+      const b = r && [...r.querySelectorAll('button')].find((x) => x.textContent === ${JSON.stringify(label)});
+      if (b) b.click();
+      return !!b;
+    })()`);
+  const extPanel = () => ev('!document.querySelector("#ext-action").hidden');
+  const extResult = () => text('#ext-action-result');
+  const pluginCalls = () => (existsSync(pluginLog) ? readFileSync(pluginLog, 'utf8') : '');
+  const rowsHave = (...labels) => async () => {
+    const rows = await extRows();
+    if (labels.every((l) => rows.split('|').includes(l))) return true;
+    throw new Error(`строки: ${rows}; подпись: ${await text('#ext-status')}`);
+  };
+  assert.equal(await extOpen(), false, 'окно расширений открыто без вызова');
+  assert.equal(await clickMenu(mainEv, 'Магазины…', 'Расширения'), true, '«Магазины…» недоступны при выбранном проекте');
+  await waitFor('окно расширений на «Магазинах»', async () => (await extOpen()) && (await ev('document.querySelectorAll("#ext-tabs [role=tab]")[0].getAttribute("aria-selected")')) === 'true');
+  await waitFor('магазин виден', rowsHave('smoke-market'));
+  assert.equal(await ev('document.querySelector(".ext-view[data-view=project]").getAttribute("aria-pressed")'), 'true', 'без сессии область - «Проект»');
+  assert.equal(await ev('document.querySelector(".ext-view[data-view=session]").disabled'), true, '«Сессия» без сессии недоступна');
+  await extSet('ext-filter', 'smk-skill');
+  await waitFor('фильтр раскрыл ветку до скилла', rowsHave('smoke-market', 'smk-plugin', '/smk-plugin:smk-skill'));
+  await extSet('ext-filter', 'smk-remote');
+  await waitFor('удалённый плагин найден', rowsHave('smoke-market', 'smk-remote'));
+  assert.equal(await extButton('smk-remote', 'Установить…'), true, 'у плагина нет кнопки установки');
+  await waitFor('форма установки', async () => (await extPanel()) && /smk-remote@smoke-market/.test(await text('#ext-action-title')));
+  assert.equal(await ev('document.querySelector("#ext-action-scope").value'), 'local', 'установка в проекте по умолчанию локальная');
+  await ev('document.querySelector("#ext-action").requestSubmit()');
+  await waitFor('установка выполнена', async () => /Готово: smk-remote@smoke-market/.test(await extResult()));
+  assert.match(pluginCalls(), /plugin install smk-remote@smoke-market --scope local --json/, 'claude plugin install вызван не так');
+  assert.doesNotMatch(pluginCalls(), /\s(-y|--yes|--accept-command)\b/, 'установка подтвердила чужую команду');
+  await ev('document.querySelector("#ext-action-cancel").click()');
+  await extSet('ext-filter', '');
+
+  await extTab(1);
+  await waitFor('установленные: личный скилл и плагин пользователя', rowsHave('smk-plugin', '/own-skill'));
+  assert.match(await extRows(), /Везде · для вас во всех проектах/, 'нет группы «Везде»');
+  assert.equal(await extButton('smk-plugin', 'Удалить…'), true, 'у плагина нет кнопки удаления');
+  await waitFor('форма удаления', async () => (await extPanel()) && /smk-plugin@smoke-market/.test(await text('#ext-action-title')));
+  await ev('document.querySelector("#ext-action").requestSubmit()');
+  await waitFor('удаление выполнено', async () => /Готово: smk-plugin@smoke-market/.test(await extResult()));
+  assert.match(pluginCalls(), /plugin uninstall smk-plugin@smoke-market --scope user --json/, 'claude plugin uninstall вызван не так');
+  await ev('document.querySelector("#ext-action-cancel").click()');
+
+  await extTab(2);
+  await waitFor('сервер MCP из настроек', rowsHave('smk-mcp'));
+  assert.match(await text('#ext-tree'), /http · https:\/\/mcp\.example\.com/, 'подпись сервера: транспорт и хост');
+  assert.equal(await ev('document.querySelector("#ext-dialog").outerHTML.includes("SMOKE_SECRET")'), false, 'секрет сервера MCP попал на экран');
+  assert.doesNotMatch(await extRows(), /claude\.ai/, 'коннекторы показаны без проверки связи');
+  await ev('document.querySelector("#ext-probe").click()');
+  await waitFor('связь проверена', async () => /подключён/.test(await text('#ext-tree')) && /claude\.ai Gmail/.test(await extRows()));
+
+  await extTab(3);
+  await waitFor('встроенный хаб и его магазины', rowsHave('Рекомендуемые', 'claude-plugins-official', 'dex-claude-marketplace'));
+  assert.equal(await extButton('Рекомендуемые', 'Отключить'), true);
+  await waitFor('хаб отключён', async () => /отключён/.test(await text('#ext-tree')) && !(await extRows()).includes('dex-claude-marketplace'));
+  await extButton('Рекомендуемые', 'Подключить');
+  await waitFor('хаб включён снова', rowsHave('dex-claude-marketplace'));
+  await ev('document.querySelector("#ext-add-hub").click()');
+  await waitFor('форма хаба', extPanel);
+  await extSet('ext-action-name', 'Чужой');
+  await extSet('ext-action-source', 'http://plain.example/hub.json');
+  await ev('document.querySelector("#ext-action").requestSubmit()');
+  await waitFor('http-адрес хаба отклонён', async () => /https/.test(await extResult()) && (await ev('document.querySelector("#ext-action-result").className')) === 'failed');
+  await ev('document.querySelector("#ext-action-cancel").click()');
+  assert.equal(await extButton('dex-claude-marketplace', 'Подключить…'), true, 'у магазина хаба нет кнопки подключения');
+  await waitFor('форма подключения с адресом', async () => (await extPanel()) && (await ev('document.querySelector("#ext-action-source").value')) === 'dex-it/ai-kit');
+  await ev('document.querySelector("#ext-action").requestSubmit()');
+  await waitFor('магазин подключён', async () => /Магазин подключён/.test(await extResult()));
+  assert.match(pluginCalls(), /plugin marketplace add dex-it\/ai-kit --scope local --json/, 'claude plugin marketplace add вызван не так');
+  await ev('document.querySelector("#ext-action-cancel").click()');
+  await ev('document.querySelector("#ext-close").click()');
+  await waitFor('окно расширений закрыто', async () => !(await extOpen()));
+  log('расширения: меню, вкладки, область, фильтр, установка и удаление плагина, MCP без секретов и проверка связи, хабы и подключение магазина');
+
   assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
   log('заголовок окна с проектом и версией');
 
@@ -349,6 +460,15 @@ async function main() {
   await ev(`window.cyborg.input(1, 'cd ${worktree}\\r')`);
   await waitFor('переход дерева в worktree по событию хука', async () => (await text('#tree-meta')).includes(worktree));
   log('рабочий каталог сессии отслежен по событиям хуков');
+
+  // С сессией окно расширений открывается в области «Сессия»; рабочий каталог сессии (worktree) и репозиторий запуска читаются оба.
+  assert.equal(await clickMenu(mainEv, 'Установленные плагины и скиллы…', 'Расширения'), true, 'пункт расширений недоступен при сессии');
+  await waitFor('область «Сессия»', async () => (await ev('document.querySelector("#ext-dialog").open')) && (await ev('document.querySelector(".ext-view[data-view=session]").getAttribute("aria-pressed")')) === 'true');
+  assert.equal(await ev('document.querySelector(".ext-view[data-view=session]").disabled'), false, '«Сессия» недоступна при сессии');
+  assert.match(await text('#ext-note'), /^Сессия: repo-wt/, 'подпись области называет рабочий каталог сессии');
+  await waitFor('в области «Сессия» виден плагин пользователя', async () => /smk-plugin/.test(await text('#ext-tree')));
+  await ev('document.querySelector("#ext-close").click()');
+  log('расширения при сессии: область «Сессия» по умолчанию, рабочий каталог сессии');
 
   // Каналы файлов и git отвечают только по репозиториям проекта и каталогам сессий (ADR-0002, п.5): worktree вне репозитория -
   // каталог сессии, соседний каталог и корень файловой системы - нет.
