@@ -1,6 +1,6 @@
 import type { JiraSettings } from '../main/projects';
 import type { JiraProjectsResult, JiraStatus, JiraSuggestion } from '../main/jira';
-import { MAX_JIRA_PROJECTS, PROJECT_KEY } from '../main/jira-keys';
+import { MAX_JIRA_PROJECTS, typedKey } from '../main/jira-keys';
 import type { TrackerSettings, TrackersStatus } from '../main/trackers';
 import { byId, el } from './dom';
 import { authLines } from './task-model';
@@ -141,13 +141,14 @@ export function initSourcesSection(): {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     const typed = filterEl.value.trim();
-    if (!PROJECT_KEY.test(typed)) return;
-    if (!selected.includes(typed.toUpperCase()) && selected.length >= MAX_JIRA_PROJECTS) {
+    const verdict = typedKey(typed, selected);
+    if (verdict === 'invalid') return;
+    if (verdict === 'full') {
       filterEl.setCustomValidity(`Выбрано ${MAX_JIRA_PROJECTS} проектов - больше нельзя: уберите один`);
       filterEl.reportValidity();
       return;
     }
-    if (!selected.includes(typed.toUpperCase())) toggleKey(typed);
+    if (verdict === 'add') toggleKey(typed);
     filterEl.value = '';
     renderPicker();
   });

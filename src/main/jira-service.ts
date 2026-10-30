@@ -194,8 +194,8 @@ export class JiraService {
     if (res.code !== 0) {
       const text = failureText(res);
       if (isMissingIssue(text)) return { problem: 'error', error: 'Задача не найдена в Jira' };
+      // Детали берутся только у задач принятого списка: отказ «входа» здесь - нет прав на проект задачи, опрос он не останавливает.
       const problem = problemOf(text);
-      if (problem === 'auth') this.blocked = { problem, error: problemText(problem, text) };
       return { problem, error: problemText(problem, text) };
     }
     try {

@@ -18,6 +18,7 @@ import { createExtensionsHandlers } from './extensions-handlers';
 import { fetchHub, HubStore } from './hubs';
 import type { SearchReply } from '../shared/search-pattern';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
+import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
 import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
@@ -290,14 +291,8 @@ ipcMain.handle('jira:projects', (_event, recheck: unknown) => {
 });
 ipcMain.handle('jira:suggest', async (_event, repos: unknown) => {
   if (!Array.isArray(repos)) throw new Error('Некорректные аргументы jira:suggest');
-  // Ветки читаются только у репозиториев сохранённых проектов (как git:branches); прочие пути молча пропускаются.
-  const names: string[] = [];
-  for (const repo of repos.slice(0, 20)) {
-    if (!projectRepo(repo)) continue;
-    const { local, remote } = await gitBranches(repo);
-    names.push(...local, ...remote);
-  }
-  return jira.suggest(names);
+  // Ветки читаются только у репозиториев сохранённых проектов (как git:branches).
+  return jira.suggest(await suggestBranches(repos, projectRepo, gitBranches));
 });
 ipcMain.handle('jira:details', (_event, projectId: unknown, key: unknown) => {
   if (typeof projectId !== 'string') throw new Error('Некорректные аргументы jira:details');
