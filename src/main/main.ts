@@ -114,7 +114,7 @@ const extensions = createExtensionsHandlers({
   probe: (dir) => probeMcp(dir ?? userData, claudeRun),
   act: createActionRunner(claudeRun, userData),
   hubs: hubStore,
-  fetchHub,
+  fetchHub: (hub, force) => fetchHub(hub, undefined, force),
 });
 const trackers = new TrackersService({
   run: runCli,
@@ -402,7 +402,7 @@ ipcMain.handle('hubs:change', (_event, op: unknown) => {
     return { error: (error as Error).message };
   }
 });
-ipcMain.handle('hubs:fetch', (_event, id: unknown) => extensions.hubFetch(id));
+ipcMain.handle('hubs:fetch', (_event, id: unknown, force: unknown) => extensions.hubFetch(id, force));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('git:root', (_event, dir: unknown) => paths.root(dir));
 ipcMain.handle('git:branch', (_event, root: unknown) => paths.branch(root));

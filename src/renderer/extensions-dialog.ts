@@ -196,7 +196,7 @@ export class ExtensionsDialog {
     const pending = this.hubs.filter((hub) => hub.enabled && (force || !this.hubContent.has(hub.id)));
     await Promise.all(
       pending.map(async (hub) => {
-        const content = await api.fetchHub(hub.id).catch((error: unknown): HubContent => ({ entries: [], error: String(error) }));
+        const content = await api.fetchHub(hub.id, force).catch((error: unknown): HubContent => ({ entries: [], error: String(error) }));
         if (ticket !== this.ticket) return;
         this.hubContent.set(hub.id, content);
         this.render();
@@ -238,7 +238,7 @@ export class ExtensionsDialog {
     byId('ext-probe').hidden = last.tab !== 'mcp';
     byId('ext-add-market').hidden = last.tab !== 'marketplaces' && !hubs;
     byId('ext-add-hub').hidden = !hubs;
-    this.note.textContent = hubs ? 'Хаб - список магазинов, в котором ищут магазин и откуда его подключают. Общие для всех воркспейсов.' : viewNote(this.view(), this.ctx);
+    this.note.textContent = hubs ? 'Хаб - список магазинов, в котором ищут магазин и откуда его подключают. Хабы общие для всех воркспейсов; в списках GitHub магазины не проверялись Anthropic.' : viewNote(this.view(), this.ctx);
 
     this.filter.removeAttribute('aria-invalid');
     let matcher: (Matcher & { ok: true }) | null = null;

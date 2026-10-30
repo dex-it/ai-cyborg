@@ -55,6 +55,8 @@ writeFileSync(
 );
 // Данные Claude Code для окна «Расширения»: каталог настроек, магазин на диске, личный скилл и сервер MCP с «секретом» в адресе.
 const claudeHome = join(base, 'claude-home');
+// Хаб по теме GitHub ходит в сеть: в пробе он отключён заранее.
+writeFileSync(join(userData, 'hubs.json'), JSON.stringify({ custom: [], disabled: ['github-topic'] }));
 const market = join(base, 'market');
 const pluginLog = join(fakeBin, 'plugin.log');
 for (const dir of [join(claudeHome, 'skills', 'own-skill'), join(market, '.claude-plugin'), join(market, 'plugins', 'smk-plugin', 'skills', 'smk-skill')]) mkdirSync(dir, { recursive: true });
@@ -411,11 +413,12 @@ async function main() {
   await waitFor('связь проверена', async () => /подключён/.test(await text('#ext-tree')) && /claude\.ai Gmail/.test(await extRows()));
 
   await extTab(3);
-  await waitFor('встроенный хаб и его магазины', rowsHave('Рекомендуемые', 'claude-plugins-official', 'dex-claude-marketplace'));
-  assert.equal(await extButton('Рекомендуемые', 'Отключить'), true);
-  await waitFor('хаб отключён', async () => /отключён/.test(await text('#ext-tree')) && !(await extRows()).includes('dex-claude-marketplace'));
-  await extButton('Рекомендуемые', 'Подключить');
-  await waitFor('хаб включён снова', rowsHave('dex-claude-marketplace'));
+  await waitFor('встроенные хабы и их магазины', rowsHave('Anthropic', 'claude-plugins-official', 'claude-community', 'dex-it', 'dex-claude-marketplace', 'GitHub: claude-code-marketplace'));
+  assert.match(await text('#ext-tree'), /отключён/, 'хаб GitHub в пробе отключён, чтобы смоук не ходил в сеть');
+  assert.equal(await extButton('Anthropic', 'Отключить'), true);
+  await waitFor('хаб Anthropic отключён: магазинов в нём не видно', async () => !(await extRows()).includes('claude-community'));
+  await extButton('Anthropic', 'Подключить');
+  await waitFor('хаб Anthropic включён снова', rowsHave('claude-community'));
   await ev('document.querySelector("#ext-add-hub").click()');
   await waitFor('форма хаба', extPanel);
   await extSet('ext-action-name', 'Чужой');

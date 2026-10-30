@@ -8,7 +8,7 @@ export interface ExtensionsHandlerDeps {
   probe: (dir: string | null) => Promise<ProbeReply>;
   act: (action: ExtensionsAction) => Promise<ActionReply>;
   hubs: { list: () => Hub[]; apply: (op: unknown) => Hub[]; find: (id: unknown) => Hub | undefined };
-  fetchHub: (hub: Hub) => Promise<HubContent>;
+  fetchHub: (hub: Hub, force: boolean) => Promise<HubContent>;
 }
 
 /** Обработчики каналов extensions:* и hubs:*: форма аргумента и каждый путь проверяются до чтения и до запуска claude. */
@@ -34,10 +34,11 @@ export function createExtensionsHandlers(deps: ExtensionsHandlerDeps) {
     },
     hubList: () => deps.hubs.list(),
     hubApply: (op: unknown) => deps.hubs.apply(op),
-    hubFetch(id: unknown) {
+    /** force - обойти сохранённый ответ GitHub (кнопка «Обновить»). */
+    hubFetch(id: unknown, force?: unknown) {
       const hub = deps.hubs.find(id);
       if (!hub) throw new Error('Такого хаба нет');
-      return deps.fetchHub(hub);
+      return deps.fetchHub(hub, force === true);
     },
   };
 }
