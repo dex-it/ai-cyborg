@@ -156,7 +156,7 @@ date: 2026-10-26
 | FR-14008 | Окно управляется с клавиатуры и читается программами экрана | 14-extensions | автотест + smoke | `test/tabs.test.ts`, `test/tree-keys.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
 | FR-14009 | Установка и удаление плагина | 14-extensions | автотест + smoke | `test/extensions-act.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
 | FR-14010 | Подключение и отключение магазина | 14-extensions | автотест + smoke | `test/extensions-act.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
-| FR-14011 | Хабы: список, встроенный хаб, добавление, отключение, удаление | 14-extensions | автотест + smoke | `test/hubs.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14011 | Хабы: список, встроенные хабы, добавление, отключение, удаление | 14-extensions | автотест + smoke | `test/hubs.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
 | FR-14012 | Поиск магазина в хабах и подключение из хаба | 14-extensions | автотест + smoke | `test/hubs.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
 | FR-14013 | Чтение настроек Claude Code: источники, пределы, отсутствие claude | 14-extensions | автотест + smoke | `test/extensions.test.ts`, `test/extensions-read.test.ts`, `scripts/smoke.mjs` |
 | FR-14014 | Каналы расширений проверяют аргументы и пути, действие одно за раз | 14-extensions | автотест | `test/extensions-act.test.ts` |
