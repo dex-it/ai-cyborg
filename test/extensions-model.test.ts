@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import type { ExtensionsReply, Hub, HubContent, InstalledPlugin, McpServer, ProbeEntry } from '../src/shared/extensions';
 import {
   addableSource,
+  compact,
   defaultView,
   filterTree,
   flatten,
@@ -222,11 +223,11 @@ describe('вкладка «MCP»', () => {
 
 describe('вкладка «Хабы»', () => {
   const hubs: Hub[] = [
-    { id: 'builtin', name: 'Рекомендуемые', url: null, enabled: true, builtin: true },
+    { id: 'builtin', name: 'Рекомендуемые', description: 'Список для проверки', url: null, enabled: true, builtin: true },
     { id: 'h1', name: 'Команда', url: 'https://example.com/hub.json', enabled: false, builtin: false },
   ];
   const content = new Map<string, HubContent>([
-    ['builtin', { entries: [{ name: 'mk', description: 'уже подключён', source: 'o/r', label: 'github o/r' }, { name: 'new', description: 'новый', source: 'n/m', label: 'github n/m' }], skipped: 2 }],
+    ['builtin', { entries: [{ name: 'mk', description: 'уже подключён', source: 'o/r', label: 'github o/r' }, { name: 'new', description: 'новый', source: 'n/m', label: 'github n/m', stars: 41994, plugins: 94 }], skipped: 2 }],
   ]);
 
   it('записи включённого хаба с пометкой «подключён» и кнопкой; отключённый хаб свёрнут', () => {
@@ -234,6 +235,8 @@ describe('вкладка «Хабы»', () => {
     assert.deepEqual(labels(tree), ['Рекомендуемые', 'Команда']);
     const [mk, fresh, skipped] = tree[0].children;
     assert.deepEqual(mk.badges, ['подключён']);
+    assert.deepEqual(fresh.badges, ['★ 42k', 'плагинов 94']);
+    assert.equal(tree[0].description, 'Список для проверки');
     assert.deepEqual(mk.actions, []);
     assert.deepEqual(fresh.actions[0].action, { type: 'market-add', source: 'n/m', name: 'new' });
     assert.match(skipped.label, /отброшено.*2/);
@@ -248,6 +251,10 @@ describe('вкладка «Хабы»', () => {
     assert.equal(tree[0].children[0].label, 'Загрузка…');
     const enabled = hubTree(data(reply(), { hubs: [{ ...hubs[1], enabled: true }], hubContent: new Map([['h1', { entries: [], error: 'Хаб ответил 404' }]]) }));
     assert.equal(enabled[0].children[0].label, 'Хаб ответил 404');
+  });
+
+  it('звёзды компактно', () => {
+    assert.deepEqual([999, 1000, 1234, 9999, 10_000, 41_994, 238_491].map(compact), ['999', '1k', '1.2k', '10k', '10k', '42k', '238k']);
   });
 
   it('sameSource и addableSource', () => {

@@ -178,6 +178,8 @@ export function marketplaceSourceProblem(source: string): string | null {
 export interface Hub {
   id: string;
   name: string;
+  /** Что за список и чему в нём верить: показывается у хаба. */
+  description?: string;
   /** https-адрес файла хаба; у встроенного null. */
   url: string | null;
   enabled: boolean;
@@ -191,6 +193,10 @@ export interface HubEntry {
   source: string;
   /** Откуда магазин, для подписи: `github владелец/репозиторий`. */
   label: string;
+  /** Звёзды репозитория на GitHub, если хаб их знает. */
+  stars?: number;
+  /** Плагинов в магазине, если хаб проверил его каталог. */
+  plugins?: number;
 }
 
 export interface HubContent {

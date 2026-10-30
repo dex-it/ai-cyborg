@@ -18,28 +18,49 @@ import {
   type HubOp,
 } from '../shared/extensions';
 import { CONTROL } from './commands';
+import { mapLimit } from './extensions-read';
 import { writeJsonAtomic } from './jsonfile';
 
-const BUILTIN_ID = 'builtin';
 const MAX_HUB_NAME = 60;
 const FETCH_TIMEOUT_MS = 10_000;
+/** Каталог магазина читается целиком, чтобы назвать его и посчитать плагины; у крупных он в несколько МиБ. */
+const MAX_MARKETPLACE_BYTES = 4 * 1024 * 1024;
+const TOPIC_TIMEOUT_MS = 8_000;
+const TOPIC_VERIFY_PARALLEL = 6;
+const TOPIC_CACHE_MS = 5 * 60 * 1000;
 
-const BUILTIN_HUB: Hub = { id: BUILTIN_ID, name: 'Рекомендуемые', url: null, enabled: true, builtin: true };
+/** Хаб по теме GitHub: репозитории с темой `claude-code-marketplace` не меньше чем с 20 звёздами, без форков и архивных, по убыванию звёзд. */
+export const TOPIC_QUERY = 'topic:claude-code-marketplace fork:false archived:false stars:>=20';
+const TOPIC_LIMIT = 30;
 
-const BUILTIN_ENTRIES: HubEntry[] = [
+export const ANTHROPIC_HUB = 'anthropic';
+export const DEX_HUB = 'dex-it';
+export const TOPIC_HUB = 'github-topic';
+
+/** Встроенные хабы; первые два - готовые списки, третий читается с GitHub. Отключить можно любой, удалить - нет. */
+const BUILTIN_HUBS: Hub[] = [
+  { id: ANTHROPIC_HUB, name: 'Anthropic', description: 'Магазины, которые публикует Anthropic: официальный, сообщества и тематические.', url: null, enabled: true, builtin: true },
+  { id: DEX_HUB, name: 'dex-it', description: 'Магазин команды dex-it.', url: null, enabled: true, builtin: true },
   {
-    name: 'claude-plugins-official',
-    description: 'Каталог Anthropic: плагины для разработки, интеграции и серверы MCP.',
-    source: 'anthropics/claude-plugins-official',
-    label: 'github anthropics/claude-plugins-official',
-  },
-  {
-    name: 'dex-claude-marketplace',
-    description: 'Маркетплейс dex-it: скиллы, агенты и наборы для разработчиков.',
-    source: 'dex-it/ai-kit',
-    label: 'github dex-it/ai-kit',
+    id: TOPIC_HUB,
+    name: 'GitHub: claude-code-marketplace',
+    description: 'Репозитории с темой claude-code-marketplace (от 20 звёзд, по убыванию), у которых есть .claude-plugin/marketplace.json. Anthropic их не проверяет: прочтите описание и состав, прежде чем ставить плагины.',
+    url: null,
+    enabled: true,
+    builtin: true,
   },
 ];
+const BUILTIN_IDS = new Set(BUILTIN_HUBS.map((h) => h.id));
+
+const BUILTIN_ENTRIES: Record<string, HubEntry[]> = {
+  [ANTHROPIC_HUB]: [
+    { name: 'claude-plugins-official', description: 'Плагины Anthropic, партнёров и других авторов; Claude Code добавляет его сам при первом запуске.', source: 'anthropics/claude-plugins-official', label: 'github anthropics/claude-plugins-official' },
+    { name: 'claude-community', description: 'Сторонние плагины, которые их авторы прислали в Anthropic.', source: 'anthropics/claude-plugins-community', label: 'github anthropics/claude-plugins-community' },
+    { name: 'anthropic-agent-skills', description: 'Agent Skills от Anthropic: документы, таблицы, презентации и другие.', source: 'anthropics/skills', label: 'github anthropics/skills' },
+    { name: 'knowledge-work-plugins', description: 'Плагины для работы со знаниями, в основном для Claude Cowork.', source: 'anthropics/knowledge-work-plugins', label: 'github anthropics/knowledge-work-plugins' },
+  ],
+  [DEX_HUB]: [{ name: 'dex-claude-marketplace', description: 'Скиллы, агенты и наборы для разработчиков dex-it.', source: 'dex-it/ai-kit', label: 'github dex-it/ai-kit' }],
+};
 
 interface HubFile {
   custom: { id: string; name: string; url: string }[];
@@ -86,7 +107,7 @@ export class HubStore {
 
   list(): Hub[] {
     const file = this.read();
-    const hubs: Hub[] = [BUILTIN_HUB, ...file.custom.map((c) => ({ id: c.id, name: c.name, url: c.url, enabled: true, builtin: false }))];
+    const hubs: Hub[] = [...BUILTIN_HUBS, ...file.custom.map((c) => ({ id: c.id, name: c.name, url: c.url, enabled: true, builtin: false }))];
     return hubs.map((hub) => ({ ...hub, enabled: !file.disabled.includes(hub.id) }));
   }
 
@@ -109,11 +130,11 @@ export class HubStore {
       const id = op.id;
       if (typeof id !== 'string') throw new Error('Некорректная операция с хабом');
       if (op.op === 'remove') {
-        if (id === BUILTIN_ID) throw new Error('Встроенный хаб не удаляется, его можно отключить');
+        if (BUILTIN_IDS.has(id)) throw new Error('Встроенный хаб не удаляется, его можно отключить');
         file.custom = file.custom.filter((c) => c.id !== id);
         file.disabled = file.disabled.filter((d) => d !== id);
       } else {
-        if (id !== BUILTIN_ID && !file.custom.some((c) => c.id === id)) throw new Error('Такого хаба нет');
+        if (!BUILTIN_IDS.has(id) && !file.custom.some((c) => c.id === id)) throw new Error('Такого хаба нет');
         file.disabled = file.disabled.filter((d) => d !== id);
         if (op.op === 'disable') file.disabled.push(id);
       }
@@ -180,9 +201,10 @@ export function parseHub(text: string): HubContent {
   return { entries, ...(skipped ? { skipped } : {}) };
 }
 
-type Fetch = (url: string, init: { signal: AbortSignal; redirect: 'follow' }) => Promise<Pick<Response, 'ok' | 'status' | 'url' | 'body'>>;
+type FetchInit = { signal: AbortSignal; redirect: 'follow'; headers?: Record<string, string> };
+export type Fetch = (url: string, init: FetchInit) => Promise<Pick<Response, 'ok' | 'status' | 'url' | 'body'>>;
 
-async function readLimited(body: ReadableStream<Uint8Array> | null): Promise<string> {
+async function readLimited(body: ReadableStream<Uint8Array> | null, limit: number, tooBig: string): Promise<string> {
   if (!body) return '';
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -191,27 +213,131 @@ async function readLimited(body: ReadableStream<Uint8Array> | null): Promise<str
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > MAX_HUB_BYTES) {
+    if (size > limit) {
       await reader.cancel();
-      throw new Error('Файл хаба больше 1 МиБ');
+      throw new Error(tooBig);
     }
     chunks.push(value);
   }
   return Buffer.concat(chunks).toString('utf8');
 }
 
-/** Содержимое хаба. Сеть без токенов и cookie: запрос анонимный, ответ после перенаправлений обязан остаться на https. */
-export async function fetchHub(hub: Hub, fetchImpl: Fetch = fetch as unknown as Fetch): Promise<HubContent> {
-  if (hub.builtin || hub.url === null) return { entries: BUILTIN_ENTRIES };
+class HttpProblem extends Error {
+  constructor(
+    message: string,
+    readonly status = 0,
+  ) {
+    super(message);
+  }
+}
+
+/** Текст ответа по https: сеть без токенов и cookie, ответ после перенаправлений обязан остаться на https, размер ограничен. */
+async function getText(fetchImpl: Fetch, url: string, options: { limit: number; tooBig: string; timeoutMs: number; headers?: Record<string, string> }): Promise<string> {
+  let response;
   try {
-    const response = await fetchImpl(hub.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'follow' });
-    if (!response.url.startsWith('https://')) return { entries: [], error: 'Хаб перенаправил не на https' };
-    if (!response.ok) return { entries: [], error: `Хаб ответил ${response.status}` };
-    return parseHub(await readLimited(response.body));
+    response = await fetchImpl(url, { signal: AbortSignal.timeout(options.timeoutMs), redirect: 'follow', ...(options.headers ? { headers: options.headers } : {}) });
   } catch (error) {
     const name = (error as Error).name;
-    return { entries: [], error: name === 'TimeoutError' || name === 'AbortError' ? 'Хаб не ответил за 10 с' : `Хаб не получен: ${(error as Error).message}` };
+    if (name === 'TimeoutError' || name === 'AbortError') throw new HttpProblem(`Не ответил за ${Math.round(options.timeoutMs / 1000)} с`);
+    throw new HttpProblem(`Не получен: ${(error as Error).message}`);
   }
+  if (!response.url.startsWith('https://')) throw new HttpProblem('Перенаправил не на https');
+  if (!response.ok) throw new HttpProblem(`Ответил ${response.status}`, response.status);
+  return readLimited(response.body, options.limit, options.tooBig);
+}
+
+const hubProblem = (error: unknown): string => `Хаб: ${(error as Error).message}`;
+
+/** Звёзды и число плагинов - числа из ответа GitHub и файла магазина; другое не принимается. */
+const count = (value: unknown): number | undefined => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined);
+
+/** Каталог репозитория: настоящий магазин называет себя и перечисляет плагины; иное - null. */
+export function parseCatalog(text: string): { name: string; plugins: number } | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isObject(raw) || typeof raw.name !== 'string' || !Array.isArray(raw.plugins)) return null;
+  const name = raw.name.trim();
+  if (!name || name.length > 100 || CONTROL.test(name)) return null;
+  return { name, plugins: raw.plugins.length };
+}
+
+/**
+ * Хаб по теме GitHub: поиск репозиториев и проверка каждого - есть ли у него `.claude-plugin/marketplace.json`, как он в нём назван и сколько
+ * плагинов. Тема - заявление автора, а не проверка: репозитории без каталога отбрасываются и считаются.
+ */
+export async function fetchTopicHub(fetchImpl: Fetch): Promise<HubContent> {
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(TOPIC_QUERY)}&sort=stars&order=desc&per_page=${TOPIC_LIMIT}`;
+  let found: unknown;
+  try {
+    found = JSON.parse(
+      await getText(fetchImpl, url, {
+        limit: MAX_HUB_BYTES,
+        tooBig: 'Ответ GitHub больше 1 МиБ',
+        timeoutMs: FETCH_TIMEOUT_MS,
+        headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Cyborg' },
+      }),
+    );
+  } catch (error) {
+    if (error instanceof HttpProblem && (error.status === 403 || error.status === 429)) return { entries: [], error: 'GitHub ограничил число запросов без входа: повторите через минуту' };
+    if (error instanceof SyntaxError) return { entries: [], error: 'Ответ GitHub не разобран' };
+    return { entries: [], error: `GitHub: ${(error as Error).message}` };
+  }
+  const items = isObject(found) && Array.isArray(found.items) ? found.items : [];
+  const candidates = items
+    .filter((item): item is Record<string, unknown> => isObject(item) && typeof item.full_name === 'string' && /^[\w.-]+\/[\w.-]+$/.test(item.full_name) && marketplaceSourceProblem(item.full_name) === null)
+    .slice(0, TOPIC_LIMIT);
+  const checked = await mapLimit(candidates, TOPIC_VERIFY_PARALLEL, async (item): Promise<HubEntry | null> => {
+    const repo = item.full_name as string;
+    try {
+      const text = await getText(fetchImpl, `https://raw.githubusercontent.com/${repo}/HEAD/.claude-plugin/marketplace.json`, {
+        limit: MAX_MARKETPLACE_BYTES,
+        tooBig: 'Каталог больше 4 МиБ',
+        timeoutMs: TOPIC_TIMEOUT_MS,
+      });
+      const catalog = parseCatalog(text);
+      if (!catalog) return null;
+      const about = typeof item.description === 'string' ? item.description.replace(new RegExp(CONTROL.source, 'g'), ' ').trim().slice(0, MAX_DESCRIPTION_LENGTH) : '';
+      return { name: catalog.name, description: about, source: repo, label: `github ${repo}`, plugins: catalog.plugins, ...(count(item.stargazers_count) !== undefined ? { stars: count(item.stargazers_count) } : {}) };
+    } catch {
+      return null;
+    }
+  });
+  const entries = checked.filter((entry): entry is HubEntry => entry !== null);
+  const skipped = Math.min(items.length, TOPIC_LIMIT) - entries.length;
+  return { entries, ...(skipped ? { skipped } : {}) };
+}
+
+const topicCache = { at: 0, content: null as HubContent | null };
+
+/** Содержимое хаба: встроенный список, поиск на GitHub (на 5 минут в памяти, чтобы не упереться в лимит запросов без входа) либо файл по https. */
+export async function fetchHub(hub: Hub, fetchImpl: Fetch = fetch as unknown as Fetch, force = false, now = Date.now()): Promise<HubContent> {
+  const fixed = BUILTIN_ENTRIES[hub.id];
+  if (fixed && hub.builtin) return { entries: fixed };
+  if (hub.builtin && hub.id === TOPIC_HUB) {
+    if (!force && topicCache.content && now - topicCache.at < TOPIC_CACHE_MS) return topicCache.content;
+    const content = await fetchTopicHub(fetchImpl);
+    if (!content.error) {
+      topicCache.at = now;
+      topicCache.content = content;
+    }
+    return content;
+  }
+  if (hub.url === null) return { entries: [] };
+  try {
+    return parseHub(await getText(fetchImpl, hub.url, { limit: MAX_HUB_BYTES, tooBig: 'Файл хаба больше 1 МиБ', timeoutMs: FETCH_TIMEOUT_MS }));
+  } catch (error) {
+    return { entries: [], error: hubProblem(error) };
+  }
+}
+
+/** Для тестов: забыть сохранённый ответ GitHub. */
+export function forgetTopicCache(): void {
+  topicCache.at = 0;
+  topicCache.content = null;
 }
 
 export { BUILTIN_ENTRIES };
