@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { ActionReply, ExtensionsAction, ExtensionsReply, ExtensionsRequest, Hub, HubContent, HubOp, ProbeReply } from '../shared/extensions';
+import type { ActionReply, ExtensionsAction, ExtensionsReply, ExtensionsRequest, Hub, HubContent, HubOp, ProbeReply, UsageReply } from '../shared/extensions';
 import type { SearchReply, SearchRequest } from '../shared/search-pattern';
 import type { CommandsConfig, CommandsScope } from './commands';
 import type { DirEntry } from './files';
@@ -77,6 +77,7 @@ const api = {
   loadExtensions: (request: ExtensionsRequest): Promise<ExtensionsReply> => ipcRenderer.invoke('extensions:load', request),
   probeMcp: (dir: string | null): Promise<ProbeReply> => ipcRenderer.invoke('extensions:probe', dir),
   extensionsAct: (action: ExtensionsAction): Promise<ActionReply> => ipcRenderer.invoke('extensions:act', action),
+  extensionsUsage: (): Promise<UsageReply> => ipcRenderer.invoke('extensions:usage'),
   listHubs: (): Promise<Hub[]> => ipcRenderer.invoke('hubs:list'),
   changeHubs: (op: HubOp): Promise<{ hubs?: Hub[]; error?: string }> => ipcRenderer.invoke('hubs:change', op),
   fetchHub: (id: string, force = false): Promise<HubContent> => ipcRenderer.invoke('hubs:fetch', id, force),

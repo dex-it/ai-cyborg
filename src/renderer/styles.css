@@ -2027,7 +2027,10 @@ label.disabled .hint {
 
 #ext-dialog {
   width: min(920px, 94vw);
-  max-height: 88vh;
+  min-width: min(520px, 98vw);
+  max-width: 98vw;
+  min-height: min(320px, 94vh);
+  max-height: 94vh;
   margin: 5vh auto 0;
   padding: 16px 18px 12px;
   flex-direction: column;
@@ -2089,8 +2092,7 @@ label.disabled .hint {
 
 #ext-tree {
   flex: 1;
-  min-height: 160px;
-  max-height: 52vh;
+  min-height: 120px;
   margin-top: 6px;
   overflow-y: auto;
   border: 1px solid var(--border);
@@ -2204,6 +2206,25 @@ label.disabled .hint {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+#ext-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 0 55%, var(--border-strong) 55% 62%, transparent 62% 75%, var(--border-strong) 75% 82%, transparent 82%);
+  touch-action: none;
+}
+
+.ext-usage {
+  font-variant-numeric: tabular-nums;
+}
+
+.ext-usage.none {
+  opacity: 0.6;
 }
 
 #ext-dialog footer {

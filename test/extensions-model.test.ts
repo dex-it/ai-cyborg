@@ -145,12 +145,12 @@ describe('вкладка «Установленные»', () => {
     assert.deepEqual(p.badges, ['локально', 'выключен']);
     const user = walk(installedTree(data(), 'everywhere', ctx)).find((n) => n.label === 'p')!;
     assert.deepEqual(labels(user.children), ['/p:hello']);
-    assert.deepEqual(user.actions.map((a) => a.label), ['Удалить…']);
+    assert.deepEqual(user.actions.map((a) => a.label), ['Удалить…', 'GitHub ↗']);
   });
 
   it('плагин организации и на сессию не удаляется из окна', () => {
     const r = reply({ plugins: [plugin({ id: 'm@mk', name: 'm', scope: 'managed' }), plugin({ id: 's@mk', name: 's', scope: 'session' })] });
-    for (const n of walk(installedTree(data(r), 'everywhere', ctx)).filter((x) => x.kind === 'plugin')) assert.deepEqual(n.actions, [], n.label);
+    for (const n of walk(installedTree(data(r), 'everywhere', ctx)).filter((x) => x.kind === 'plugin')) assert.deepEqual(n.actions.map((a) => a.action.type), ['open-url'], n.label);
   });
 
   it('выключенный пользовательский плагин: «выключен» или «выключен в …» по репозиториям', () => {
@@ -191,7 +191,7 @@ describe('вкладка «Магазины»', () => {
 
   it('у неподключённого магазина плагины не устанавливаются', () => {
     const r = reply({ marketplaces: [{ name: 'x', source: 'github a/b', known: false, declaredBy: [A], plugins: [{ name: 'z', description: '', remote: true, components: null }] }] });
-    assert.deepEqual(walk(marketplaceTree(data(r), 'project', ctx)).flatMap((n) => n.actions.map((a) => a.label)), ['Подключить']);
+    assert.deepEqual(walk(marketplaceTree(data(r), 'project', ctx)).flatMap((n) => n.actions.map((a) => a.label)), ['Подключить', 'GitHub ↗']);
   });
 });
 
@@ -237,7 +237,7 @@ describe('вкладка «Хабы»', () => {
     assert.deepEqual(mk.badges, ['подключён']);
     assert.deepEqual(fresh.badges, ['★ 42k', 'плагинов 94']);
     assert.equal(tree[0].description, 'Список для проверки');
-    assert.deepEqual(mk.actions, []);
+    assert.deepEqual(mk.actions.map((a) => a.label), ['GitHub ↗']);
     assert.deepEqual(fresh.actions[0].action, { type: 'market-add', source: 'n/m', name: 'new' });
     assert.match(skipped.label, /отброшено.*2/);
     assert.deepEqual(tree[1].badges, ['отключён']);
