@@ -322,6 +322,11 @@ export function sameSource(entrySource: string, marketSource: string): boolean {
   return norm(entrySource) === norm(target);
 }
 
+/** Звёзды компактно: 1234 - 1.2k. */
+export function compact(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k` : String(value);
+}
+
 /** Вкладка «Хабы»: хаб → магазины, которые в нём названы. */
 export function hubTree(data: ExtData): ExtNode[] {
   const out: ExtNode[] = [];
@@ -329,7 +334,7 @@ export function hubTree(data: ExtData): ExtNode[] {
     const content = data.hubContent.get(hub.id);
     const top = node(`hubs/${hub.id}`, 1, 'hub', hub.name, {
       detail: hub.builtin ? 'встроенный' : hub.url ? new URL(hub.url).host : '',
-      description: hub.url ?? 'Список в приложении',
+      description: hub.description ?? hub.url ?? '',
       badges: hub.enabled ? [] : ['отключён'],
       open: hub.enabled,
     });
@@ -344,7 +349,7 @@ export function hubTree(data: ExtData): ExtNode[] {
           const n = node(`${top.key}/${entry.source}`, 2, 'entry', entry.name, {
             detail: entry.label,
             description: entry.description,
-            badges: connected ? ['подключён'] : [],
+            badges: [...(entry.stars !== undefined ? [`★ ${compact(entry.stars)}`] : []), ...(entry.plugins !== undefined ? [`плагинов ${entry.plugins}`] : []), ...(connected ? ['подключён'] : [])],
           });
           if (!connected) n.actions.push({ label: 'Подключить…', action: { type: 'market-add', source: entry.source, name: entry.name } });
           top.children.push(n);

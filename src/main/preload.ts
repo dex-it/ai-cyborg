@@ -79,7 +79,7 @@ const api = {
   extensionsAct: (action: ExtensionsAction): Promise<ActionReply> => ipcRenderer.invoke('extensions:act', action),
   listHubs: (): Promise<Hub[]> => ipcRenderer.invoke('hubs:list'),
   changeHubs: (op: HubOp): Promise<{ hubs?: Hub[]; error?: string }> => ipcRenderer.invoke('hubs:change', op),
-  fetchHub: (id: string): Promise<HubContent> => ipcRenderer.invoke('hubs:fetch', id),
+  fetchHub: (id: string, force = false): Promise<HubContent> => ipcRenderer.invoke('hubs:fetch', id, force),
   readFile: (file: string): Promise<{ content?: string; error?: string }> => ipcRenderer.invoke('fs:read', file),
   gitRoot: (dir: string): Promise<string | null> => ipcRenderer.invoke('git:root', dir),
   gitBranch: (root: string): Promise<string | null> => ipcRenderer.invoke('git:branch', root),

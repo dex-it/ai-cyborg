@@ -107,8 +107,8 @@ describe('обработчики каналов расширений', () => {
     load: async (dirs) => (calls.push(`load:${dirs.join(',')}`), { claude: {}, marketplaces: [], plugins: [], standalone: [], mcp: [], problems: [] }),
     probe: async (dir) => (calls.push(`probe:${dir}`), { entries: [] }),
     act: async (action) => (calls.push(`act:${action.kind}`), { ok: true, message: '' }),
-    hubs: { list: () => [], apply: () => [], find: (id) => (id === 'builtin' ? { id: 'builtin', name: 'b', url: null, enabled: true, builtin: true } : undefined) },
-    fetchHub: async () => ({ entries: [] }),
+    hubs: { list: () => [], apply: () => [], find: (id) => (id === 'anthropic' ? { id: 'anthropic', name: 'b', url: null, enabled: true, builtin: true } : undefined) },
+    fetchHub: async (_hub, force) => ({ entries: [], ...(force ? { skipped: 1 } : {}) }),
   });
 
   it('читает только разрешённые каталоги, повторы отбрасывает', async () => {
@@ -138,7 +138,9 @@ describe('обработчики каналов расширений', () => {
   });
 
   it('содержимое хаба - только известного хаба', async () => {
-    assert.deepEqual(await handlers.hubFetch('builtin'), { entries: [] });
+    assert.deepEqual(await handlers.hubFetch('anthropic'), { entries: [] });
+    assert.deepEqual(await handlers.hubFetch('anthropic', true), { entries: [], skipped: 1 });
+    assert.deepEqual(await handlers.hubFetch('anthropic', 'да'), { entries: [] }, 'force - только булево');
     await assert.rejects(async () => handlers.hubFetch('нет'), /нет/);
   });
 });
