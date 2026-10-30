@@ -35,15 +35,24 @@ const TOPIC_LIMIT = 30;
 
 export const ANTHROPIC_HUB = 'anthropic';
 export const DEX_HUB = 'dex-it';
+export const TOP_HUB = 'github-top';
 export const TOPIC_HUB = 'github-topic';
 
-/** Встроенные хабы; первые два - готовые списки, третий читается с GitHub. Отключить можно любой, удалить - нет. */
+/** Встроенные хабы; «Anthropic», «DEX» и «GitHub» - готовые списки, последний читается с GitHub живьём. Отключить можно любой, удалить - нет. */
 const BUILTIN_HUBS: Hub[] = [
   { id: ANTHROPIC_HUB, name: 'Anthropic', description: 'Магазины, которые публикует Anthropic: официальный, сообщества и тематические.', url: null, enabled: true, builtin: true },
-  { id: DEX_HUB, name: 'dex-it', description: 'Магазин команды dex-it.', url: null, enabled: true, builtin: true },
+  { id: DEX_HUB, name: 'DEX', description: 'Магазин команды DEX.', url: null, enabled: true, builtin: true },
+  {
+    id: TOP_HUB,
+    name: 'GitHub',
+    description: 'Самые звёздные магазины на GitHub, где несколько плагинов: пример подключения. Список составлен 2026-10-30, звёзды и число плагинов - на эту дату. Anthropic эти магазины не проверяет.',
+    url: null,
+    enabled: true,
+    builtin: true,
+  },
   {
     id: TOPIC_HUB,
-    name: 'GitHub: claude-code-marketplace',
+    name: 'GitHub: поиск по теме',
     description: 'Репозитории с темой claude-code-marketplace (от 20 звёзд, по убыванию), у которых есть .claude-plugin/marketplace.json. Anthropic их не проверяет: прочтите описание и состав, прежде чем ставить плагины.',
     url: null,
     enabled: true,
@@ -58,6 +67,17 @@ const BUILTIN_ENTRIES: Record<string, HubEntry[]> = {
     { name: 'claude-community', description: 'Сторонние плагины, которые их авторы прислали в Anthropic.', source: 'anthropics/claude-plugins-community', label: 'github anthropics/claude-plugins-community' },
     { name: 'anthropic-agent-skills', description: 'Agent Skills от Anthropic: документы, таблицы, презентации и другие.', source: 'anthropics/skills', label: 'github anthropics/skills' },
     { name: 'knowledge-work-plugins', description: 'Плагины для работы со знаниями, в основном для Claude Cowork.', source: 'anthropics/knowledge-work-plugins', label: 'github anthropics/knowledge-work-plugins' },
+  ],
+  // Магазины с несколькими плагинами из самых звёздных на GitHub; каталог каждого прочитан 2026-10-30, репозитории живые (последний пуш не старше двух недель), лицензии свободные.
+  [TOP_HUB]: [
+    { name: 'thedotmack', description: 'Постоянная память между сессиями: сжимает то, что делал агент, и возвращает нужное в следующие.', source: 'thedotmack/claude-mem', label: 'github thedotmack/claude-mem', stars: 105105, plugins: 2 },
+    { name: 'ruflo', description: 'Рой агентов, координация автономных процессов, адаптивная память; для Claude Code, Codex и других.', source: 'ruvnet/ruflo', label: 'github ruvnet/ruflo', stars: 80196, plugins: 47 },
+    { name: 'agentic-awesome-skills', description: 'Больше 2800 готовых скиллов для Claude Code, Codex, Cursor и Gemini CLI с локальным каталогом и подбором.', source: 'sickn33/agentic-awesome-skills', label: 'github sickn33/agentic-awesome-skills', stars: 48776, plugins: 31 },
+    { name: 'claude-code-workflows', description: 'Агенты, команды и скиллы для Claude Code, Codex, Cursor, Copilot и других: разработка, ревью, безопасность, инфраструктура.', source: 'wshobson/agents', label: 'github wshobson/agents', stars: 41994, plugins: 94 },
+    { name: 'claude-code-skills', description: '380 скиллов, 30 агентов и 70 команд: разработка, маркетинг, продукт, комплаенс, исследования.', source: 'alirezarezvani/claude-skills', label: 'github alirezarezvani/claude-skills', stars: 28996, plugins: 105 },
+    { name: 'pm-skills', description: 'Скиллы и команды для продакт-менеджера: от поиска и стратегии до запуска и роста.', source: 'phuryn/pm-skills', label: 'github phuryn/pm-skills', stars: 27534, plugins: 9 },
+    { name: 'ai-research-skills', description: 'Скиллы для исследований и инженерии ИИ: агент становится исследователем ИИ. Поддерживает Orchestra Research.', source: 'Orchestra-Research/AI-Research-SKILLs', label: 'github Orchestra-Research/AI-Research-SKILLs', stars: 14112, plugins: 23 },
+    { name: 'power-platform-skills', description: 'Плагины Microsoft для разработки на Power Platform: скиллы, агенты и команды сборки и выкладки решений.', source: 'microsoft/power-platform-skills', label: 'github microsoft/power-platform-skills', stars: 1083, plugins: 11 },
   ],
   [DEX_HUB]: [{ name: 'dex-claude-marketplace', description: 'Скиллы, агенты и наборы для разработчиков dex-it.', source: 'dex-it/ai-kit', label: 'github dex-it/ai-kit' }],
 };

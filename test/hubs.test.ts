@@ -9,36 +9,41 @@ import { marketplaceSourceProblem } from '../src/shared/extensions';
 const file = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-hubs-')), 'hubs.json');
 
 describe('хранилище хабов', () => {
-  it('без файла есть три встроенных хаба; их нельзя удалить, но можно отключить и включить', () => {
+  it('без файла есть четыре встроенных хаба; их нельзя удалить, но можно отключить и включить', () => {
     const store = new HubStore(file());
-    assert.deepEqual(store.list().map((h) => [h.id, h.builtin, h.enabled]), [['anthropic', true, true], ['dex-it', true, true], ['github-topic', true, true]]);
+    assert.deepEqual(store.list().map((h) => [h.id, h.name, h.builtin, h.enabled]), [
+      ['anthropic', 'Anthropic', true, true],
+      ['dex-it', 'DEX', true, true],
+      ['github-top', 'GitHub', true, true],
+      ['github-topic', 'GitHub: поиск по теме', true, true],
+    ]);
     for (const hub of store.list()) assert.ok(hub.description, `у ${hub.id} нет описания`);
     assert.throws(() => store.apply({ op: 'remove', id: 'anthropic' }), /не удаляется/);
-    assert.equal(store.apply({ op: 'disable', id: 'github-topic' })[2].enabled, false);
-    assert.equal(store.apply({ op: 'enable', id: 'github-topic' })[2].enabled, true);
+    assert.equal(store.apply({ op: 'disable', id: 'github-topic' })[3].enabled, false);
+    assert.equal(store.apply({ op: 'enable', id: 'github-topic' })[3].enabled, true);
   });
 
   it('добавление проверяет название и адрес, не допускает повтор и переживает перечитывание', () => {
     const f = file();
     const store = new HubStore(f);
     const hubs = store.apply({ op: 'add', name: ' Команда ', url: 'https://example.com/hub.json' });
-    assert.equal(hubs.length, 4);
-    assert.equal(hubs[3].name, 'Команда');
-    assert.equal(hubs[3].builtin, false);
+    assert.equal(hubs.length, 5);
+    assert.equal(hubs[4].name, 'Команда');
+    assert.equal(hubs[4].builtin, false);
     assert.throws(() => store.apply({ op: 'add', name: 'Ещё', url: 'https://example.com/hub.json' }), /уже есть/);
     for (const url of ['http://example.com/h.json', 'https://u:p@example.com/h.json', 'file:///etc/passwd', '', 'не адрес']) {
       assert.throws(() => store.apply({ op: 'add', name: 'X', url }), Error, url);
     }
     assert.throws(() => store.apply({ op: 'add', name: '', url: 'https://a.io/h.json' }), /Название/);
-    assert.equal(new HubStore(f).list().length, 4);
+    assert.equal(new HubStore(f).list().length, 5);
   });
 
   it('отключение и удаление пользовательского хаба; неизвестный хаб и операция - отказ', () => {
     const store = new HubStore(file());
-    const id = store.apply({ op: 'add', name: 'H', url: 'https://example.com/h.json' })[3].id;
-    assert.equal(store.apply({ op: 'disable', id })[3].enabled, false);
+    const id = store.apply({ op: 'add', name: 'H', url: 'https://example.com/h.json' })[4].id;
+    assert.equal(store.apply({ op: 'disable', id })[4].enabled, false);
     assert.equal(store.find(id)?.enabled, false);
-    assert.equal(store.apply({ op: 'remove', id }).length, 3);
+    assert.equal(store.apply({ op: 'remove', id }).length, 4);
     assert.equal(store.find(id), undefined);
     assert.throws(() => store.apply({ op: 'enable', id: 'нет' }), /нет/);
     assert.throws(() => store.apply({ op: 'взорвать' }), /операция/);
@@ -48,11 +53,11 @@ describe('хранилище хабов', () => {
   it('повреждённый файл не роняет список', () => {
     const f = file();
     fs.writeFileSync(f, '{');
-    assert.equal(new HubStore(f).list().length, 3);
+    assert.equal(new HubStore(f).list().length, 4);
     fs.writeFileSync(f, JSON.stringify({ custom: [{ name: 'x', url: 'http://плохо' }, 5], disabled: [1, 'dex-it', 'builtin'] }));
     const list = new HubStore(f).list();
-    assert.equal(list.length, 3);
-    assert.deepEqual(list.map((h) => h.enabled), [true, false, true]);
+    assert.equal(list.length, 4);
+    assert.deepEqual(list.map((h) => h.enabled), [true, false, true, true]);
   });
 });
 
@@ -115,6 +120,19 @@ describe('получение хаба', () => {
       ['knowledge-work-plugins', 'anthropics/knowledge-work-plugins'],
     ]);
     assert.equal((await fetchHub({ ...anthropic, id: 'dex-it' }, async () => assert.fail('сеть'))).entries[0].source, 'dex-it/ai-kit');
+  });
+
+  it('хаб «GitHub»: несколько самых звёздных магазинов готовым списком, без сети, по убыванию звёзд', async () => {
+    const content = await fetchHub({ ...anthropic, id: 'github-top' }, async () => assert.fail('сеть'));
+    assert.ok(content.entries.length >= 5, 'пример должен показывать несколько магазинов');
+    const stars = content.entries.map((e) => e.stars ?? 0);
+    assert.deepEqual([...stars].sort((a, b) => b - a), stars);
+    assert.equal(new Set(content.entries.map((e) => e.source)).size, content.entries.length);
+    for (const e of content.entries) {
+      assert.ok(e.description && e.stars && e.plugins && e.plugins >= 2, `${e.source}: описание, звёзды и несколько плагинов`);
+      assert.equal(e.label, `github ${e.source}`);
+    }
+    assert.ok(!content.entries.some((e) => e.source.startsWith('anthropics/')), 'магазины Anthropic - в своём хабе');
   });
 
   it('читает и разбирает ответ', async () => {
