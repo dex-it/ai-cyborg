@@ -3,7 +3,7 @@
  * и фильтруются запросом. Без DOM: чистые функции, которые проверяют тесты (FR-14002, FR-14005, FR-14007).
  */
 
-import type { Component, ExtensionsReply, Hub, HubContent, InstalledPlugin, Marketplace, McpHealth, McpServer, ProbeEntry, Scope, StandaloneComponent } from '../shared/extensions';
+import type { Component, ExtensionsReply, Hub, HubContent, InstalledPlugin, Marketplace, McpHealth, McpServer, ProbeEntry, Scope, StandaloneComponent, UsageCount } from '../shared/extensions';
 import { basename } from './dom';
 import type { Matcher } from './search-model';
 
@@ -34,7 +34,8 @@ export type NodeAction =
   | { type: 'market-remove'; market: Marketplace; installed: string[] }
   | { type: 'market-add'; source: string; name: string }
   | { type: 'hub-toggle'; hub: Hub }
-  | { type: 'hub-remove'; hub: Hub };
+  | { type: 'hub-remove'; hub: Hub }
+  | { type: 'open-url'; url: string };
 
 export interface ExtNode {
   key: string;
@@ -49,6 +50,8 @@ export interface ExtNode {
   children: ExtNode[];
   /** Раскрыт, пока человек не решил иначе. */
   open?: boolean;
+  /** Вызовы по журналам сессий; нет поля - статистика не прочитана или к узлу не относится. */
+  calls?: UsageCount;
 }
 
 const SCOPE_BADGE: Record<Scope | 'plugin' | 'claudeai', string> = {
@@ -162,9 +165,58 @@ export function invocation(pluginName: string | null, c: Component): string {
 
 const KIND_LABEL = { skill: 'скилл', command: 'команда', agent: 'агент' } as const;
 
-function componentNode(key: string, level: number, pluginName: string | null, c: Component): ExtNode {
-  return node(key, level, 'component', invocation(pluginName, c), { detail: KIND_LABEL[c.kind], description: c.description });
+/** Ключ вызова компонента в статистике: `/имя` для скилла и команды, `agent:имя` для агента. */
+export function callKey(pluginName: string | null, c: Component): string {
+  const name = pluginName ? `${pluginName}:${c.name}` : c.name;
+  return c.kind === 'agent' ? `agent:${name}` : `/${name}`;
 }
+
+/** Ключ сервера MCP: Claude Code заменяет в имени инструмента всё, кроме букв, цифр, `_` и `-`, на `_`. */
+export function mcpKey(server: string, plugin?: string): string {
+  const name = plugin ? `plugin_${plugin.split('@')[0]}_${server}` : server;
+  return `mcp:${name.replace(/[^\w-]/g, '_')}`;
+}
+
+const callsOf = (usage: ExtData['usage'], keys: string[]): UsageCount | undefined => {
+  if (!usage || !keys.length) return undefined;
+  const out = { count: 0, last: 0 };
+  for (const key of keys) {
+    const hit = usage[key];
+    if (!hit) continue;
+    out.count += hit.count;
+    out.last = Math.max(out.last, hit.last);
+  }
+  return out;
+};
+
+function componentNode(key: string, level: number, pluginName: string | null, c: Component, usage: ExtData['usage']): ExtNode {
+  return node(key, level, 'component', invocation(pluginName, c), { detail: KIND_LABEL[c.kind], description: c.description, calls: callsOf(usage, [callKey(pluginName, c)]) });
+}
+
+/** Страница источника магазина в браузере: репозиторий GitHub либо https-адрес; путь на диске - null. */
+export function sourceLink(descriptor: string): { label: string; url: string } | null {
+  const target = descriptor.replace(/^(github|git|url|git-subdir)\s+/, '');
+  if (/^github\s/.test(descriptor) && /^[\w.-]+\/[\w.-]+$/.test(target)) return { label: 'GitHub', url: `https://github.com/${target}` };
+  const ssh = /^(?:[\w.-]+@)?github\.com:([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(target);
+  if (ssh) return { label: 'GitHub', url: `https://github.com/${ssh[1]}` };
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  const parts = url.pathname.split('/').filter(Boolean);
+  if ((url.hostname === 'github.com' || url.hostname === 'raw.githubusercontent.com') && parts.length >= 2) {
+    return { label: 'GitHub', url: `https://github.com/${parts[0]}/${parts[1].replace(/\.git$/, '')}` };
+  }
+  return { label: 'Открыть', url: `${url.origin}${url.pathname.replace(/\.git$/, '')}` };
+}
+
+const linkAction = (descriptor: string): ExtNode['actions'] => {
+  const link = sourceLink(descriptor);
+  return link ? [{ label: `${link.label} ↗`, action: { type: 'open-url', url: link.url } }] : [];
+};
 
 // ---------- вкладки ----------
 
@@ -174,6 +226,8 @@ export interface ExtData {
   hubs: Hub[];
   hubContent: Map<string, HubContent>;
   health: Map<string, ProbeEntry>;
+  /** Вызовы по ключам callKey и mcpKey; null - не прочитаны. */
+  usage?: Record<string, UsageCount> | null;
 }
 
 const enabledText = (p: InstalledPlugin, view: ExtView, ctx: ExtContext): string | null => {
@@ -210,6 +264,7 @@ export function marketplaceTree(data: ExtData, view: ExtView, ctx: ExtContext): 
       const source = addableSource(market.source);
       if (source) top.actions.push({ label: 'Подключить', action: { type: 'market-add', source, name: market.name } });
     }
+    top.actions.push(...linkAction(market.source));
     for (const plugin of market.plugins) {
       const id = `${plugin.name}@${market.name}`;
       const mine = here.filter((p) => p.name === plugin.name);
@@ -220,7 +275,7 @@ export function marketplaceTree(data: ExtData, view: ExtView, ctx: ExtContext): 
       });
       if (market.known) n.actions.push({ label: 'Установить…', action: { type: 'install', plugin: id, marketplace: market.name } });
       if (plugin.components === null) n.children.push(node(`${n.key}/?`, 3, 'note', 'Состав виден после установки: исходники плагина не в клоне магазина'));
-      else plugin.components.forEach((c, i) => n.children.push(componentNode(`${n.key}/${i}`, 3, plugin.name, c)));
+      else plugin.components.forEach((c, i) => n.children.push(componentNode(`${n.key}/${i}`, 3, plugin.name, c, mine.length ? data.usage : null)));
       top.children.push(n);
     }
     out.push(top);
@@ -231,6 +286,7 @@ export function marketplaceTree(data: ExtData, view: ExtView, ctx: ExtContext): 
 /** Вкладка «Установленные»: область → плагин (с составом) либо отдельный скилл, команда, агент. */
 export function installedTree(data: ExtData, view: ExtView, ctx: ExtContext): ExtNode[] {
   const groups = new Groups('installed', ctx, view);
+  const markets = new Map(data.reply.marketplaces.map((m) => [m.name, m]));
   for (const p of installedHere(data, view, ctx)) {
     const where = place(view, ctx, p.scope, p.dir, 'config')!;
     const state = enabledText(p, view, ctx);
@@ -238,25 +294,29 @@ export function installedTree(data: ExtData, view: ExtView, ctx: ExtContext): Ex
       detail: p.version,
       description: [`${p.id}`, ...p.errors].join(' · '),
       badges: [SCOPE_BADGE[p.scope], ...(state ? [state] : []), ...(p.errors.length ? ['ошибка'] : [])],
+      calls: callsOf(data.usage, [...p.components.map((c) => callKey(p.name, c)), ...p.mcp.map((name) => mcpKey(name, p.name))]),
     });
     if (p.scope === 'user' || p.scope === 'project' || p.scope === 'local') n.actions.push({ label: 'Удалить…', action: { type: 'uninstall', plugin: p } });
-    p.components.forEach((c, i) => n.children.push(componentNode(`${n.key}/c${i}`, 3, p.name, c)));
-    p.mcp.forEach((name) => n.children.push(node(`${n.key}/m:${name}`, 3, 'component', name, { detail: 'MCP' })));
+    const market = markets.get(p.marketplace);
+    if (market) n.actions.push(...linkAction(market.source));
+    p.components.forEach((c, i) => n.children.push(componentNode(`${n.key}/c${i}`, 3, p.name, c, data.usage)));
+    p.mcp.forEach((name) => n.children.push(node(`${n.key}/m:${name}`, 3, 'component', name, { detail: 'MCP', calls: callsOf(data.usage, [mcpKey(name, p.name)]) })));
     groups.of(where).children.push(n);
   }
   for (const s of data.reply.standalone) {
     const where = place(view, ctx, s.scope, s.dir, 'config');
     if (!where) continue;
-    groups.of(where).children.push(standaloneNode(s));
+    groups.of(where).children.push(standaloneNode(s, data.usage));
   }
   return groups.result();
 }
 
-function standaloneNode(s: StandaloneComponent): ExtNode {
+function standaloneNode(s: StandaloneComponent, usage: ExtData['usage']): ExtNode {
   return node(`installed/own/${s.scope}/${s.dir ?? ''}/${s.kind}/${s.name}`, 2, 'component', invocation(null, s), {
     detail: KIND_LABEL[s.kind],
     description: s.description,
     badges: [SCOPE_BADGE[s.scope]],
+    calls: callsOf(usage, [callKey(null, s)]),
   });
 }
 
@@ -270,7 +330,7 @@ const HEALTH_TEXT: Record<McpHealth, string> = {
 
 const APPROVAL_TEXT = { approved: 'одобрен', pending: 'ждёт одобрения', disabled: 'отключён' } as const;
 
-function mcpNode(server: McpServer, health: ProbeEntry | undefined, key: string): ExtNode {
+function mcpNode(server: McpServer, health: ProbeEntry | undefined, key: string, usage: ExtData['usage']): ExtNode {
   const badges = [SCOPE_BADGE[server.scope]];
   if (server.approval) badges.push(APPROVAL_TEXT[server.approval]);
   if (health) badges.push(HEALTH_TEXT[health.health]);
@@ -278,6 +338,7 @@ function mcpNode(server: McpServer, health: ProbeEntry | undefined, key: string)
     detail: `${server.transport}${server.target ? ` · ${server.target}` : ''}`,
     description: [server.plugin ? `плагин ${server.plugin}` : '', health?.detail ?? ''].filter(Boolean).join(' · '),
     badges,
+    calls: callsOf(usage, [mcpKey(server.name, server.scope === 'plugin' ? server.plugin : undefined)]),
   });
 }
 
@@ -289,7 +350,7 @@ export function mcpTree(data: ExtData, view: ExtView, ctx: ExtContext): ExtNode[
   const add = (server: McpServer, where: Where) => {
     if (!where) return;
     const health = data.health.get(server.name) ?? data.health.get(`plugin:${server.plugin?.split('@')[0]}:${server.name}`);
-    groups.of(where).children.push(mcpNode(server, health, `mcp/${server.scope}/${server.dir ?? ''}/${server.plugin ?? ''}/${server.name}`));
+    groups.of(where).children.push(mcpNode(server, health, `mcp/${server.scope}/${server.dir ?? ''}/${server.plugin ?? ''}/${server.name}`, data.usage));
     seen.add(server.name);
   };
   for (const server of data.reply.mcp) {
@@ -304,7 +365,7 @@ export function mcpTree(data: ExtData, view: ExtView, ctx: ExtContext): ExtNode[
   // Коннекторы claude.ai в настройках не записаны, их называет только проверка связи.
   for (const entry of data.health.values()) {
     if (!entry.name.startsWith('claude.ai ') || seen.has(entry.name)) continue;
-    groups.of({ group: 'user' }).children.push(mcpNode({ name: entry.name, scope: 'claudeai', transport: 'http', target: '' }, entry, `mcp/claudeai/${entry.name}`));
+    groups.of({ group: 'user' }).children.push(mcpNode({ name: entry.name, scope: 'claudeai', transport: 'http', target: '' }, entry, `mcp/claudeai/${entry.name}`, data.usage));
   }
   return groups.result();
 }
@@ -352,6 +413,8 @@ export function hubTree(data: ExtData): ExtNode[] {
             badges: [...(entry.stars !== undefined ? [`★ ${compact(entry.stars)}`] : []), ...(entry.plugins !== undefined ? [`плагинов ${entry.plugins}`] : []), ...(connected ? ['подключён'] : [])],
           });
           if (!connected) n.actions.push({ label: 'Подключить…', action: { type: 'market-add', source: entry.source, name: entry.name } });
+          // В подписи у git и url только хост: ссылка строится из полного адреса.
+          n.actions.push(...linkAction(`${entry.label.split(' ')[0]} ${entry.source}`));
           top.children.push(n);
         }
         if (content.skipped) top.children.push(node(`${top.key}/skipped`, 2, 'note', `Записей отброшено как негодные: ${content.skipped}`));
