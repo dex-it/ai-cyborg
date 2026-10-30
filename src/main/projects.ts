@@ -51,28 +51,21 @@ function keysOf(value: unknown): string[] | null {
   return keys;
 }
 
-/** Поле Jira из файла: не обычный объект - null (поле считается отсутствующим); прежнее поле `project` читается как один проект, неверные ключи отбрасываются. */
+/** Поле Jira из файла: не обычный объект - null (поле считается отсутствующим); неверные ключи отбрасываются. */
 export function readJira(value: unknown): JiraSettings | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
-  const listed = Array.isArray(raw.projects) ? raw.projects.filter((k) => typeof k === 'string' && PROJECT_KEY.test(k)).slice(0, MAX_JIRA_PROJECTS) : null;
-  const projects = listed ?? (typeof raw.project === 'string' && PROJECT_KEY.test(raw.project) ? [raw.project] : []);
-  return { enabled: raw.enabled === true, projects: [...new Set((projects as string[]).map((k) => k.toUpperCase()))] };
+  const projects = Array.isArray(raw.projects) ? raw.projects.filter((k): k is string => typeof k === 'string' && PROJECT_KEY.test(k)).slice(0, MAX_JIRA_PROJECTS) : [];
+  return { enabled: raw.enabled === true, projects: [...new Set(projects.map((k) => k.toUpperCase()))] };
 }
 
-/** Jira проекта при сохранении: нет поля - допустимо (выключена); есть - булев enabled и ключи по форме (прежнее `project` - как один); иначе null. */
+/** Jira проекта при сохранении: нет поля - допустимо (выключена); есть - булев enabled и ключи по форме; иначе null. */
 export function validateJira(value: unknown): JiraSettings | null | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const { enabled, projects, project } = value as Record<string, unknown>;
+  const { enabled, projects } = value as Record<string, unknown>;
   if (typeof enabled !== 'boolean') return null;
-  if (projects !== undefined) {
-    const keys = keysOf(projects);
-    return keys ? { enabled, projects: keys } : null;
-  }
-  if (typeof project !== 'string') return null;
-  if (project === '') return { enabled, projects: [] };
-  const keys = keysOf([project]);
+  const keys = keysOf(projects);
   return keys ? { enabled, projects: keys } : null;
 }
 

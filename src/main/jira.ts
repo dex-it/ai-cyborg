@@ -206,6 +206,24 @@ export function suggestKeys(branches: readonly string[], known: ReadonlySet<stri
   return [...count].map(([key, n]) => ({ key, count: n })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
+/** Сколько репозиториев читается для подсказок за один запрос. */
+export const SUGGEST_REPOS = 20;
+
+/** Ветки репозиториев для подсказок: читаются только пути, которые принимает known, прочие пропускаются молча. */
+export async function suggestBranches(
+  repos: readonly unknown[],
+  known: (repo: unknown) => repo is string,
+  read: (repo: string) => Promise<{ local: string[]; remote: string[] }>,
+): Promise<string[]> {
+  const names: string[] = [];
+  for (const repo of repos.slice(0, SUGGEST_REPOS)) {
+    if (!known(repo)) continue;
+    const { local, remote } = await read(repo);
+    names.push(...local, ...remote);
+  }
+  return names;
+}
+
 // ---------- аргументы ----------
 
 const projectArgs = (project: string): string[] => (project === '' ? [] : ['-p', project]);
