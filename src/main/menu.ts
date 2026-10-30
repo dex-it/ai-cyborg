@@ -10,6 +10,15 @@ export type SearchMode = 'files' | 'text' | 'changes';
 /** Пункты меню «Поиск» по режимам; доступны, пока выбран проект. */
 export const SEARCH_MENU_IDS: Record<SearchMode, string> = { files: 'search-files', text: 'search-text', changes: 'search-changes' };
 
+export type ExtensionsTab = 'marketplaces' | 'installed' | 'mcp' | 'hubs';
+/** Пункты меню «Расширения» по вкладкам окна; доступны, пока выбран проект. */
+export const EXTENSIONS_MENU_IDS: Record<ExtensionsTab, string> = {
+  marketplaces: 'extensions-marketplaces',
+  installed: 'extensions-installed',
+  mcp: 'extensions-mcp',
+  hubs: 'extensions-hubs',
+};
+
 /** Подпись пункта «Недавних»: домашний каталог - «~». */
 export function recentLabel(file: string, home: string): string {
   return home && (file === home || file.startsWith(home + path.sep)) ? `~${file.slice(home.length)}` : file;
@@ -29,6 +38,7 @@ export interface WorkspaceMenu {
   editCommands(): void;
   editPrompts(): void;
   search(mode: SearchMode): void;
+  extensions(tab: ExtensionsTab): void;
 }
 
 /**
@@ -143,5 +153,15 @@ export function appMenuTemplate(
       },
     ],
   };
-  return [first, workspaceMenu, editMenu, searchMenu, viewMenu, windowMenu];
+  const extensionsMenu: MenuItemConstructorOptions = {
+    label: 'Расширения',
+    submenu: [
+      { id: EXTENSIONS_MENU_IDS.marketplaces, label: 'Магазины…', accelerator: 'CmdOrCtrl+Shift+X', enabled: workspace.hasProject, click: () => workspace.extensions('marketplaces') },
+      { id: EXTENSIONS_MENU_IDS.installed, label: 'Установленные плагины и скиллы…', enabled: workspace.hasProject, click: () => workspace.extensions('installed') },
+      { id: EXTENSIONS_MENU_IDS.mcp, label: 'Серверы MCP…', enabled: workspace.hasProject, click: () => workspace.extensions('mcp') },
+      { type: 'separator' },
+      { id: EXTENSIONS_MENU_IDS.hubs, label: 'Хабы магазинов…', enabled: workspace.hasProject, click: () => workspace.extensions('hubs') },
+    ],
+  };
+  return [first, workspaceMenu, editMenu, searchMenu, extensionsMenu, viewMenu, windowMenu];
 }
