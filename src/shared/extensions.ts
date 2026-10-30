@@ -212,3 +212,20 @@ export type HubOp = { op: 'add'; name: string; url: string } | { op: 'remove' | 
 export const MAX_HUB_ENTRIES = 500;
 export const MAX_HUB_BYTES = 1024 * 1024;
 export const MAX_HUBS = 20;
+
+/** Вызовы по журналам сессий Claude Code: сколько раз и когда последний (мс). */
+export interface UsageCount {
+  count: number;
+  last: number;
+}
+
+/**
+ * Ключ вызова: `/имя` - скилл или команда (вызов инструментом Skill либо набором в чате), `agent:имя` - субагент,
+ * `mcp:сервер` - инструмент сервера MCP (у сервера плагина имя `plugin_<плагин>_<сервер>`).
+ */
+export interface UsageReply {
+  calls: Record<string, UsageCount>;
+  /** Журналов прочитано. */
+  files: number;
+  error?: string;
+}
