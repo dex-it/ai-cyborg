@@ -34,7 +34,7 @@ function statusLabel(code: string): string {
 const ITEM = '[role="treeitem"]';
 
 /** Роль и состояние строки для чтения с экрана; ключ нужен, чтобы после перерисовки найти ту же строку. */
-function markItem(row: HTMLElement, key: string, level: number, expanded: boolean | null, selected: boolean | null): void {
+export function markItem(row: HTMLElement, key: string, level: number, expanded: boolean | null, selected: boolean | null): void {
   row.setAttribute('role', 'treeitem');
   row.setAttribute('aria-level', String(level));
   if (expanded !== null) row.setAttribute('aria-expanded', String(expanded));

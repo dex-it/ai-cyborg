@@ -35,7 +35,7 @@ describe('данные задачи и MR - текстом (FR-1018)', () => {
 
 describe('привязка задачи и MR к сессии только в памяти (FR-1015, FR-2014)', () => {
   it('интерфейс пишет в хранилище окна только известные настройки, ни одной - про задачи, MR и сессии', () => {
-    const allowed = [/^'cyborg\.fontSize'$/, /^NOTIFICATIONS_KEY$/, /^'cyborg\.tasks\.(assigned|sort)'$/, /^'cyborg\.mrs\.(filter|sort)'$/, /^'cyborg\.search\.mode'$/, /^`cyborg\.search\.\$\{key\}`$/, /^this\.labelsKey\(/, /^KEY$/];
+    const allowed = [/^'cyborg\.fontSize'$/, /^NOTIFICATIONS_KEY$/, /^'cyborg\.tasks\.(assigned|sort)'$/, /^'cyborg\.mrs\.(filter|sort)'$/, /^'cyborg\.search\.mode'$/, /^`cyborg\.search\.\$\{key\}`$/, /^'cyborg\.extensions\.(tab|view)'$/, /^`cyborg\.extensions\.\$\{key\}`$/, /^this\.labelsKey\(/, /^KEY$/];
     const keys: string[] = [];
     for (const file of sources('src/renderer')) {
       const text = code(file);
@@ -47,12 +47,12 @@ describe('привязка задачи и MR к сессии только в п
     assert.deepEqual(keys.filter((key) => !allowed.some((re) => re.test(key))), []);
   });
 
-  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, настройки хуков, файлы событий сессий, список недавних воркспейсов и замок открытого воркспейса', () => {
+  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, список хабов магазинов, настройки хуков, файлы событий сессий, список недавних воркспейсов и замок открытого воркспейса', () => {
     const writers = sources('src/main')
       .filter((file) => /\b(writeFileSync|appendFileSync|writeJsonAtomic|createWriteStream|writeFile)\(/.test(code(file)))
       .map((file) => file.split(path.sep).join('/'))
       .sort();
-    assert.deepEqual(writers, ['src/main/command-store.ts', 'src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
+    assert.deepEqual(writers, ['src/main/command-store.ts', 'src/main/hubs.ts', 'src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
   });
 });
 

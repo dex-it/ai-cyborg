@@ -26,6 +26,7 @@ import { returnTarget } from './panel-return';
 import { RenderTickets } from './render-ticket';
 import { asMenuItem, bindList, rove } from './list-keys';
 import { bindTablist, markTab, selectTab } from './tabs';
+import { ExtensionsDialog, type ExtensionsTab } from './extensions-dialog';
 import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
@@ -1339,6 +1340,11 @@ const searchDialog = new SearchDialog({
   open: (path, root, line) => (active ? openFile(active, path, root, line) : void showPreview(path, root, line)),
 });
 api.on<SearchMode>('menu:search', (mode) => searchDialog.open(mode));
+// Расширения читаются по репозиториям проекта и по рабочему каталогу активной сессии.
+const extensionsDialog = new ExtensionsDialog({
+  context: () => ({ repos: project?.repos ?? [], session: active ? { root: active.root, repo: active.repo } : null }),
+});
+api.on<ExtensionsTab>('menu:extensions', (tab) => extensionsDialog.open(tab));
 
 void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, loaded]) => {
   workspaceFile = info.file;

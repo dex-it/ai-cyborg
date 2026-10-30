@@ -12,11 +12,15 @@ import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile, walkFiles } from './files';
 import { gitDiffSearch, gitGrep } from './git-search';
 import { SearchRunner } from './search-run';
+import { claudePaths, createClaudeRunner, loadExtensions, probeMcp } from './extensions';
+import { createActionRunner } from './extensions-act';
+import { createExtensionsHandlers } from './extensions-handlers';
+import { fetchHub, HubStore } from './hubs';
 import type { SearchReply } from '../shared/search-pattern';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, type WorkspaceMenu } from './menu';
+import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
 import { validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
@@ -85,8 +89,9 @@ let current: { file: string | null; legacy: boolean } = { file: null, legacy: fa
 let heldLock: string | null = null;
 // Поиск одного вида идёт один: новый запрос отменяет прежний и его git.
 const searches = new SearchRunner();
+const allowedPaths = new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]);
 const paths = createPathHandlers({
-  allowed: new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]),
+  allowed: allowedPaths,
   liveDirs: () => sessions.liveDirs(),
   listDir,
   listFiles: async (root) => (await gitFiles(root)) ?? walkFiles(root),
@@ -99,6 +104,18 @@ const paths = createPathHandlers({
   gitHeadContent,
 });
 const runCli = createCliRunner(app.getPath('userData'));
+// Магазины, плагины и MCP читаются у Claude Code; из userData (вне репозиториев) он видит только настройки пользователя.
+const claudeRun = createClaudeRunner();
+const extensionsEnv = { run: claudeRun, home: os.homedir(), neutralDir: userData, ...claudePaths(os.homedir(), process.env, process.platform) };
+const hubStore = new HubStore(path.join(userData, 'hubs.json'));
+const extensions = createExtensionsHandlers({
+  allowed: allowedPaths,
+  load: (dirs) => loadExtensions(dirs, extensionsEnv),
+  probe: (dir) => probeMcp(dir ?? userData, claudeRun),
+  act: createActionRunner(claudeRun, userData),
+  hubs: hubStore,
+  fetchHub,
+});
 const trackers = new TrackersService({
   run: runCli,
   remotes: gitRemotes,
@@ -365,7 +382,7 @@ ipcMain.on('notifications:state', (_event, enabled: boolean) => {
 });
 ipcMain.on('project:selected', (_event, selected: unknown) => {
   menuState.hasProject = selected === true;
-  for (const id of [PROJECT_PROPERTIES_MENU_ID, ...Object.values(SEARCH_MENU_IDS)]) {
+  for (const id of [PROJECT_PROPERTIES_MENU_ID, ...Object.values(SEARCH_MENU_IDS), ...Object.values(EXTENSIONS_MENU_IDS)]) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id);
     if (item) item.enabled = menuState.hasProject;
   }
@@ -374,6 +391,18 @@ ipcMain.handle('fs:list', (_event, dir: unknown) => paths.list(dir));
 ipcMain.handle('fs:files', (_event, root: unknown) => paths.files(root));
 ipcMain.handle('search:text', (_event, request: unknown) => paths.searchText(request));
 ipcMain.handle('search:changes', (_event, request: unknown) => paths.searchChanges(request));
+ipcMain.handle('extensions:load', (_event, request: unknown) => extensions.load(request));
+ipcMain.handle('extensions:probe', (_event, dir: unknown) => extensions.probe(dir));
+ipcMain.handle('extensions:act', (_event, action: unknown) => extensions.act(action));
+ipcMain.handle('hubs:list', () => extensions.hubList());
+ipcMain.handle('hubs:change', (_event, op: unknown) => {
+  try {
+    return { hubs: extensions.hubApply(op) };
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+});
+ipcMain.handle('hubs:fetch', (_event, id: unknown) => extensions.hubFetch(id));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('git:root', (_event, dir: unknown) => paths.root(dir));
 ipcMain.handle('git:branch', (_event, root: unknown) => paths.branch(root));
@@ -432,6 +461,7 @@ function rebuildMenu(): void {
     editCommands: () => win?.webContents.send('menu:commands'),
     editPrompts: () => win?.webContents.send('menu:prompts'),
     search: (mode) => win?.webContents.send('menu:search', mode),
+    extensions: (tab) => win?.webContents.send('menu:extensions', tab),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(

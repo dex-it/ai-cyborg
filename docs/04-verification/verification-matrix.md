@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 133; с автотестом - 117, из них со smoke - 21; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 147; с автотестом - 131, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -146,3 +146,17 @@ date: 2026-10-26
 | FR-13007 | Поиск по изменениям | 13-file-search | автотест + smoke | `test/git-search.test.ts`, `scripts/smoke.mjs` |
 | FR-13008 | Каналы поиска проверяют аргументы, отменяют устаревшее и ограничены | 13-file-search | автотест | `test/git-search.test.ts`, `test/allowed-paths.test.ts` |
 | FR-13009 | Переход к найденной строке | 13-file-search | smoke | `scripts/smoke.mjs` |
+| FR-14001 | Окно вызывается из меню «Расширения» и сочетанием, на экране его нет | 14-extensions | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-14002 | Области «Сессия», «Проект», «Везде» и группы по месту записи | 14-extensions | автотест + smoke | `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14003 | Вкладка «Магазины»: магазины, плагины и их состав | 14-extensions | автотест + smoke | `test/extensions-model.test.ts`, `test/extensions.test.ts`, `test/extensions-read.test.ts`, `scripts/smoke.mjs` |
+| FR-14004 | Вкладка «Установленные»: плагины, скиллы, команды и агенты по областям | 14-extensions | автотест + smoke | `test/extensions-model.test.ts`, `test/extensions.test.ts`, `scripts/smoke.mjs` |
+| FR-14005 | Вкладка «MCP»: серверы по областям, без секретов | 14-extensions | автотест + smoke | `test/extensions-read.test.ts`, `test/extensions.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14006 | Проверка связи серверов MCP - только по кнопке | 14-extensions | автотест + smoke | `test/extensions.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14007 | Фильтр по имени и описанию: подстрока и регулярное выражение | 14-extensions | автотест + smoke | `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14008 | Окно управляется с клавиатуры и читается программами экрана | 14-extensions | автотест + smoke | `test/tabs.test.ts`, `test/tree-keys.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
+| FR-14009 | Установка и удаление плагина | 14-extensions | автотест + smoke | `test/extensions-act.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14010 | Подключение и отключение магазина | 14-extensions | автотест + smoke | `test/extensions-act.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14011 | Хабы: список, встроенный хаб, добавление, отключение, удаление | 14-extensions | автотест + smoke | `test/hubs.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14012 | Поиск магазина в хабах и подключение из хаба | 14-extensions | автотест + smoke | `test/hubs.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
+| FR-14013 | Чтение настроек Claude Code: источники, пределы, отсутствие claude | 14-extensions | автотест + smoke | `test/extensions.test.ts`, `test/extensions-read.test.ts`, `scripts/smoke.mjs` |
+| FR-14014 | Каналы расширений проверяют аргументы и пути, действие одно за раз | 14-extensions | автотест | `test/extensions-act.test.ts` |

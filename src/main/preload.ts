@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { ActionReply, ExtensionsAction, ExtensionsReply, ExtensionsRequest, Hub, HubContent, HubOp, ProbeReply } from '../shared/extensions';
 import type { SearchReply, SearchRequest } from '../shared/search-pattern';
 import type { CommandsConfig, CommandsScope } from './commands';
 import type { DirEntry } from './files';
@@ -73,6 +74,12 @@ const api = {
   listFiles: (root: string): Promise<string[]> => ipcRenderer.invoke('fs:files', root),
   searchText: (request: SearchRequest): Promise<SearchReply> => ipcRenderer.invoke('search:text', request),
   searchChanges: (request: SearchRequest): Promise<SearchReply> => ipcRenderer.invoke('search:changes', request),
+  loadExtensions: (request: ExtensionsRequest): Promise<ExtensionsReply> => ipcRenderer.invoke('extensions:load', request),
+  probeMcp: (dir: string | null): Promise<ProbeReply> => ipcRenderer.invoke('extensions:probe', dir),
+  extensionsAct: (action: ExtensionsAction): Promise<ActionReply> => ipcRenderer.invoke('extensions:act', action),
+  listHubs: (): Promise<Hub[]> => ipcRenderer.invoke('hubs:list'),
+  changeHubs: (op: HubOp): Promise<{ hubs?: Hub[]; error?: string }> => ipcRenderer.invoke('hubs:change', op),
+  fetchHub: (id: string): Promise<HubContent> => ipcRenderer.invoke('hubs:fetch', id),
   readFile: (file: string): Promise<{ content?: string; error?: string }> => ipcRenderer.invoke('fs:read', file),
   gitRoot: (dir: string): Promise<string | null> => ipcRenderer.invoke('git:root', dir),
   gitBranch: (root: string): Promise<string | null> => ipcRenderer.invoke('git:branch', root),
