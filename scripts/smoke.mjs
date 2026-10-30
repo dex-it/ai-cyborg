@@ -413,7 +413,7 @@ async function main() {
   await waitFor('связь проверена', async () => /подключён/.test(await text('#ext-tree')) && /claude\.ai Gmail/.test(await extRows()));
 
   await extTab(3);
-  await waitFor('встроенные хабы и их магазины', rowsHave('Anthropic', 'claude-plugins-official', 'claude-community', 'dex-it', 'dex-claude-marketplace', 'GitHub: claude-code-marketplace'));
+  await waitFor('встроенные хабы и их магазины', rowsHave('Anthropic', 'claude-plugins-official', 'claude-community', 'DEX', 'dex-claude-marketplace', 'GitHub', 'claude-code-workflows', 'ruflo', 'GitHub: поиск по теме'));
   assert.match(await text('#ext-tree'), /отключён/, 'хаб GitHub в пробе отключён, чтобы смоук не ходил в сеть');
   assert.equal(await extButton('Anthropic', 'Отключить'), true);
   await waitFor('хаб Anthropic отключён: магазинов в нём не видно', async () => !(await extRows()).includes('claude-community'));
