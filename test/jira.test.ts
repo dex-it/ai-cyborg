@@ -21,10 +21,12 @@ import {
   parseProjects,
   problemOf,
   problemText,
+  suggestBranches,
   suggestKeys,
+  SUGGEST_REPOS,
   validateJiraStart,
 } from '../src/main/jira';
-import { timeOf } from '../src/main/jira-keys';
+import { timeOf, typedKey } from '../src/main/jira-keys';
 import { JiraService } from '../src/main/jira-service';
 import { mrPrompt, validateSessionStart } from '../src/main/mrs';
 import { MAX_JIRA_PROJECTS, PROJECT_KEY, readJira, validateJira, type Project, type ProjectsState } from '../src/main/projects';
@@ -192,8 +194,8 @@ describe('Jira: настройки проекта', () => {
     assert.equal(readJira(undefined), null);
     assert.equal(readJira([]), null);
     assert.deepEqual(readJira({ enabled: true, projects: ['DEX', 'sup', 'DEX'] }), { enabled: true, projects: ['DEX', 'SUP'] });
-    assert.deepEqual(readJira({ enabled: true, project: 'DEX' }), { enabled: true, projects: ['DEX'] }, 'прежнее поле project - один проект');
-    assert.deepEqual(readJira({ enabled: 'true', project: 'DEX-1' }), { enabled: false, projects: [] });
+    assert.deepEqual(readJira({ enabled: true, project: 'DEX' }), { enabled: true, projects: [] }, 'поле project не читается');
+    assert.deepEqual(readJira({ enabled: 'true', projects: 'DEX' }), { enabled: false, projects: [] });
     assert.deepEqual(readJira({ enabled: true, projects: ['OK', 7, '--raw', 'A B'] }), { enabled: true, projects: ['OK'] }, 'неверные ключи отбрасываются');
     assert.equal(readJira({ enabled: true, projects: Array.from({ length: 30 }, (_, i) => `P${i}`) })!.projects.length, MAX_JIRA_PROJECTS);
   });
@@ -202,10 +204,8 @@ describe('Jira: настройки проекта', () => {
     assert.equal(validateJira(undefined), undefined);
     assert.deepEqual(validateJira({ enabled: false, projects: [] }), { enabled: false, projects: [] });
     assert.deepEqual(validateJira({ enabled: true, projects: ['dex', 'SUP', 'DEX'], extra: 1 }), { enabled: true, projects: ['DEX', 'SUP'] }, 'верхний регистр, без повторов');
-    assert.deepEqual(validateJira({ enabled: true, project: 'dex' }), { enabled: true, projects: ['DEX'] }, 'прежняя форма принимается');
-    assert.deepEqual(validateJira({ enabled: true, project: '' }), { enabled: true, projects: [] });
     const many = Array.from({ length: MAX_JIRA_PROJECTS + 1 }, (_, i) => `P${i}`);
-    for (const bad of [null, 'x', [], { enabled: 'yes', projects: [] }, { enabled: true }, { enabled: true, project: '-p' }, { enabled: true, project: 'A B' }, { enabled: true, projects: 'DEX' }, { enabled: true, projects: ['DEX', '-p'] }, { enabled: true, projects: [7] }, { enabled: true, projects: many }]) {
+    for (const bad of [null, 'x', [], { enabled: 'yes', projects: [] }, { enabled: true }, { enabled: true, project: 'DEX' },{ enabled: true, projects: 'DEX' }, { enabled: true, projects: ['DEX', '-p'] }, { enabled: true, projects: [7] }, { enabled: true, projects: many }]) {
       assert.equal(validateJira(bad), null, JSON.stringify(bad));
     }
   });
@@ -557,5 +557,42 @@ describe('Jira: проекты проекта', () => {
     const { svc } = service((args) => (args[0] === 'project' ? ok(table) : ok('[]')));
     assert.deepEqual(await svc.suggest(['dex-1-a', 'utf-8', 'feature/SUP-2', 'sup-3']), [{ key: 'SUP', count: 2 }, { key: 'DEX', count: 1 }]);
     assert.deepEqual(await service(() => fail('Unauthorized')).svc.suggest(['dex-1']), []);
+  });
+
+  it('отказ входа в деталях задачи принятого списка: опрос не остановлен', async () => {
+    const { svc, calls } = service((args) => {
+      if (args[1] === 'list') return ok(JSON.stringify([listed('SUP-9')]));
+      if (args[1] === 'view') return fail('403 Forbidden');
+      return ok('');
+    }, multi);
+    await svc.list('p1', false);
+    const denied = await svc.details('p1', 'SUP-9');
+    assert.ok('problem' in denied && denied.problem === 'auth');
+    const before = calls.length;
+    const next = await svc.list('p1', false);
+    assert.deepEqual(next.issues.map((i) => i.key), ['SUP-9']);
+    assert.ok(calls.length > before, 'следующий опрос снова идёт в jira');
+  });
+
+  it('ветки для подсказок: только известные репозитории, не больше двадцати', async () => {
+    const read: string[] = [];
+    const known = (repo: unknown): repo is string => typeof repo === 'string' && repo.startsWith('/w/');
+    const branches = async (repo: string) => {
+      read.push(repo);
+      return { local: [`${repo}:main`], remote: [`${repo}:origin`] };
+    };
+    assert.deepEqual(await suggestBranches(['/w/a', '/etc', 7, '/w/b'], known, branches), ['/w/a:main', '/w/a:origin', '/w/b:main', '/w/b:origin']);
+    assert.deepEqual(read, ['/w/a', '/w/b'], 'путь вне сохранённых проектов не читается');
+    read.length = 0;
+    await suggestBranches(Array.from({ length: SUGGEST_REPOS + 5 }, (_, i) => `/w/${i}`), known, branches);
+    assert.equal(read.length, SUGGEST_REPOS);
+  });
+
+  it('ключ из поиска: не по форме, уже выбран, выбор полон - ввод не добавляется', () => {
+    const full = Array.from({ length: MAX_JIRA_PROJECTS }, (_, i) => `P${i}`);
+    assert.equal(typedKey('dex 1', []), 'invalid');
+    assert.equal(typedKey('p3', full), 'chosen');
+    assert.equal(typedKey('NEW', full), 'full');
+    assert.equal(typedKey('new', full.slice(1)), 'add');
   });
 });
