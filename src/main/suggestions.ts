@@ -10,6 +10,23 @@ const MARKER = '<!-- cyborg-buttons:';
 const END = '-->';
 const SHELL_PREFIX = '!';
 const SLASH_PREFIX = '/';
+const ELLIPSIS = '…';
+
+/**
+ * Подпись длиннее LABEL_MAX кодовых единиц режется по границе кодовой точки (пара суррогатов целиком) и получает «…».
+ * Снимаются только пробелы U+0020: trim() снял бы перевод строки и прочие управляющие символы до проверки CONTROL.
+ */
+function fitLabel(label: unknown): unknown {
+  if (typeof label !== 'string') return label;
+  const spaced = label.replace(/^ +| +$/g, '');
+  if (spaced.length <= LABEL_MAX) return label;
+  let cut = '';
+  for (const ch of spaced) {
+    if (cut.length + ch.length + ELLIPSIS.length > LABEL_MAX) break;
+    cut += ch;
+  }
+  return cut.replace(/ +$/, '') + ELLIPSIS;
+}
 
 /** Инструкция сессии: когда и в каком виде предлагать кнопки (дописывается к системному промту, как инструкция об изоляции). */
 export const SUGGEST_PROMPT =
@@ -21,7 +38,8 @@ export const SUGGEST_PROMPT =
 
 /**
  * Кнопки из хвоста ответа: комментарий должен стоять в самом конце сообщения (процитированный из файла в середине ответа не в счёт).
- * Ответ модели недоверенный: поля проверяются как у кнопок файла, лишние поля отбрасываются. `submit` принимается (нажимает по-прежнему человек),
+ * Ответ модели недоверенный: поля проверяются как у кнопок файла, кроме длины подписи (модель промахивается в счёте знаков, длинная обрезается
+ * с «…»), лишние поля отбрасываются. `submit` принимается (нажимает по-прежнему человек),
  * сочетание клавиш и отключение - нет. Claude Code выполняет ввод с «!» как команду оболочки без запроса разрешения (режим shell), а с «/» как свою
  * команду: такая реплика от модели отбрасывается («!») либо только вставляется без Enter («/»).
  */
@@ -44,7 +62,7 @@ export function parseSuggestions(message: unknown): CommandButton[] {
   const plain = raw.map((item) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return item;
     const { label, text, submit, description } = item as Record<string, unknown>;
-    return { label, text, ...(submit === undefined ? {} : { submit }), ...(description === undefined ? {} : { description }) };
+    return { label: fitLabel(label), text, ...(submit === undefined ? {} : { submit }), ...(description === undefined ? {} : { description }) };
   });
   const seen = new Set<string>();
   const buttons: CommandButton[] = [];
