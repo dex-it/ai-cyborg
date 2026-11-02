@@ -20,12 +20,16 @@
 - `dist/` - выход сборки esbuild (main.js, preload.js, renderer/), в git не входит
 - `docs/` - корпус документации: BRD продукта, ADR, счётчики; адреса в .docs_layout
 - `node_modules/` - установленные npm-зависимости, в git не входят
-- `package.json` - манифест: скрипты build/start/test/typecheck/smoke/check:corpus/corpus:matrix, main = dist/main.js
-- `scripts/` - build.mjs - сборка трёх бандлов esbuild и копирование статики и Monaco; check-corpus.ts и corpus-lib.ts - проверка корпуса и матрица верификации
+- `package.json` - манифест: скрипты build/start/test/typecheck/smoke/measure/check:corpus/corpus:matrix, postinstall (electron-rebuild для node-pty), main = dist/main.js
+- `cyborg` - скрипт запуска из исходников: проверка git, npm и Node 24, `npm install` при смене `package-lock.json`, сборка, Electron; `assets/` - значок приложения
+- `scripts/` - build.mjs - сборка трёх бандлов esbuild и копирование статики и Monaco; check-corpus.ts и corpus-lib.ts - проверка корпуса и матрица верификации; test.mjs - запуск `test/*.test.ts` (esbuild во временный каталог, `node --test`); smoke.mjs - дымовой тест окна по DevTools Protocol; measure.mjs - замер загрузки панели на реальном проекте
 - `docs/guide/` - страницы сайта документации для пользователя (не корпус требований); собирает `site/`
 - `site/` - сайт документации (Astro и Starlight): `cd site && npm ci && npm run build && npm run verify`; публикует `.github/workflows/docs-site.yml` в GitHub Pages
-- `src/main/` - главный процесс Electron: сессии в pty, файлы, git, проекты; точки входа main.ts и preload.ts
-- `src/renderer/` - интерфейс: проекты, полоса сессий, xterm, дерево, Monaco; точка входа app.ts и index.html
+- `src/main/` - главный процесс Electron; точки входа main.ts и preload.ts, меню - menu.ts. Сессии в pty и хуки: sessions, claude-args, events-store, session-args, history. Файлы и git: files, allowed-paths, open-path, git, git-search, search-run, search-args. Проекты и воркспейсы: projects, workspaces. Трекеры: trackers, mrs, mrs-service, task-details, jira, jira-service. Кнопки: commands, command-store, prompts, prompt-store, suggestions. Окно «Расширения»: extensions*, hubs. Рядом лежат модульные тесты `*.test.ts`
+- `src/shared/` - код, общий для главного процесса и интерфейса: extensions.ts (окно «Расширения»), search-pattern.ts (запрос поиска)
+- `src/renderer/` - интерфейс: проекты, полоса сессий, xterm, дерево, Monaco; точка входа app.ts и index.html. Панели задач, MR и «Статус»: tasks, mrs, panel, status; кнопки-команды: command-bar и редакторы command-editor, prompt-editor, config-editor; окно поиска search-dialog; окно «Расширения» extensions-dialog
+- `test/` - тесты на node:test, по файлу на область (хранилища, меню, поиск, расширения, кнопки, клавиатура интерфейса, статические проверки); запускает scripts/test.mjs
+- `.github/` - workflows ci.yml (сборка, типы, тесты, smoke, корпус) и docs-site.yml (сайт), dependabot.yml
 
 ## Правила
 
@@ -33,7 +37,7 @@
 
 ## Запреты
 
-- `dist/` - scripts/build.mjs:4 пересоздаёт каталог при каждой сборке; .gitignore:2
+- `dist/` - scripts/build.mjs:5 пересоздаёт каталог при каждой сборке; .gitignore:2
 - `node_modules/` - node_modules/
 - `package-lock.json` - package-lock.json
 <!-- <<< dex-auto: flow -->
