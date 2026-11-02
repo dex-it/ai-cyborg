@@ -9,14 +9,14 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 150; с автотестом - 134, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 153; с автотестом - 137, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
 | FR-1001 | Панель задач в рабочей области | 01-tasks-panel | smoke | `scripts/smoke.mjs` |
 | NFR-1001 | Токен трекера не проходит через Cyborg | 01-tasks-panel | автотест | `test/trackers.test.ts` |
 | FR-1002 | Источники задач по remote проекта | 01-tasks-panel | автотест | `test/trackers.test.ts`, `test/stores.test.ts` |
-| NFR-1002 | Сеть только к трекерам | 01-tasks-panel | автотест | `test/trackers.test.ts` |
+| NFR-1002 | Сеть только к трекерам и хабам магазинов | 01-tasks-panel | автотест | `test/trackers.test.ts` |
 | FR-1003 | Выборка открытых задач со всех страниц | 01-tasks-panel | автотест | `test/trackers.test.ts` |
 | NFR-1003 | Пределы ожидания CLI трекера | 01-tasks-panel | автотест | `test/cli-limits.test.ts`, `test/mrs.test.ts`, `test/trackers.test.ts` |
 | FR-1004 | Фильтр «Назначено мне» на стороне трекера | 01-tasks-panel | автотест | `test/trackers.test.ts` |
@@ -49,6 +49,7 @@ date: 2026-10-26
 | FR-1030 | Окно первого запуска создаёт воркспейс | 01-tasks-panel | автотест + smoke | `test/workspaces.test.ts`, `test/workspace-text.test.ts`, `scripts/smoke.mjs` |
 | FR-1031 | Возврат из сессии к её строке на панели | 01-tasks-panel | автотест | `test/panel-return.test.ts`, `test/tasks-view.test.ts` |
 | FR-1032 | Каналы ввода, размера и завершения сессии отбрасывают недопустимые аргументы | 01-tasks-panel | автотест | `test/session-args.test.ts`, `src/main/sessions.test.ts` |
+| FR-1033 | Смена воркспейса в этом окне: «Воркспейс → Открыть…» | 01-tasks-panel | автотест | `test/workspaces.test.ts`, `test/menu.test.ts` |
 | FR-2001 | Источники MR - источники задач | 02-mr-view | автотест | `test/mrs.test.ts` |
 | NFR-2001 | Предел деталей MR и процессов CLI | 02-mr-view | автотест | `test/mrs.test.ts` |
 | FR-2002 | Выборка открытых MR со всех страниц | 02-mr-view | автотест | `test/mrs.test.ts` |
@@ -115,6 +116,8 @@ date: 2026-10-26
 | FR-10009 | Активная вкладка сессии видна в полосе | 10-ui-preferences | осмотр и демонстрация | - |
 | FR-10010 | Диалоги названы для программ чтения с экрана | 10-ui-preferences | автотест | `test/static-guards.test.ts` |
 | FR-10011 | После закрытия вкладки выбирается соседняя | 10-ui-preferences | автотест | `test/neighbor.test.ts` |
+| FR-10012 | Пути и ссылки в выводе сессии открываются по клику | 10-ui-preferences | автотест | `test/term-links.test.ts` |
+| FR-10013 | Главный процесс проверяет путь и адрес, открываемые по клику | 10-ui-preferences | автотест | `test/term-links.test.ts` |
 | FR-11001 | Jira в свойствах проекта | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11002 | Кнопка «Статус» и карточка | 11-status-hub | smoke | `scripts/smoke.mjs` |
 | FR-11003 | Сбор и обновление данных | 11-status-hub | smoke | `scripts/smoke.mjs` |
@@ -135,7 +138,7 @@ date: 2026-10-26
 | FR-12006 | Правка набора в Monaco и подхват без перезапуска | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/commands-store.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-12007 | Инструкция сессии и разбор предложений модели | 12-command-buttons | автотест | `test/suggestions.test.ts`, `src/main/sessions.test.ts`, `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-12008 | Предложенные кнопки на полосе | 12-command-buttons | smoke | `scripts/smoke.mjs` |
-| FR-12009 | Промпты кнопок запуска сессий: поле `prompts` и сборка первого сообщения | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/mrs.test.ts`, `test/trackers.test.ts`, `test/jira.test.ts`, `test/ipc-error.test.ts`, `scripts/smoke.mjs` |
+| FR-12009 | Промпты кнопок запуска сессий: общий файл `prompts.json` и сборка первого сообщения | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/mrs.test.ts`, `test/trackers.test.ts`, `test/jira.test.ts`, `test/ipc-error.test.ts`, `scripts/smoke.mjs` |
 | FR-12010 | Правка промптов в Monaco | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-13001 | Окно поиска вызывается из меню и сочетанием, на экране его нет | 13-file-search | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-13002 | Поиск файла по части имени | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `scripts/smoke.mjs` |
