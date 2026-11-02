@@ -13,6 +13,6 @@ export const SITE_URL = `${ORIGIN}${BASE}/`;
 export const REPO = `https://github.com/${OWNER}/${REPO_NAME}`;
 
 export const BRAND = 'Cyborg';
-export const TAGLINE = 'Одно окно для нескольких сессий Claude Code';
+export const TAGLINE = 'Рабочее место для параллельных сессий Claude Code';
 export const DESCRIPTION =
-  'Cyborg собирает параллельные сессии Claude Code в одно окно: рядом с терминалом каждой сессии её дерево файлов, ветка и git-изменения, а задачи и MR из GitHub и GitLab лежат на соседней панели.';
+  'Cyborg - рабочее место для параллельных сессий Claude Code: рядом с терминалом каждой сессии её дерево файлов, ветка и git-изменения, задачи и MR из GitHub и GitLab, статус проекта и расширения Claude Code.';
