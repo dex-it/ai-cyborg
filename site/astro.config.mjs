@@ -86,7 +86,7 @@ export default defineConfig({
             'features/isolation',
           ],
         },
-        { label: 'Как это устроено', items: [{ slug: 'concepts', label: 'Обзор' }, 'concepts/hooks', 'concepts/git-safety', 'concepts/data'] },
+        { label: 'Как это устроено', items: [{ slug: 'concepts', label: 'Обзор' }, 'concepts/architecture', 'concepts/hooks', 'concepts/git-safety', 'concepts/data'] },
         { label: 'Справка', items: ['reference/hotkeys', 'reference/platforms'] },
         { label: 'Участие', items: ['contributing', 'contributing/tests-ci', 'contributing/docs-site'] },
         { label: 'Вопросы', items: ['faq'] },
