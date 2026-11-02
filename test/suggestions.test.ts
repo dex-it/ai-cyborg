@@ -58,10 +58,32 @@ describe('Кнопки от модели: разбор хвоста ответа
     }
   });
 
+  it('подпись длиннее предела обрезается с «…», а не отбрасывает кнопку: модель промахивается в счёте знаков кириллицы', () => {
+    const long = 'Напомнить Лёне про список сцен до слияния';
+    assert.equal(long.length, LABEL_MAX + 1);
+    const [cut] = parseSuggestions(tail(JSON.stringify([{ label: long, text: 'напиши' }])));
+    assert.equal(cut.label, 'Напомнить Лёне про список сцен до слиян…');
+    assert.equal(cut.label.length, LABEL_MAX);
+    const [spaced] = parseSuggestions(tail(JSON.stringify([{ label: `${'а'.repeat(LABEL_MAX - 2)} ббб`, text: 'т' }])));
+    assert.equal(spaced.label, `${'а'.repeat(LABEL_MAX - 2)}…`, 'пробел перед «…» убирается');
+    const [emoji] = parseSuggestions(tail(JSON.stringify([{ label: `${'а'.repeat(LABEL_MAX - 2)}👍👍`, text: 'т' }])));
+    assert.equal(emoji.label, `${'а'.repeat(LABEL_MAX - 2)}…`, 'суррогатная пара не режется пополам');
+    assert.deepEqual(parseSuggestions(tail(JSON.stringify([{ label: `${'а'.repeat(LABEL_MAX)}\u202Eх`, text: 'т' }]))).length, 1, 'обрезанный хвост не судится');
+    assert.deepEqual(parseSuggestions(tail(JSON.stringify([{ label: `а\u202E${'а'.repeat(LABEL_MAX)}`, text: 'т' }]))), [], 'управляющий символ в оставшейся части отвергает кнопку');
+    const one = (label: unknown) => parseSuggestions(tail(JSON.stringify([{ label, text: 'т' }])));
+    assert.equal(one('я'.repeat(LABEL_MAX))[0].label, 'я'.repeat(LABEL_MAX), 'ровно предел - без обрезки');
+    assert.equal(one(`  ${'я'.repeat(LABEL_MAX)}  `).length, 1, 'длиннее предела только краевыми пробелами - без обрезки');
+    assert.equal(one(`  ${'я'.repeat(LABEL_MAX + 5)}`)[0].label, `${'я'.repeat(LABEL_MAX - 1)}…`, 'ведущие пробелы не занимают места');
+    assert.deepEqual(one(5), [], 'нестроковая подпись отвергается');
+    for (const ws of ['\n', '\t', '\u2028']) {
+      assert.deepEqual(one(`${ws}${'я'.repeat(LABEL_MAX + 5)}`), [], `${JSON.stringify(ws)} в начале длинной подписи отвергает кнопку`);
+      assert.deepEqual(one(`${'я'.repeat(LABEL_MAX - 2)}${ws}${'я'.repeat(5)}`), [], `${JSON.stringify(ws)} перед разрезом отвергает кнопку`);
+    }
+  });
+
   it('негодные записи отбрасываются по правилам кнопок файла, годные остаются', () => {
     const json = JSON.stringify([
       { label: '', text: 'a' },
-      { label: 'я'.repeat(LABEL_MAX + 1), text: 'a' },
       { label: 'B', text: 'a\nb' },
       { label: 'C', text: 'я'.repeat(TEXT_MAX + 1) },
       'строка',
