@@ -15,6 +15,7 @@ import { SearchRunner } from './search-run';
 import { claudePaths, createClaudeRunner, loadExtensions, probeMcp } from './extensions';
 import { createActionRunner } from './extensions-act';
 import { createExtensionsHandlers } from './extensions-handlers';
+import { UsageStore } from './extensions-usage';
 import { fetchHub, HubStore } from './hubs';
 import type { SearchReply } from '../shared/search-pattern';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
@@ -109,6 +110,7 @@ const runCli = createCliRunner(app.getPath('userData'));
 const claudeRun = createClaudeRunner();
 const extensionsEnv = { run: claudeRun, home: os.homedir(), neutralDir: userData, ...claudePaths(os.homedir(), process.env, process.platform) };
 const hubStore = new HubStore(path.join(userData, 'hubs.json'));
+const usageStore = new UsageStore(path.join(extensionsEnv.configDir, 'projects'), path.join(userData, 'extensions-usage.json'));
 const extensions = createExtensionsHandlers({
   allowed: allowedPaths,
   load: (dirs) => loadExtensions(dirs, extensionsEnv),
@@ -116,6 +118,7 @@ const extensions = createExtensionsHandlers({
   act: createActionRunner(claudeRun, userData),
   hubs: hubStore,
   fetchHub: (hub, force) => fetchHub(hub, undefined, force),
+  usage: () => usageStore.read(),
 });
 const trackers = new TrackersService({
   run: runCli,
@@ -389,6 +392,7 @@ ipcMain.handle('search:changes', (_event, request: unknown) => paths.searchChang
 ipcMain.handle('extensions:load', (_event, request: unknown) => extensions.load(request));
 ipcMain.handle('extensions:probe', (_event, dir: unknown) => extensions.probe(dir));
 ipcMain.handle('extensions:act', (_event, action: unknown) => extensions.act(action));
+ipcMain.handle('extensions:usage', () => extensions.usage());
 ipcMain.handle('hubs:list', () => extensions.hubList());
 ipcMain.handle('hubs:change', (_event, op: unknown) => {
   try {

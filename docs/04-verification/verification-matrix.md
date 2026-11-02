@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 147; с автотестом - 131, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 150; с автотестом - 134, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -160,3 +160,6 @@ date: 2026-10-26
 | FR-14012 | Поиск магазина в хабах и подключение из хаба | 14-extensions | автотест + smoke | `test/hubs.test.ts`, `test/extensions-model.test.ts`, `scripts/smoke.mjs` |
 | FR-14013 | Чтение настроек Claude Code: источники, пределы, отсутствие claude | 14-extensions | автотест + smoke | `test/extensions.test.ts`, `test/extensions-read.test.ts`, `scripts/smoke.mjs` |
 | FR-14014 | Каналы расширений проверяют аргументы и пути, действие одно за раз | 14-extensions | автотест | `test/extensions-act.test.ts` |
+| FR-14015 | Статистика вызовов по журналам сессий | 14-extensions | автотест | `test/extensions-usage.test.ts`, `test/static-guards.test.ts` |
+| FR-14016 | Переход на страницу магазина | 14-extensions | автотест | `test/extensions-usage.test.ts`, `test/extensions-model.test.ts` |
+| FR-14017 | Размер окна меняется ручкой в углу и помнится | 14-extensions | автотест | `test/static-guards.test.ts` |
