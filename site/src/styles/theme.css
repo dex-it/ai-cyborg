@@ -9,3 +9,77 @@
   --sl-color-accent: #0b63c9;
   --sl-color-accent-high: #083f82;
 }
+
+/* Схемы страницы «Архитектура»: встроенный SVG, цвета из переменных темы Starlight. */
+.arch-figure {
+  margin: 1.5rem 0;
+}
+.arch-figure figcaption {
+  margin-top: 0.5rem;
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-sm);
+}
+.arch-scroll {
+  overflow-x: auto;
+}
+.arch {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+  font-family: var(--sl-font);
+  font-size: 13px;
+}
+.arch .zone {
+  fill: none;
+  stroke: var(--sl-color-gray-4);
+  stroke-dasharray: 5 4;
+}
+.arch .zone-label {
+  fill: var(--sl-color-gray-3);
+  font-size: 12px;
+}
+.arch .box {
+  fill: var(--sl-color-gray-6);
+  stroke: var(--sl-color-gray-4);
+  stroke-width: 1.2;
+}
+.arch .box.accent {
+  fill: var(--sl-color-accent-low);
+  stroke: var(--sl-color-accent);
+}
+.arch .box.ext {
+  fill: transparent;
+}
+.arch .title {
+  fill: var(--sl-color-white);
+  font-weight: 600;
+}
+.arch .sub {
+  fill: var(--sl-color-gray-2);
+  font-size: 11.5px;
+}
+.arch .edge {
+  fill: none;
+  stroke: var(--sl-color-gray-3);
+  stroke-width: 1.4;
+}
+.arch .life {
+  stroke: var(--sl-color-gray-5);
+  stroke-dasharray: 3 4;
+}
+.arch .head {
+  fill: var(--sl-color-gray-3);
+}
+.arch .msg {
+  fill: var(--sl-color-white);
+  font-size: 12px;
+  paint-order: stroke;
+  stroke: var(--sl-color-bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+.arch .num {
+  fill: var(--sl-color-accent-high);
+  font-weight: 600;
+}
