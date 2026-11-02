@@ -114,6 +114,8 @@ describe('ссылка на магазин', () => {
     assert.deepEqual(sourceLink('github o/r'), { label: 'GitHub', url: 'https://github.com/o/r' });
     assert.deepEqual(sourceLink('git https://github.com/o/r.git'), { label: 'GitHub', url: 'https://github.com/o/r' });
     assert.deepEqual(sourceLink('git github.com:o/r.git'), { label: 'GitHub', url: 'https://github.com/o/r' });
+    assert.deepEqual(sourceLink('git ssh://github.com/o/r.git'), { label: 'GitHub', url: 'https://github.com/o/r' });
+    assert.equal(sourceLink('git ssh://gitlab.com/g/x.git'), null);
     assert.deepEqual(sourceLink('url https://raw.githubusercontent.com/o/r/main/marketplace.json'), { label: 'GitHub', url: 'https://github.com/o/r' });
   });
 

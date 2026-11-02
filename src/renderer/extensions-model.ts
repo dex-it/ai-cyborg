@@ -205,8 +205,10 @@ export function sourceLink(descriptor: string): { label: string; url: string } |
   } catch {
     return null;
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
   const parts = url.pathname.split('/').filter(Boolean);
+  // ssh://git@github.com/владелец/репозиторий: на страницу ведёт только GitHub, у других хостов страницы по ssh-адресу не угадать.
+  if (url.protocol === 'ssh:') return url.hostname === 'github.com' && parts.length >= 2 ? { label: 'GitHub', url: `https://github.com/${parts[0]}/${parts[1].replace(/\.git$/, '')}` } : null;
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
   if ((url.hostname === 'github.com' || url.hostname === 'raw.githubusercontent.com') && parts.length >= 2) {
     return { label: 'GitHub', url: `https://github.com/${parts[0]}/${parts[1].replace(/\.git$/, '')}` };
   }
