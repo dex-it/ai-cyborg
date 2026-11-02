@@ -109,6 +109,7 @@ describe('обработчики каналов расширений', () => {
     act: async (action) => (calls.push(`act:${action.kind}`), { ok: true, message: '' }),
     hubs: { list: () => [], apply: () => [], find: (id) => (id === 'anthropic' ? { id: 'anthropic', name: 'b', url: null, enabled: true, builtin: true } : undefined) },
     fetchHub: async (_hub, force) => ({ entries: [], ...(force ? { skipped: 1 } : {}) }),
+    usage: async () => ({ calls: {}, files: 0 }),
   });
 
   it('читает только разрешённые каталоги, повторы отбрасывает', async () => {

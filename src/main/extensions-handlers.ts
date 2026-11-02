@@ -1,4 +1,4 @@
-import { MAX_DIRS, type ActionReply, type ExtensionsAction, type ExtensionsReply, type Hub, type HubContent, type ProbeReply } from '../shared/extensions';
+import { MAX_DIRS, type ActionReply, type ExtensionsAction, type ExtensionsReply, type Hub, type HubContent, type ProbeReply, type UsageReply } from '../shared/extensions';
 import type { AllowedPaths } from './allowed-paths';
 import { validateAction } from './extensions-act';
 
@@ -9,6 +9,7 @@ export interface ExtensionsHandlerDeps {
   act: (action: ExtensionsAction) => Promise<ActionReply>;
   hubs: { list: () => Hub[]; apply: (op: unknown) => Hub[]; find: (id: unknown) => Hub | undefined };
   fetchHub: (hub: Hub, force: boolean) => Promise<HubContent>;
+  usage: () => Promise<UsageReply>;
 }
 
 /** Обработчики каналов extensions:* и hubs:*: форма аргумента и каждый путь проверяются до чтения и до запуска claude. */
@@ -32,6 +33,7 @@ export function createExtensionsHandlers(deps: ExtensionsHandlerDeps) {
       if ('dir' in action && action.dir) deps.allowed.assert(action.dir);
       return deps.act(action);
     },
+    usage: () => deps.usage(),
     hubList: () => deps.hubs.list(),
     hubApply: (op: unknown) => deps.hubs.apply(op),
     /** force - обойти сохранённый ответ GitHub (кнопка «Обновить»). */

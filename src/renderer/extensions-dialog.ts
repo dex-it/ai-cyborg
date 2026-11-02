@@ -1,7 +1,8 @@
 import type { ExtensionsTab } from '../main/menu';
-import type { ActionScope, ExtensionsAction, ExtensionsReply, Hub, HubContent, ProbeEntry } from '../shared/extensions';
+import type { ActionScope, ExtensionsAction, ExtensionsReply, Hub, HubContent, ProbeEntry, UsageCount, UsageReply } from '../shared/extensions';
 import { marketplaceSourceProblem } from '../shared/extensions';
 import { queryProblem } from '../shared/search-pattern';
+import { ago } from './ago';
 import { basename, byId, el } from './dom';
 import {
   filterTree,
@@ -43,6 +44,10 @@ const VIEWS: ExtView[] = ['session', 'project', 'everywhere'];
 /** Больше строк DOM не потянет без задержки; остальное находят фильтром. */
 const ROW_LIMIT = 1500;
 
+const MIN_WIDTH = 520;
+const MIN_HEIGHT = 320;
+const KEY_STEP = 16;
+
 const flag = (key: string): boolean => readPref(`cyborg.extensions.${key}`) === '1';
 
 const last = {
@@ -78,6 +83,8 @@ export class ExtensionsDialog {
   private readonly hubContent = new Map<string, HubContent>();
   private readonly health = new Map<string, ProbeEntry>();
   private readonly overrides = new Map<string, boolean>();
+  private usage: UsageReply | null = null;
+  private usageLoading = false;
   private panel: Panel | null = null;
   private running = false;
   private message = '';
@@ -95,6 +102,7 @@ export class ExtensionsDialog {
     }
     bindTablist(tabs, 'Раздел');
     bindTree(this.tree, 'Расширения');
+    this.bindResize();
 
     for (const button of this.viewButtons) button.addEventListener('click', () => this.setView(button.dataset.view as ExtView));
     this.filter.addEventListener('input', () => {
@@ -141,7 +149,10 @@ export class ExtensionsDialog {
   open(tab: ExtensionsTab = last.tab): void {
     this.ctx = this.host.context();
     last.tab = tab;
-    if (!this.dialog.open) this.dialog.showModal();
+    if (!this.dialog.open) {
+      this.restoreSize();
+      this.dialog.showModal();
+    }
     this.filter.value = last.query;
     this.overrides.clear();
     this.render();
@@ -188,7 +199,23 @@ export class ExtensionsDialog {
     }
     this.loaded = true;
     this.render();
+    void this.loadUsage();
     if (last.tab === 'hubs') void this.loadHubs(force);
+  }
+
+  /** Отдельно от reload: первый проход по журналам сессий идёт десятки секунд и не держит список. */
+  private async loadUsage(): Promise<void> {
+    if (this.usageLoading) return;
+    this.usageLoading = true;
+    this.render();
+    try {
+      this.usage = await api.extensionsUsage();
+    } catch (error) {
+      this.usage = { calls: {}, files: 0, error: `Статистика вызовов: ${String(error instanceof Error ? error.message : error)}` };
+    } finally {
+      this.usageLoading = false;
+    }
+    if (this.dialog.open) this.render();
   }
 
   private async loadHubs(force: boolean): Promise<void> {
@@ -205,7 +232,7 @@ export class ExtensionsDialog {
   }
 
   private data(): ExtData {
-    return { reply: this.reply, hubs: this.hubs, hubContent: this.hubContent, health: this.health };
+    return { reply: this.reply, hubs: this.hubs, hubContent: this.hubContent, health: this.health, usage: this.usage?.calls ?? null };
   }
 
   private build(): ExtNode[] {
@@ -268,6 +295,8 @@ export class ExtensionsDialog {
     if (this.loaded && !hubs) {
       if (this.reply.claude.problem) lines.push(this.reply.claude.problem);
       lines.push(...this.reply.problems.slice(0, 2));
+      if (this.usageLoading && last.tab !== 'marketplaces') lines.push('Считаю вызовы по журналам сессий…');
+      else if (this.usage?.error) lines.push(this.usage.error);
       if (this.reply.claude.version && !lines.length) lines.push(`Claude Code ${this.reply.claude.version}`);
     }
     this.status.textContent = lines.join('. ');
@@ -283,6 +312,7 @@ export class ExtensionsDialog {
     const meta = el('span', 'ext-meta');
     for (const badge of n.badges) meta.append(el('span', 'ext-badge', badge));
     if (n.detail) meta.append(el('span', '', n.detail));
+    if (n.calls) meta.append(callsLabel(n.calls));
     for (const { label, action } of n.actions) {
       const button = el('button', '', label);
       button.setAttribute('type', 'button');
@@ -300,6 +330,72 @@ export class ExtensionsDialog {
       });
     }
     return row;
+  }
+
+  // ---------- размер ----------
+
+  private restoreSize(): void {
+    const [width, height] = (readPref('cyborg.extensions.size') ?? '').split(',').map(Number);
+    if (!width || !height) return;
+    this.dialog.style.width = `${Math.max(MIN_WIDTH, Math.min(width, window.innerWidth * 0.98))}px`;
+    this.dialog.style.height = `${Math.max(MIN_HEIGHT, Math.min(height, window.innerHeight * 0.94))}px`;
+  }
+
+  /** Ручка в углу; двойной щелчок по ней возвращает размер по умолчанию. */
+  private bindResize(): void {
+    const grip = byId('ext-grip');
+    const resize = (width: number, height: number, top: number) => {
+      this.dialog.style.width = `${Math.round(Math.max(MIN_WIDTH, Math.min(width, window.innerWidth * 0.98)))}px`;
+      this.dialog.style.height = `${Math.round(Math.max(MIN_HEIGHT, Math.min(height, window.innerHeight - top - 8)))}px`;
+    };
+    const save = () => {
+      const now = this.dialog.getBoundingClientRect();
+      writePref('cyborg.extensions.size', `${Math.round(now.width)},${Math.round(now.height)}`);
+    };
+    const reset = () => {
+      this.dialog.style.width = '';
+      this.dialog.style.height = '';
+      writePref('cyborg.extensions.size', '');
+    };
+    grip.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      grip.setPointerCapture(event.pointerId);
+      const box = this.dialog.getBoundingClientRect();
+      const start = { x: event.clientX, y: event.clientY };
+      let moved = false;
+      const move = (e: PointerEvent) => {
+        if (e.clientX === start.x && e.clientY === start.y) return;
+        moved = true;
+        // Окно стоит по центру: правый край идёт за курсором, только если ширина растёт вдвое быстрее.
+        resize(box.width + 2 * (e.clientX - start.x), box.height + e.clientY - start.y, box.top);
+      };
+      const up = () => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        grip.removeEventListener('pointercancel', up);
+        // Щелчок без сдвига не закрепляет размер: окно остаётся подстраиваться под содержимое.
+        if (moved) save();
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+      grip.addEventListener('pointercancel', up);
+    });
+    grip.addEventListener('dblclick', reset);
+    grip.addEventListener('keydown', (event) => {
+      if (event.key === 'Home') {
+        event.preventDefault();
+        reset();
+        return;
+      }
+      const step = event.shiftKey ? KEY_STEP * 4 : KEY_STEP;
+      const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
+      if (!delta) return;
+      event.preventDefault();
+      const box = this.dialog.getBoundingClientRect();
+      resize(box.width + 2 * delta[0], box.height + delta[1], box.top);
+      save();
+    });
   }
 
   // ---------- проверка связи ----------
@@ -325,6 +421,10 @@ export class ExtensionsDialog {
   // ---------- действия ----------
 
   private async act(action: NodeAction): Promise<void> {
+    if (action.type === 'open-url') {
+      void api.openUrl(action.url);
+      return;
+    }
     if (action.type === 'hub-toggle') {
       const result = await api.changeHubs({ op: action.hub.enabled ? 'disable' : 'enable', id: action.hub.id });
       this.afterHubChange(result);
@@ -497,4 +597,15 @@ export class ExtensionsDialog {
     result.textContent = message;
     byId('ext-action-cancel').textContent = 'Закрыть';
   }
+}
+
+function callsLabel(calls: UsageCount): HTMLElement {
+  if (!calls.count) {
+    const none = el('span', 'ext-usage none', 'не вызывался');
+    none.title = 'По журналам сессий Claude Code на этом компьютере';
+    return none;
+  }
+  const label = el('span', 'ext-usage', `вызовов ${calls.count}${calls.last ? ` · ${ago(calls.last, Date.now())}` : ''}`);
+  label.title = `Вызовов по журналам сессий Claude Code на этом компьютере: ${calls.count}${calls.last ? `; последний ${new Date(calls.last).toLocaleString('ru-RU')}` : ''}`;
+  return label;
 }
