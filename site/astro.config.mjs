@@ -39,13 +39,27 @@ const baseLinks = defineMdastPlugin({
   },
 });
 
+// Блок ```mermaid остаётся текстом в <pre class="mermaid">; рисует его скрипт на клиенте (components/Head.astro),
+// и только на страницах, где такие блоки есть.
+const mermaidBlocks = defineMdastPlugin({
+  name: 'mermaid-blocks',
+  code(node, ctx) {
+    if (node.lang !== 'mermaid') return;
+    ctx.replaceNode(node, {
+      type: 'mermaid',
+      children: [{ type: 'text', value: node.value }],
+      data: { hName: 'pre', hProperties: { className: ['mermaid'] } },
+    });
+  },
+});
+
 const ogImage = `${SITE}${BASE}/og.png`;
 
 export default defineConfig({
   site: SITE,
   base: BASE,
   trailingSlash: 'always',
-  markdown: { processor: satteri({ mdastPlugins: [baseLinks] }) },
+  markdown: { processor: satteri({ mdastPlugins: [baseLinks, mermaidBlocks] }) },
   vite: { plugins: [resolveFromSite], resolve: { alias: { '@site': siteSrc } } },
   integrations: [
     starlight({
@@ -58,6 +72,7 @@ export default defineConfig({
       social: [{ icon: 'github', label: 'GitHub', href: REPO }],
       editLink: { baseUrl: `${REPO}/edit/master/site/` },
       customCss: ['./src/styles/theme.css'],
+      components: { Head: './src/components/Head.astro' },
       lastUpdated: false,
       // Страницы лежат вне src/content/docs: без этого Starlight не обработает в них
       // врезки (:::tip) и ссылки у заголовков.
