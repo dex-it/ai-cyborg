@@ -1,21 +1,11 @@
 ---
 title: "Как это устроено"
-description: "Устройство Cyborg: Electron, pty, хуки Claude Code, git и трекеры через CLI."
+description: "Устройство Cyborg: Electron, pty, хуки Claude Code, git и трекеры через CLI; архитектура со схемами."
 ---
 
 Cyborg - Electron-приложение на TypeScript. Сессии запускаются в pty ([node-pty](https://github.com/microsoft/node-pty)), терминал - [xterm.js](https://xtermjs.org/), просмотр файлов - [Monaco](https://microsoft.github.io/monaco-editor/). Всё, что умеет Cyborg сверх терминала, он узнаёт из источников: событий хуков Claude Code, вызовов `git`, вызовов `gh` / `glab` и `jira`, чтения файлов Claude Code (настройки, плагины, журналы сессий в `~/.claude/projects`), вызовов `claude plugin` и `claude mcp` из окна «Расширения» и https-запросов за списками хабов магазинов.
 
-```text
-┌─ окно Cyborg (Electron) ───────────────────────────────┐
-│  Интерфейс: терминал, дерево, просмотр                 │
-│        ↕  мост preload                                 │
-│  Главный процесс ──────────┬── pty ──→ claude (CLI)    │
-│        ↑                   │                  │        │
-│        └── хуки: каталог, активность ─────────┘        │
-│                            ├──→ git                    │
-│                            └──→ gh / glab / jira       │
-└────────────────────────────────────────────────────────┘
-```
+Схемы, состав модулей, жизнь сессии и принятые решения - на странице [«Архитектура»](/concepts/architecture/).
 
 ## Процессы и граница
 
@@ -25,6 +15,7 @@ Cyborg - Electron-приложение на TypeScript. Сессии запус�
 
 ## Что дальше
 
+- [Архитектура](/concepts/architecture/) - процессы, мост, внешние программы, поток событий, границы доверия.
 - [Хуки и слежение за сессией](/concepts/hooks/) - как Cyborg узнаёт, что делает сессия.
 - [git только на чтение](/concepts/git-safety/) - как защищены вызовы git над чужими репозиториями.
 - [Данные и каталоги](/concepts/data/) - что Cyborg хранит и где.
