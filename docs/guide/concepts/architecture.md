@@ -17,83 +17,27 @@ Cyborg - Electron-приложение на TypeScript вокруг обычно
 
 ## Общая схема
 
-<figure class="arch-figure">
-<div class="arch-scroll">
-<svg class="arch" viewBox="0 0 760 446" role="img" aria-label="Схема: интерфейс и главный процесс внутри окна Electron соединены мостом preload; главный процесс запускает claude, git, gh, glab, jira-cli, claude plugin и ходит по https; читает и пишет файл воркспейса и папку настроек, читает файлы Claude Code.">
-  <defs>
-    <marker id="arr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 1L10 5L0 9z" /></marker>
-  </defs>
+```mermaid
+flowchart LR
+  accTitle: Общая схема Cyborg
+  accDescr: Интерфейс и главный процесс внутри окна Electron соединены мостом preload. Главный процесс запускает внешние программы (claude, git, gh, glab, jira-cli, claude plugin), ходит по https и работает с файлом воркспейса, папкой настроек и файлами Claude Code.
 
-  <rect class="zone" x="8" y="8" width="478" height="340" rx="10" />
-  <text class="zone-label" x="22" y="30">Окно Cyborg (Electron)</text>
+  subgraph win["Окно Cyborg (Electron)"]
+    direction LR
+    UI["<b>Интерфейс</b><br/>песочница, без Node<br/>xterm, дерево, Monaco"] <--> BR["<b>preload</b><br/>window.cyborg"] <--> MAIN["<b>Главный процесс</b><br/>вся работа с ОС<br/>проверка путей и аргументов"]
+  end
 
-  <rect class="box" x="26" y="48" width="168" height="270" rx="8" />
-  <text class="title" x="110" y="76" text-anchor="middle">Интерфейс</text>
-  <text class="sub" x="110" y="96" text-anchor="middle">renderer, песочница</text>
-  <text class="sub" x="110" y="130" text-anchor="middle">терминал xterm</text>
-  <text class="sub" x="110" y="152" text-anchor="middle">дерево, просмотр Monaco</text>
-  <text class="sub" x="110" y="174" text-anchor="middle">панели задач, MR, статус</text>
-  <text class="sub" x="110" y="196" text-anchor="middle">поиск и расширения</text>
-  <text class="sub" x="110" y="218" text-anchor="middle">кнопки-команды</text>
-  <text class="sub" x="110" y="252" text-anchor="middle">без Node и доступа к ОС</text>
+  MAIN <-->|"pty и хуки"| CLAUDE["<b>claude</b> - нативная сессия"]
+  MAIN --> GIT["<b>git</b> - status, diff, grep, switch"]
+  MAIN --> TR["<b>gh, glab, jira-cli</b> - задачи, MR, Jira"]
+  MAIN --> PLG["<b>claude plugin</b> - магазины, плагины"]
+  MAIN --> NET["<b>https</b> - api.github.com, хабы"]
+  MAIN <--> WS[("<b>Файл воркспейса</b> - проекты, кнопки")]
+  MAIN <--> CFG[("<b>Папка настроек</b> - JSON, события")]
+  MAIN -->|"только чтение"| CC[("<b>Файлы Claude Code</b> - ~/.claude, .mcp.json")]
+```
 
-  <rect class="box accent" x="214" y="48" width="32" height="270" rx="8" />
-  <text class="title" x="230" y="183" text-anchor="middle" transform="rotate(-90 230 183)">preload · window.cyborg</text>
-
-  <rect class="box" x="266" y="48" width="204" height="270" rx="8" />
-  <text class="title" x="368" y="76" text-anchor="middle">Главный процесс</text>
-  <text class="sub" x="368" y="96" text-anchor="middle">Node, вся работа с ОС</text>
-  <text class="sub" x="368" y="130" text-anchor="middle">сессии в pty, события хуков</text>
-  <text class="sub" x="368" y="152" text-anchor="middle">git, поиск</text>
-  <text class="sub" x="368" y="174" text-anchor="middle">трекеры, Jira, статус</text>
-  <text class="sub" x="368" y="196" text-anchor="middle">расширения и хабы</text>
-  <text class="sub" x="368" y="218" text-anchor="middle">проекты, воркспейс, хранилища</text>
-  <rect class="box accent" x="280" y="248" width="176" height="52" rx="6" />
-  <text class="title" x="368" y="270" text-anchor="middle">граница доверия</text>
-  <text class="sub" x="368" y="288" text-anchor="middle">пути и формы аргументов</text>
-
-  <path class="edge" d="M194 183 H214" marker-start="url(#arr-a)" marker-end="url(#arr-a)" />
-  <path class="edge" d="M246 183 H266" marker-start="url(#arr-a)" marker-end="url(#arr-a)" />
-
-  <rect class="box ext" x="548" y="52" width="198" height="46" rx="8" />
-  <text class="title" x="647" y="73" text-anchor="middle">claude</text>
-  <text class="sub" x="647" y="90" text-anchor="middle">CLI в pty, хуки</text>
-  <rect class="box ext" x="548" y="112" width="198" height="46" rx="8" />
-  <text class="title" x="647" y="133" text-anchor="middle">git</text>
-  <text class="sub" x="647" y="150" text-anchor="middle">status, diff, grep, switch</text>
-  <rect class="box ext" x="548" y="172" width="198" height="46" rx="8" />
-  <text class="title" x="647" y="193" text-anchor="middle">gh · glab · jira-cli</text>
-  <text class="sub" x="647" y="210" text-anchor="middle">задачи, MR, Jira</text>
-  <rect class="box ext" x="548" y="232" width="198" height="46" rx="8" />
-  <text class="title" x="647" y="253" text-anchor="middle">claude plugin · mcp list</text>
-  <text class="sub" x="647" y="270" text-anchor="middle">магазины, плагины</text>
-  <rect class="box ext" x="548" y="292" width="198" height="46" rx="8" />
-  <text class="title" x="647" y="313" text-anchor="middle">https</text>
-  <text class="sub" x="647" y="330" text-anchor="middle">api.github.com, хабы</text>
-
-  <path class="edge" d="M470 75 H548" marker-start="url(#arr-a)" marker-end="url(#arr-a)" />
-  <path class="edge" d="M470 135 H548" marker-end="url(#arr-a)" />
-  <path class="edge" d="M470 195 H548" marker-end="url(#arr-a)" />
-  <path class="edge" d="M470 255 H548" marker-end="url(#arr-a)" />
-  <path class="edge" d="M470 315 H548" marker-end="url(#arr-a)" />
-
-  <rect class="box" x="8" y="372" width="236" height="62" rx="8" />
-  <text class="title" x="126" y="395" text-anchor="middle">Файл воркспейса</text>
-  <text class="sub" x="126" y="413" text-anchor="middle">проекты и кнопки, замок рядом</text>
-  <rect class="box" x="262" y="372" width="236" height="62" rx="8" />
-  <text class="title" x="380" y="395" text-anchor="middle">Папка настроек Cyborg</text>
-  <text class="sub" x="380" y="413" text-anchor="middle">JSON-файлы, события сессий</text>
-  <rect class="box" x="516" y="372" width="236" height="62" rx="8" />
-  <text class="title" x="634" y="395" text-anchor="middle">Файлы Claude Code</text>
-  <text class="sub" x="634" y="413" text-anchor="middle">~/.claude, .claude/, .mcp.json: чтение</text>
-
-  <path class="edge" d="M290 318 V358 H126 V372" marker-start="url(#arr-a)" marker-end="url(#arr-a)" />
-  <path class="edge" d="M380 318 V372" marker-start="url(#arr-a)" marker-end="url(#arr-a)" />
-  <path class="edge" d="M634 372 V358 H455 V318" marker-end="url(#arr-a)" />
-</svg>
-</div>
-<figcaption>Стрелки - вызовы и чтение. У `claude` связь двусторонняя: ввод и вывод терминала, события хуков. Файлы Claude Code Cyborg только читает, а меняет их вызовом `claude plugin`.</figcaption>
-</figure>
+Файлы Claude Code Cyborg только читает, а меняет их вызовом `claude plugin`.
 
 ### Что где лежит
 
@@ -119,59 +63,29 @@ Cyborg - Electron-приложение на TypeScript вокруг обычно
 
 ## Жизнь сессии
 
-<figure class="arch-figure">
-<div class="arch-scroll">
-<svg class="arch" viewBox="0 0 760 490" role="img" aria-label="Последовательность: интерфейс просит создать сессию, главный процесс запускает claude в pty, вывод и ввод идут через главный процесс, хуки claude дописывают события в файл, главный процесс читает файл и сообщает интерфейсу.">
-  <defs>
-    <marker id="arr-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0 1L10 5L0 9z" /></marker>
-  </defs>
+```mermaid
+sequenceDiagram
+  accTitle: Жизнь сессии
+  accDescr: Интерфейс просит создать сессию, главный процесс запускает claude в pty, вывод и ввод идут через главный процесс, хуки дописывают события в файл, главный процесс читает файл и сообщает интерфейсу.
 
-  <rect class="box" x="30" y="10" width="140" height="36" rx="8" />
-  <text class="title" x="100" y="33" text-anchor="middle">Интерфейс</text>
-  <rect class="box accent" x="220" y="10" width="140" height="36" rx="8" />
-  <text class="title" x="290" y="33" text-anchor="middle">Главный процесс</text>
-  <rect class="box ext" x="410" y="10" width="140" height="36" rx="8" />
-  <text class="title" x="480" y="33" text-anchor="middle">claude в pty</text>
-  <rect class="box ext" x="600" y="10" width="140" height="36" rx="8" />
-  <text class="title" x="670" y="33" text-anchor="middle">файл событий</text>
+  autonumber
+  participant UI as Интерфейс
+  participant M as Главный процесс
+  participant C as claude в pty
+  participant E as Файл событий
 
-  <line class="life" x1="100" y1="46" x2="100" y2="476" />
-  <line class="life" x1="290" y1="46" x2="290" y2="476" />
-  <line class="life" x1="480" y1="46" x2="480" y2="476" />
-  <line class="life" x1="670" y1="46" x2="670" y2="476" />
+  UI->>M: session:create (каталог из репозиториев проекта)
+  M->>C: запуск в pty: --settings, --add-dir, промпт
+  C-->>M: вывод терминала
+  M-->>UI: session:data
+  UI->>M: session:input
+  M->>C: ввод в pty
+  C->>E: хук дописывает JSON (Stop, PostToolUse, Notification…)
+  E-->>M: fs.watch, дочитывает хвост
+  M-->>UI: cwd, activity, suggest, waiting
+```
 
-  <path class="edge" d="M100 92 H284" marker-end="url(#arr-b)" />
-  <text class="msg" x="195" y="84" text-anchor="middle"><tspan class="num">1</tspan>  session:create</text>
-  <text class="sub" x="195" y="108" text-anchor="middle">каталог из репозиториев проекта</text>
-
-  <path class="edge" d="M290 150 H474" marker-end="url(#arr-b)" />
-  <text class="msg" x="385" y="142" text-anchor="middle"><tspan class="num">2</tspan>  запуск в pty</text>
-  <text class="sub" x="385" y="166" text-anchor="middle">--settings, --add-dir, промпт</text>
-
-  <path class="edge" d="M480 208 H296" marker-end="url(#arr-b)" />
-  <text class="msg" x="385" y="200" text-anchor="middle"><tspan class="num">3</tspan>  вывод терминала</text>
-  <path class="edge" d="M290 232 H106" marker-end="url(#arr-b)" />
-  <text class="msg" x="195" y="224" text-anchor="middle">session:data</text>
-
-  <path class="edge" d="M100 280 H284" marker-end="url(#arr-b)" />
-  <text class="msg" x="195" y="272" text-anchor="middle"><tspan class="num">4</tspan>  session:input</text>
-  <path class="edge" d="M290 304 H474" marker-end="url(#arr-b)" />
-  <text class="msg" x="385" y="296" text-anchor="middle">ввод в pty</text>
-
-  <path class="edge" d="M480 356 H664" marker-end="url(#arr-b)" />
-  <text class="msg" x="575" y="348" text-anchor="middle"><tspan class="num">5</tspan>  хук дописывает JSON</text>
-  <text class="sub" x="575" y="380" text-anchor="middle">Stop, PostToolUse, Notification…</text>
-
-  <path class="edge" d="M670 412 H296" marker-end="url(#arr-b)" />
-  <text class="msg" x="480" y="404" text-anchor="middle"><tspan class="num">6</tspan>  fs.watch: дочитывает хвост</text>
-
-  <path class="edge" d="M290 454 H106" marker-end="url(#arr-b)" />
-  <text class="msg" x="195" y="446" text-anchor="middle"><tspan class="num">7</tspan>  cwd, activity,</text>
-  <text class="msg" x="195" y="470" text-anchor="middle">suggest, waiting</text>
-</svg>
-</div>
-<figcaption>Шаги 3 и 4 идут всё время, пока сессия работает; шаги 5-7 - по событиям хуков.</figcaption>
-</figure>
+Шаги 3-6 идут всё время, пока сессия работает; шаги 7-9 - по событиям хуков.
 
 - **Запуск.** `$SHELL -lc 'exec claude --settings "$CYBORG_SETTINGS" "$@"'`: логин-шелл даёт `PATH` пользователя. Каталог сессии принимается, только если он входит в репозитории проекта.
 - **События.** Хуки `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `Notification` дописывают JSON в файл этой сессии (каталог `0700`, файл `0600`). Файл удаляется вместе с сессией.
@@ -196,41 +110,17 @@ Cyborg - Electron-приложение на TypeScript вокруг обычно
 
 ## Границы доверия
 
-<figure class="arch-figure">
-<div class="arch-scroll">
-<svg class="arch" viewBox="0 0 760 140" role="img" aria-label="Путь запроса: интерфейс вызывает метод моста, обработчик главного процесса проверяет форму аргументов и путь, затем запускается программа, и интерфейс получает результат или причину отказа.">
-  <defs>
-    <marker id="arr-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0 1L10 5L0 9z" /></marker>
-  </defs>
-  <rect class="box" x="10" y="20" width="160" height="100" rx="8" />
-  <text class="title" x="90" y="46" text-anchor="middle">Интерфейс</text>
-  <text class="sub" x="90" y="68" text-anchor="middle">вызов метода моста</text>
-  <text class="sub" x="90" y="88" text-anchor="middle">аргументам не верят</text>
+```mermaid
+flowchart LR
+  accTitle: Путь запроса через границу доверия
+  accDescr: Интерфейс вызывает метод моста, обработчик главного процесса проверяет форму и путь, затем запускается программа, интерфейс получает результат или причину отказа.
 
-  <rect class="box accent" x="205" y="20" width="160" height="100" rx="8" />
-  <text class="title" x="285" y="46" text-anchor="middle">Обработчик</text>
-  <text class="sub" x="285" y="68" text-anchor="middle">форма и пределы</text>
-  <text class="sub" x="285" y="88" text-anchor="middle">путь в разрешённых</text>
-  <text class="sub" x="285" y="106" text-anchor="middle">корнях</text>
-
-  <rect class="box" x="400" y="20" width="160" height="100" rx="8" />
-  <text class="title" x="480" y="46" text-anchor="middle">Запуск программы</text>
-  <text class="sub" x="480" y="68" text-anchor="middle">аргументы списком,</text>
-  <text class="sub" x="480" y="86" text-anchor="middle">не строкой</text>
-  <text class="sub" x="480" y="106" text-anchor="middle">таймаут, предел вывода</text>
-
-  <rect class="box" x="595" y="20" width="160" height="100" rx="8" />
-  <text class="title" x="675" y="46" text-anchor="middle">Ответ</text>
-  <text class="sub" x="675" y="68" text-anchor="middle">данные для показа</text>
-  <text class="sub" x="675" y="88" text-anchor="middle">или причина отказа</text>
-
-  <path class="edge" d="M170 70 H205" marker-end="url(#arr-c)" />
-  <path class="edge" d="M365 70 H400" marker-end="url(#arr-c)" />
-  <path class="edge" d="M560 70 H595" marker-end="url(#arr-c)" />
-</svg>
-</div>
-<figcaption>Любой канал главного процесса проходит этот путь; на отказе запуска не происходит.</figcaption>
-</figure>
+  UI["<b>Интерфейс</b><br/>вызов метода моста<br/>аргументам не верят"] --> H
+  H["<b>Обработчик</b><br/>форма и пределы<br/>путь в разрешённых корнях"] -->|"допустимо"| RUN
+  RUN["<b>Запуск программы</b><br/>аргументы списком, не строкой<br/>таймаут, предел вывода"] --> ANS
+  H -->|"отказ: запуска нет"| ANS
+  ANS["<b>Ответ</b><br/>данные для показа<br/>или причина отказа"]
+```
 
 - **Окно.** Изоляция контекста и песочница включены, Node в интерфейсе нет. Новых окон нет (`setWindowOpenHandler` отклоняет), переходов по ссылкам внутри окна нет (`will-navigate`); ссылка открывается системным браузером и только если это `http` или `https`.
 - **Пути.** Абсолютный, без сегмента `..`, внутри репозиториев проектов, каталогов и текущих каталогов работающих сессий либо выбранный вами в диалоге (`AllowedPaths`). Сессию можно запустить только в репозитории проекта.
