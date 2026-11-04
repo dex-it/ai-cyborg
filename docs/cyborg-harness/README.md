@@ -17,7 +17,7 @@
 | Идея и обоснование на одной странице, canvas | [00-strategy/one-pager.md](00-strategy/one-pager.md) |
 | BRD и три фичи (ядро и загрузчик, точки расширения и провайдеры, миграция и паритет) | [01-product/](01-product/brd.md) |
 | Сценарии: пользователь, сбой плагина, автор, мейнтейнер, второй агент, установка | [02-use-cases/](02-use-cases/README.md) |
-| Общая архитектура: ядро, его задачи, взаимодействие плагинов, базовая часть как пример; пересматривает границу ядра из SAD | [03-architecture/design/core-and-plugins.md](03-architecture/design/core-and-plugins.md) |
+| SAD2 - общая архитектура: цели ядра, взаимодействие плагинов, базовая часть как пример, этапы, риски; пересматривает границу ядра из SAD | [03-architecture/design/sad2.md](03-architecture/design/sad2.md) |
 | Устройство: SAD и 8 ADR | [03-architecture/design/sad.md](03-architecture/design/sad.md), [adr/](03-architecture/adr/) |
 | Как проверяем, что ничего не потеряно | [04-verification/parity-plan.md](04-verification/parity-plan.md) |
 | Дорожная карта по фазам P0-P5 | [05-plans/roadmap.md](05-plans/roadmap.md) |
