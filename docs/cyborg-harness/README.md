@@ -19,6 +19,7 @@
 | BRD и три фичи (ядро и загрузчик, точки расширения и провайдеры, миграция и паритет) | [01-product/](01-product/brd.md) |
 | Сценарии: пользователь, сбой плагина, автор, мейнтейнер, второй агент, установка | [02-use-cases/](02-use-cases/README.md) |
 | SAD2 - целевая архитектура: десять целей ядра, критерий компактности, взаимодействие плагинов, базовая часть как пример, этапы, риски | [03-architecture/design/sad2.md](03-architecture/design/sad2.md) |
+| Вопросы к автору SAD2 и спорные моменты: позиции, итог проверки, предложения, кто решает | [03-architecture/design/sad2-disputed-points.md](03-architecture/design/sad2-disputed-points.md) |
 | SAD - детали устройства; частично заменён SAD2 (где расходятся, действует SAD2) | [03-architecture/design/sad.md](03-architecture/design/sad.md) |
 | 14 ADR: 0001-0008 первоначальные (часть заменена или уточнена), 0009-0014 по SAD2 и ресёрчу-2 (граница ядра, контракты, этапы изоляции, хосты и pty-хост, UI плагина, секреты, config и state) | [adr/](03-architecture/adr/) |
 | Как проверяем, что ничего не потеряно | [04-verification/parity-plan.md](04-verification/parity-plan.md) |
