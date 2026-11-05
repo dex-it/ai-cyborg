@@ -1,13 +1,22 @@
 ---
 id: ADR-CH-0004
 status: review
-date: 2026-11-02
-relates_to: product, cyborg-harness, ADR-0003, ADR-0012, ADR-0016
+date: 2026-11-05
+relates_to: product, cyborg-harness, ADR-0003, ADR-0012, ADR-0016, ADR-CH-0010, ADR-CH-0012
+refined_by: ADR-CH-0010
 origin: derived
 quality-checks: входных записей нет
 ---
 
 # ADR-CH-0004 Контракт провайдера агента: pty-first, ядро запускает процесс, провайдер описывает запуск и адаптирует события
+
+> Уточнён ADR-CH-0010: содержание контракта (pty-first, `resume`, нормализованные события, типизированное восстановление) остаётся в силе, но агент - обычный плагин, поставщик контракта `cyborg.agent`, а не отдельная точка расширения.
+
+Что меняется в формулировке (остальное решение без изменений):
+
+- Вместо `AgentProvider` как вида провайдера в SAD §9.1 - контракт `cyborg.agent` в `@cyborg/contracts` ([SAD2, раздел 5](../design/sad2.md#5-пример-базовая-часть)); потребитель - `sessions` (кратность `many`).
+- Пункт 2: плагин решает, что запустить (`ctx.os.pty.spawn`, право `pty` в манифесте), процесс держит pty-хост ядра ([ADR-CH-0012](ADR-CH-0012-hosts-watchdog-pty-host.md)); `LaunchSpec` собирает плагин, ядро проверяет право.
+- Пункт 6: waterfall `session.prompt` заменён контрактом-источником фрагментов промпта (`many`), который опрашивает `sessions`; форма - в P1.
 
 > Решение составителя по запросу владельца (2026-11-02), не согласовано; ждёт приёмки. Основано на [ресёрче](../../research/README.md): [bb](../../research/bb.md), [DeepSeek Harness](../../research/deepseek-harness.md), [сравнение](../../research/comparison.md). Устройство целиком - [SAD](../design/sad.md).
 

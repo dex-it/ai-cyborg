@@ -1,13 +1,16 @@
 ---
 id: ADR-CH-0005
-status: review
-date: 2026-11-02
+status: superseded
+superseded_by: ADR-CH-0010
+date: 2026-11-05
 relates_to: product, cyborg-harness, ADR-CH-0001, ADR-CH-0002
 origin: derived
 quality-checks: входных записей нет
 ---
 
 # ADR-CH-0005 Семь точек расширения v1 и три режима событий
+
+> Заменён ADR-CH-0010: вместо семи точек расширения и трёх режимов событий - контракты в манифесте, события входят в контракт владельца, общей шины нет.
 
 > Решение составителя по запросу владельца (2026-11-02), не согласовано; ждёт приёмки. Основано на [ресёрче](../../research/README.md): [bb](../../research/bb.md), [DeepSeek Harness](../../research/deepseek-harness.md), [сравнение](../../research/comparison.md). Устройство целиком - [SAD](../design/sad.md).
 
