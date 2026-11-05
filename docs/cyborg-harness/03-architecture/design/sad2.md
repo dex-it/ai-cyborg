@@ -623,6 +623,7 @@ export function activate(ctx: PluginContext) {
 | Каталог, выбранный в диалоге | `dialog:pickDir` сразу даёт каталог в `AllowedPaths`, нужный `files` и git до сохранения проекта | выбор идёт через `projects` с правом `security.roots`; личная область `granted` не подходит |
 | Бросок файлов ОС в окно | `webUtils.getPathForFile` синхронный и нужен в кадре с целью броска (FR-3004) | принимать drop в оболочке и передавать путь командой; проверить в спайке (вопрос 11) |
 | Решение «показывать ли уведомление» | принимает UI по активной сессии и фокусу окна | `session-notifications` получает фокус из `ctx.window.onFocusChange`, активную сессию - из `cyborg.sessions` |
+| Расхождения матрицы паритета | привязка задачи и MR к сессии, полоса кнопок под терминалом, состав `cyborg.git` (`gitRemotes`, `gitFiles`), цикл `command-buttons` - `trackers`, владелец изоляции сессии, копия повреждённого файла воркспейса, область `path:open` | список с предложениями - [parity-plan, 4.6](../../04-verification/parity-plan.md#46-что-в-матрице-остаётся-открытым); решаются в P0 и P1 до фиксации контрактов |
 | Тесты | `smoke.mjs` по DOM окна, `static-guards.test.ts` по спискам писателей файлов и ключей `localStorage` | переписываются вместе с переносом при сохранении утверждений ([parity-plan](../../04-verification/parity-plan.md)) |
 
 ## 6. Этапы

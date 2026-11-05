@@ -48,7 +48,7 @@ quality-checks: входных записей нет
 
 - **Требование:** `scripts/check-boundaries.mjs` в CI: ядро не импортирует плагины; плагин импортирует только `@cyborg/contracts` и свои модули (ни чужого плагина, ни `node:*`, ни `electron`, [FR-CH-1020](../01-plugin-host/srs.md#fr-ch-1020-дисциплина-первого-этапа-проверяется-тестами)); для кода, ещё не перенесённого в плагин, число прямых обращений к `electron`, `node:*` и `fs` не растёт (счётчик в репозитории, значение можно только уменьшить); общие типы, которые сегодня импортируют 20+ файлов окна из `../main/*`, выносятся в `@cyborg/contracts` до переноса; `experimental_`-члены внесены в реестр аудита.
 - **traced from:** BR-CH-001.
-- **источник:** bb 8 (`check-provider-literal-ratchet`); dsh 6 (`check-workspace-constraints`); [ресёрч-2, 5.2](../../research/sad2-validation.md#52-допущения-sad2-которые-код-нарушает) п. 5 (21 из 40 модулей `src/main` импортируют `node:*`, `electron` или `node-pty` напрямую).
+- **источник:** bb 8 (`check-provider-literal-ratchet`); dsh 6 (`check-workspace-constraints`); [ресёрч-2, 5.2](../../research/sad2-validation.md#52-допущения-sad2-которые-код-нарушает) п. 5 (21 из 38 модулей `src/main` импортируют `node:*`, `electron` или `node-pty` напрямую).
 - **verification:** испытание - тесты проверки на заведомо нарушающих фикстурах.
 - **класс:** Process.
 
