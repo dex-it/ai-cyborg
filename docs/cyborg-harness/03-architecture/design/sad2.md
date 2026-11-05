@@ -611,7 +611,7 @@ export function activate(ctx: PluginContext) {
 
 | Что нужно | Где сегодня | Предложение |
 |---|---|---|
-| Владелец git | восемь каналов `git:*`; `headContent` нужен `viewer` для diff, а у него нет права на процессы; `git:switch` отказывает, если репозиторий занят сессией | плагин `git`, контракт `cyborg.git` (`root`, `branch`, `status`, `headContent`, `branches`, `switch`), право `process` на `git`; потребители `files`, `viewer`, `search`, `trackers`, `command-buttons` |
+| Владелец git | шесть каналов `git:*`; `headContent` нужен `viewer` для diff, а у него нет права на процессы; `git:switch` отказывает, если репозиторий занят сессией | плагин `git`, контракт `cyborg.git` (`root`, `branch`, `status`, `headContent`, `branches`, `switch`), право `process` на `git`; потребители `files`, `viewer`, `search`, `trackers`, `command-buttons` |
 | Кнопки-команды и промпты | `commands.json`, `prompts.json`, подстановки `{branch}` и другие, редакторы | плагин `command-buttons`: раздел `config`, вклад в панель инструментов, динамические сочетания |
 | Окно «Расширения» | `extensions:*`, `hubs:*`: читает `~/.claude/*` и `.mcp.json` репозиториев, запускает `claude` через оболочку, ходит по https | плагин `claude-extensions`; права описываются при переносе |
 | Вклады плагинов в меню | `project:selected` включает пункты «Свойства проекта», «Поиск», «Расширения»; `notifications:toggle`, `session:reveal` | `contributes.menus` в манифесте: пункт, команда, состояние `enabled` и `checked` берётся из контракта владельца |
