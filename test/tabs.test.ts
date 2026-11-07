@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { bindTablist, markTab, selectTab, tabTarget } from '../src/renderer/tabs';
+import { bindTabDrag, bindTablist, markTab, selectTab, tabTarget } from '../src/renderer/tabs';
 
 class FakeTab {
   className = '';
@@ -134,5 +134,77 @@ describe('bindTablist', () => {
     const ev = l.press(l.tabs[0], 'ArrowRight', { ctrlKey: true });
     assert.ok(!ev.prevented);
     assert.equal(l.tabs[1].focused, 0);
+  });
+});
+
+describe('bindTabDrag', () => {
+  class DragTab {
+    draggable = true;
+    classes = new Set<string>();
+    classList = { add: (c: string) => this.classes.add(c), remove: (c: string) => this.classes.delete(c) };
+    closest() {
+      return this;
+    }
+    contains(node: unknown) {
+      return node === this;
+    }
+  }
+  function dragList(n: number) {
+    const tabs = Array.from({ length: n }, () => new DragTab());
+    const handlers: Record<string, (e: any) => void> = {};
+    const l = {
+      contains: (t: unknown) => tabs.includes(t as DragTab),
+      addEventListener: (type: string, fn: (e: any) => void) => (handlers[type] = fn),
+    };
+    const moves: [unknown, unknown][] = [];
+    bindTabDrag(l as unknown as HTMLElement, (from, to) => moves.push([from, to]));
+    const fire = (type: string, target: unknown) => {
+      const ev = {
+        target,
+        prevented: false,
+        preventDefault() {
+          this.prevented = true;
+        },
+        dataTransfer: { setData() {}, effectAllowed: '', dropEffect: '' },
+      };
+      handlers[type](ev);
+      return ev;
+    };
+    return { tabs, moves, fire };
+  }
+
+  it('бросок на другую вкладку списка передаёт пару перетащенная-цель и снимает отметки', () => {
+    const { tabs, moves, fire } = dragList(3);
+    fire('dragstart', tabs[0]);
+    assert.ok(tabs[0].classes.has('dragging'));
+    assert.ok(fire('dragover', tabs[2]).prevented);
+    assert.ok(tabs[2].classes.has('drop-target'));
+    assert.ok(fire('drop', tabs[2]).prevented);
+    fire('dragend', tabs[0]);
+    assert.deepEqual(moves, [[tabs[0], tabs[2]]]);
+    assert.ok(!tabs[2].classes.has('drop-target'));
+    assert.ok(!tabs[0].classes.has('dragging'));
+  });
+
+  it('на себя, на вкладку без draggable и без начатого перетаскивания вкладки бросок не принимается', () => {
+    const { tabs, moves, fire } = dragList(3);
+    assert.ok(!fire('dragover', tabs[1]).prevented, 'тащат не вкладку: строку дерева, файл ОС');
+    fire('dragstart', tabs[0]);
+    assert.ok(!fire('dragover', tabs[0]).prevented);
+    tabs[1].draggable = false;
+    assert.ok(!fire('dragover', tabs[1]).prevented, 'вкладка Claude не двигается и не принимает');
+    fire('drop', tabs[1]);
+    fire('dragend', tabs[0]);
+    assert.deepEqual(moves, []);
+  });
+
+  it('вкладка другого списка не бросается в этот', () => {
+    const a = dragList(2);
+    const b = dragList(2);
+    a.fire('dragstart', a.tabs[0]);
+    assert.ok(!b.fire('dragover', b.tabs[1]).prevented);
+    b.fire('drop', b.tabs[1]);
+    a.fire('dragend', a.tabs[0]);
+    assert.deepEqual(b.moves, []);
   });
 });

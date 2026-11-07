@@ -25,7 +25,7 @@ import { neighborAfterClose } from './neighbor';
 import { returnTarget } from './panel-return';
 import { RenderTickets } from './render-ticket';
 import { asMenuItem, bindList, rove } from './list-keys';
-import { bindTablist, markTab, selectTab } from './tabs';
+import { bindTabDrag, bindTablist, markTab, selectTab } from './tabs';
 import { ExtensionsDialog, type ExtensionsTab } from './extensions-dialog';
 import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
@@ -698,6 +698,14 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   container.style.setProperty('--session', color);
   const innerTabs = el('nav', 'inner-tabs');
   bindTablist(innerTabs, 'Вкладки сессии');
+  bindTabDrag(innerTabs, (from, to) => {
+    session.files = moveItem(
+      session.files,
+      session.files.findIndex((f) => f.tab === from),
+      session.files.findIndex((f) => f.tab === to),
+    );
+    innerTabs.append(...session.files.map((f) => f.tab));
+  });
   const innerPanes = el('div', 'inner-panes');
   const termPane = el('div', 'pane terminal');
   const host = el('div', 'term-host');
@@ -709,6 +717,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   term.open(host);
 
   const stripTab = makeTab('session', '', () => closeSession(session, false));
+  stripTab.draggable = true;
   stripTab.style.setProperty('--session', color);
   sessionList.append(stripTab);
   const claudeTab = makeTab('claude', 'Claude');
@@ -824,7 +833,7 @@ function closeSession(s: Session, force: boolean): void {
   for (const f of s.files) f.viewer.dispose();
   s.stripTab.remove();
   s.container.remove();
-  // Вкладки идут в порядке создания: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
+  // sessions идёт в порядке полосы: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
   const peers = sessions.filter((x) => x.project === s.project);
   sessions.splice(sessions.indexOf(s), 1);
   if (lastSessionOf.get(s.project.id) === s) lastSessionOf.delete(s.project.id);
@@ -853,6 +862,7 @@ function openFile(s: Session, path: string, root: TreeRoot, line?: number): void
   const file: FileTab = { viewer: new FileViewer(path, body), rootLabel: root.label, tab: null as unknown as HTMLElement, pane };
   file.tab = makeTab('file', basename(path), () => closeFile(s, file));
   file.tab.title = path;
+  file.tab.draggable = true;
   file.tab.addEventListener('click', () => showInner(s, file));
   s.innerTabs.append(file.tab);
   s.files.push(file);
@@ -1241,6 +1251,15 @@ newSessionButton.addEventListener('click', (event) => {
 });
 bindTablist(byId('side-tabs'), 'Боковая панель');
 bindTablist(sessionList, 'Сессии');
+bindTabDrag(sessionList, (from, to) => {
+  const moved = moveItem(
+    sessions,
+    sessions.findIndex((s) => s.stripTab === from),
+    sessions.findIndex((s) => s.stripTab === to),
+  );
+  sessions.splice(0, sessions.length, ...moved);
+  sessionList.append(...sessions.map((s) => s.stripTab));
+});
 selectTab(sideFiles, true);
 selectTab(sideHistory, false);
 sideFiles.addEventListener('click', () => showSideView(false));
