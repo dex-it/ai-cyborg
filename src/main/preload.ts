@@ -67,6 +67,8 @@ const api = {
   input: (id: number, data: string): void => ipcRenderer.send('session:input', id, data),
   resize: (id: number, cols: number, rows: number): void => ipcRenderer.send('session:resize', id, cols, rows),
   kill: (id: number): void => ipcRenderer.send('session:kill', id),
+  /** Вкладку по передаче от сессии открыть не удалось: причина вернётся передавшей модели. */
+  handoffFailed: (hid: string, reason: string): void => ipcRenderer.send('session:handoffFailed', hid, reason),
   notify: (id: number, title: string, body: string): void => ipcRenderer.send('session:notify', id, title, body),
   unnotify: (id: number): void => ipcRenderer.send('session:unnotify', id),
   notificationsState: (enabled: boolean): void => ipcRenderer.send('notifications:state', enabled),

@@ -28,6 +28,8 @@ import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
+import { McpServer } from './mcp';
+import { createSessionTools, Handoffs } from './session-tools';
 import { createTaskHandlers, TaskDetailsService } from './task-details';
 import {
   createCliRunner,
@@ -68,6 +70,19 @@ let win: BrowserWindow | null = null;
 const sessions = new SessionManager(app.getPath('userData'), (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
+const handoffs = new Handoffs((request) => {
+  if (!win || win.isDestroyed()) return false;
+  win.webContents.send('session:handoff', request);
+  return true;
+});
+const mcpServer = new McpServer(createSessionTools(sessions, handoffs), app.getVersion());
+// Сессии создаёт окно, а оно грузится дольше, чем поднимается сервер; если порт не дали, сессии работают без MCP Cyborg.
+mcpServer
+  .listen()
+  .then(() => {
+    sessions.mcp = mcpServer;
+  })
+  .catch((error) => console.error('MCP-сервер Cyborg не запущен:', error));
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
 const prompts = new PromptStore(path.join(userData, 'prompts.json'));
@@ -258,6 +273,19 @@ ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, 
 ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?: unknown) => {
   if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
   if (start === undefined) return sessions.create(cwd as string, addDirs as string[]);
+  if (typeof start === 'object' && start !== null && 'handoff' in start) {
+    // Промпт передачи в канал не ходит: интерфейс знает только ключ, текст хранит главный процесс.
+    const handoff = handoffs.take(start.handoff, cwd);
+    if (!handoff) throw new Error('Переданная задача не найдена или устарела');
+    try {
+      const id = sessions.create(cwd as string, addDirs as string[], handoff.prompt);
+      handoff.resolve(id);
+      return id;
+    } catch (error) {
+      handoff.reject(new Error(String(error instanceof Error ? error.message : error).slice(0, 500)));
+      throw error;
+    }
+  }
   const prompt = validateSessionStart(start, prompts.load());
   if (!prompt) throw new Error('Некорректный старт сессии');
   return sessions.create(cwd as string, addDirs as string[], prompt);
@@ -336,6 +364,7 @@ ipcMain.handle('mrs:details', (_event, id: unknown) => {
 ipcMain.on('session:input', (_event, id: unknown, data: unknown) => sessions.write(id, data));
 ipcMain.on('session:resize', (_event, id: unknown, cols: unknown, rows: unknown) => sessions.resize(id, cols, rows));
 ipcMain.on('session:kill', (_event, id: unknown) => sessions.kill(id));
+ipcMain.on('session:handoffFailed', (_event, hid: unknown, reason: unknown) => handoffs.fail(hid, reason));
 
 // Без ссылки уведомление собирает GC, и клик по нему уже некому обработать.
 const shownNotifications = new Map<number, Notification>();
@@ -628,5 +657,6 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => {
   sessions.killAll();
+  mcpServer.close();
   app.quit();
 });

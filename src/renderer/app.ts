@@ -656,11 +656,13 @@ function createTerminal(id: number): Terminal {
   return term;
 }
 
-type StartFrom = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
+type TrackerStart = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
+/** handoff - задача, переданная другой сессией через MCP Cyborg: её текст держит главный процесс. */
+type StartFrom = TrackerStart | { handoff: string };
 
 const refOf = (x: MrRef): MrRef => ({ kind: x.kind, host: x.host, path: x.path, number: x.number });
 
-async function newSession(repo: string, start?: StartFrom): Promise<void> {
+async function newSession(repo: string, start?: TrackerStart): Promise<void> {
   const owner = project;
   if (!owner) return;
   const key = start && ('task' in start ? start.task.key : 'mr' in start ? start.mr.key : `jira:${start.jira.key}`);
@@ -686,7 +688,14 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     : await api.createSession(
         repo,
         addDirs,
-        start && ('task' in start ? { task: refOf(start.task) } : 'mr' in start ? { mr: refOf(start.mr), intent: start.intent } : { jira: { key: start.jira.key } }),
+        start &&
+          ('handoff' in start
+            ? { handoff: start.handoff }
+            : 'task' in start
+              ? { task: refOf(start.task) }
+              : 'mr' in start
+                ? { mr: refOf(start.mr), intent: start.intent }
+                : { jira: { key: start.jira.key } }),
       );
   const root = (await api.gitRoot(repo)) ?? repo;
   const color = sessionColor(colorIndex++);
@@ -761,11 +770,11 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   if (project !== owner) {
     stripTab.hidden = true;
     alignHidden();
-  } else if (start && panel.isOpen) {
-    // Начатая из открытой панели сессия не уводит с панели: пользователь идёт по задачам дальше.
+  } else if (start && (panel.isOpen || 'handoff' in start)) {
+    // Начатая из открытой панели сессия не уводит с панели, переданная другой сессией - от неё: человек переключается сам.
     if (!active) activateSession(session, true);
     else alignHidden();
-    panel.repaint();
+    if (panel.isOpen) panel.repaint();
   } else activateSession(session);
 }
 
@@ -929,6 +938,14 @@ api.on<{ id: number; reason: string }>('session:waiting', ({ id, reason }) => {
   const session = findSession(id);
   session?.stripTab.classList.remove('busy');
   if (session) notifier.waiting(id, `${sessionTitle(session)} · ${session.project.name}`, reason, session === active && document.hasFocus());
+});
+
+api.on<{ hid: string; from: number; repo: string }>('session:handoff', ({ hid, from, repo }) => {
+  const caller = findSession(from);
+  // Проект ищется по передавшей сессии: её вкладка уже в своём проекте, а главный процесс проектов сессий не знает.
+  if (!caller) return api.handoffFailed(hid, 'вкладка передавшей сессии не найдена');
+  if (!caller.project.repos.includes(repo)) return api.handoffFailed(hid, `каталог ${repo} больше не входит в проект ${caller.project.name}`);
+  createSessionView(caller.project, repo, { handoff: hid }).catch((error) => api.handoffFailed(hid, ipcErrorText(error)));
 });
 
 api.on<{ id: number }>('session:reveal', ({ id }) => {

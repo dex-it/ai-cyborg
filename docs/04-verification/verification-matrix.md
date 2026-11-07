@@ -167,7 +167,7 @@ date: 2026-10-26
 | FR-14016 | Переход на страницу магазина | 14-extensions | автотест | `test/extensions-usage.test.ts`, `test/extensions-model.test.ts` |
 | FR-14017 | Размер окна меняется ручкой в углу и помнится | 14-extensions | автотест | `test/static-guards.test.ts` |
 | FR-15001 | Сессия, запущенная Cyborg, подключена к его MCP-серверу своим конфигом | 15-session-mcp | автотест | `src/main/sessions.test.ts`, `test/mcp.test.ts`, `test/static-guards.test.ts` |
-| NFR-15001 | Сервер принимает вызовы только от сессий Cyborg по их токену | 15-session-mcp | автотест | `test/mcp.test.ts`, `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
+| NFR-15001 | Сервер принимает вызовы только от сессий Cyborg по их токену | 15-session-mcp | автотест | `test/mcp.test.ts`, `src/main/sessions.test.ts` |
 | FR-15002 | Протокол: JSON-RPC в POST /mcp без потока SSE | 15-session-mcp | автотест | `test/mcp.test.ts` |
 | FR-15003 | Передача вкладки интерфейсу по одноразовому ключу | 15-session-mcp | автотест | `test/session-tools.test.ts` |
 | FR-15004 | open_session открывает вкладку в том же проекте с заданием первым сообщением | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/mcp.test.ts` |
