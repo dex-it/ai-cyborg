@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 153; с автотестом - 137, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 162; с автотестом - 146, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -166,3 +166,12 @@ date: 2026-10-26
 | FR-14015 | Статистика вызовов по журналам сессий | 14-extensions | автотест | `test/extensions-usage.test.ts`, `test/static-guards.test.ts` |
 | FR-14016 | Переход на страницу магазина | 14-extensions | автотест | `test/extensions-usage.test.ts`, `test/extensions-model.test.ts` |
 | FR-14017 | Размер окна меняется ручкой в углу и помнится | 14-extensions | автотест | `test/static-guards.test.ts` |
+| FR-15001 | Сессия, запущенная Cyborg, подключена к его MCP-серверу своим конфигом | 15-session-mcp | автотест | `src/main/sessions.test.ts`, `test/mcp.test.ts`, `test/static-guards.test.ts` |
+| NFR-15001 | Сервер принимает вызовы только от сессий Cyborg по их токену | 15-session-mcp | автотест | `test/mcp.test.ts`, `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
+| FR-15002 | Протокол: JSON-RPC в POST /mcp без потока SSE | 15-session-mcp | автотест | `test/mcp.test.ts` |
+| FR-15003 | Передача вкладки интерфейсу по одноразовому ключу | 15-session-mcp | автотест | `test/session-tools.test.ts` |
+| FR-15004 | open_session открывает вкладку в том же проекте с заданием первым сообщением | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/mcp.test.ts` |
+| FR-15005 | Состояние сессии для инструментов - по событиям хуков | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
+| FR-15006 | list_sessions перечисляет вкладки проекта с состоянием и хвостом ответа | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
+| FR-15007 | send_to_session пишет в ждущую вкладку вставкой и Enter, не задевая чужой запрос разрешения | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
+| FR-15008 | Очередь сообщений работающей вкладке | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
