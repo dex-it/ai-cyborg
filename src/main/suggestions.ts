@@ -76,3 +76,10 @@ export function parseSuggestions(message: unknown): CommandButton[] {
   }
   return buttons;
 }
+
+/** Ответ без комментария с кнопками в конце: он служебный и читателю ответа не нужен. */
+export function withoutSuggestions(message: string): string {
+  const trimmed = message.trimEnd();
+  const start = trimmed.endsWith(END) ? trimmed.lastIndexOf(MARKER) : -1;
+  return start < 0 ? message : trimmed.slice(0, start).trimEnd();
+}
