@@ -36,6 +36,8 @@ export interface SessionEvent {
   message?: string;
   notification_type?: string;
   last_assistant_message?: string;
+  /** Есть у событий инструментов субагента, в том числе фонового, который работает после Stop главного хода. */
+  agent_id?: string;
   background_tasks?: unknown[];
   session_crons?: unknown[];
 }
@@ -244,14 +246,19 @@ export class SessionManager {
       }
       this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
       if (event.hook_event_name === 'Stop') {
+        // Кнопки относятся к последнему ответу: Stop без них снимает прежние (модель проснулась после фоновой задачи и ответила текстом).
         const buttons = parseSuggestions(event.last_assistant_message);
-        if (buttons.length) {
+        if (buttons.length || session.suggested) {
           this.emit('session:suggest', { id: session.id, buttons });
-          session.suggested = true;
+          session.suggested = buttons.length > 0;
         }
       } else if (event.hook_event_name === 'UserPromptSubmit') {
         session.suggested = false; // кнопки снимает интерфейс по этому же событию
-      } else if (session.suggested && (event.hook_event_name === 'PostToolUse' || (event.hook_event_name === 'Notification' && waitingReason(event)))) {
+      } else if (
+        session.suggested &&
+        // Инструмент фонового субагента - не ход модели: ответ с кнопками уже дан, субагент работает за ним.
+        ((event.hook_event_name === 'PostToolUse' && !event.agent_id) || (event.hook_event_name === 'Notification' && waitingReason(event)))
+      ) {
         // Модель снова работает без запроса человека (фоновая задача, расписание) либо стоит на вопросе: предложение относилось к прошлому ходу,
         // а кнопка с submit отправила бы Enter уже в чужой диалог.
         this.emit('session:suggest', { id: session.id, buttons: [] });
