@@ -260,6 +260,32 @@ test('SessionManager: предложение снимается, когда мо
   manager.kill(id);
 });
 
+test('SessionManager: инструменты фонового субагента предложение не снимают, следующий Stop без кнопок снимает', async (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager, eventsDir } = managerIn(t, events, 60_000);
+  const id = manager.create(os.tmpdir(), []);
+  const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
+  const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
+  const activity = () => events.filter((e) => e.channel === 'session:activity').length;
+  const suggests = () => events.filter((e) => e.channel === 'session:suggest').map((e) => e.payload.buttons.length);
+  const stop = {
+    hook_event_name: 'Stop',
+    background_tasks: [{}],
+    last_assistant_message: 'Жду ревьюера.\n<!-- cyborg-buttons: [{"label":"Сливай","text":"сливай","submit":true}] -->',
+  };
+  const agentTool = { hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'a8f173bea9820a1e1' };
+  append(stop, agentTool, agentTool);
+  await until(() => activity() === 3);
+  assert.deepEqual(suggests(), [1], 'работа фонового субагента предложение не сняла');
+  append({ hook_event_name: 'Stop', last_assistant_message: 'Ревью чистое.' });
+  await until(() => activity() === 4);
+  assert.deepEqual(suggests(), [1, 0], 'новый ответ без кнопок снял предложение прошлого');
+  append({ hook_event_name: 'Stop', last_assistant_message: 'Ещё ответ.' });
+  await until(() => activity() === 5);
+  assert.deepEqual(suggests(), [1, 0], 'без предложения лишних событий нет');
+  manager.kill(id);
+});
+
 // Менеджер с pty, записывающим вызовы; throwing - pty, бросающий на каждом вызове (процесс завершился, дескриптор закрыт).
 function recordingManager(t: { after: (fn: () => void) => void }, throwing = false) {
   const calls: unknown[][] = [];
