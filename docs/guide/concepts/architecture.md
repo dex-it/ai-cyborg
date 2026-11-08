@@ -53,7 +53,7 @@ flowchart LR
 | Область | Модули | Что делает |
 |---|---|---|
 | Сессии | `sessions`, `claude-args`, `events-store`, `session-args`, `history` | pty, хуки, события, история по журналам Claude Code. |
-| Файлы и git | `files`, `allowed-paths`, `open-path`, `git`, `git-search`, `search-run` | Дерево, просмотр, поиск; git только на чтение. |
+| Файлы и git | `files`, `allowed-paths`, `open-path`, `git`, `git-search`, `search-run` | Дерево, просмотр, правка Markdown, поиск; git только на чтение. |
 | Проекты | `projects`, `workspaces` | Файл воркспейса, замок, «Недавние». |
 | Трекеры | `trackers`, `mrs`, `mrs-service`, `task-details`, `jira`, `jira-service` | Задачи, MR, Jira, снимки списков. |
 | Кнопки | `commands`, `command-store`, `prompts`, `prompt-store`, `suggestions` | Наборы кнопок, промпты, предложения модели. |

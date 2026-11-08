@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SearchReply, SearchRequest } from '../shared/search-pattern';
-import type { DirEntry } from './files';
+import type { DirEntry, WriteReply } from './files';
 import { validateSearchRequest } from './search-args';
 
 const OUTSIDE = 'Путь вне репозиториев проектов и каталогов сессий';
@@ -60,7 +60,20 @@ export class AllowedPaths {
   assert(value: unknown): asserts value is string {
     if (!this.allows(value)) throw new Error(OUTSIDE);
   }
+
+  /** Запись сверяет раскрытый путь: символьная ссылка в репозитории иначе дала бы перезаписать файл где угодно. */
+  assertWritable(value: unknown): asserts value is string {
+    this.assert(value);
+    const real = realpath(value);
+    if (real === null) throw new Error('Файл не найден');
+    if (!MARKDOWN.test(value) || !MARKDOWN.test(real)) throw new Error('Править можно только Markdown');
+    if (real.split(path.sep).includes('.git')) throw new Error('В каталог .git писать нельзя');
+    const roots = [...this.roots().filter(isPlainPath), ...this.granted].map(realpath);
+    if (!roots.some((root) => root !== null && isInside(real, root))) throw new Error(OUTSIDE);
+  }
 }
+
+export const MARKDOWN = /\.(md|markdown)$/i;
 
 export interface PathHandlerDeps {
   searchText: (request: SearchRequest) => Promise<SearchReply>;
@@ -71,6 +84,7 @@ export interface PathHandlerDeps {
   listDir: (dir: string) => Promise<DirEntry[]>;
   listFiles: (root: string) => Promise<string[]>;
   readTextFile: (file: string) => Promise<{ content?: string; error?: string }>;
+  writeTextFile: (file: string, content: string, base: string, force: boolean) => Promise<WriteReply>;
   gitRoot: (dir: string) => Promise<string | null>;
   gitBranch: (root: string) => Promise<string | null>;
   gitStatus: (root: string) => Promise<Record<string, string>>;
@@ -107,6 +121,15 @@ export function createPathHandlers(deps: PathHandlerDeps) {
     read(file: unknown) {
       allowed.assert(file);
       return deps.readTextFile(file);
+    },
+    /** Правка Markdown из просмотрщика: base - содержимое, от которого шла правка, force - перезаписать вопреки расхождению. */
+    write(request: unknown) {
+      const { file, content, base, force } = (request ?? {}) as Record<string, unknown>;
+      if (typeof content !== 'string' || typeof base !== 'string' || (force !== undefined && typeof force !== 'boolean')) {
+        throw new Error('Некорректная запись файла');
+      }
+      allowed.assertWritable(file);
+      return deps.writeTextFile(file, content, base, force === true);
     },
     /** Корень каталога сессии (в том числе ушедшей из репозиториев проекта) разрешается тут же: дерево покажет его. */
     async root(dir: unknown) {

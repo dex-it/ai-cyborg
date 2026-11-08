@@ -35,14 +35,16 @@ import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
 import { bindTree, replaceTree, TreeView, type TreeRoot } from './tree';
-import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
+import { applyMonacoFontSize, applyMonacoTheme, FileViewer, type Viewer } from './viewer';
+import { MarkdownViewer } from './md-viewer';
+import { isMarkdown } from './md-links';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 
 interface FileTab {
-  viewer: FileViewer;
+  viewer: Viewer;
   rootLabel: string;
   tab: HTMLElement;
   pane: HTMLElement;
@@ -99,7 +101,7 @@ const repoMenu = byId('repo-menu');
 const filePreview = byId('file-preview');
 // Без активной сессии дерево показывает репозитории проекта; раскрытие держится за проектом.
 const projectTrees = new Map<string, TreeView>();
-let preview: FileViewer | null = null;
+let preview: Viewer | null = null;
 const treeHeader = byId('tree-header');
 const historyEl = byId('history');
 const sideFiles = byId<HTMLButtonElement>('side-files');
@@ -504,7 +506,25 @@ async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
   replaceTree(treeEl, fragment);
 }
 
-function fileHeader(path: string, root: TreeRoot): HTMLElement {
+/** Markdown рендерится и правится по кнопке; ссылка документа открывает файл там же, где открылся бы файл из дерева. */
+function createViewer(path: string, body: HTMLElement, root: TreeRoot, onDirty: (dirty: boolean) => void = () => {}): Viewer {
+  if (!isMarkdown(path)) return new FileViewer(path, body);
+  return new MarkdownViewer(path, body, root.path, {
+    saveKey: shortcut(mac, 'S'),
+    dirtyChanged: onDirty,
+    open: (link) => {
+      if (link.kind === 'web') void api.openUrl(link.url);
+      else if (link.kind === 'file') openAnywhere(link.path, root, link.line);
+    },
+  });
+}
+
+function openAnywhere(path: string, root: TreeRoot, line?: number): void {
+  if (active) openFile(active, path, root, line);
+  else void showPreview(path, root, line);
+}
+
+function fileHeader(path: string, root: TreeRoot, actions: HTMLElement): HTMLElement {
   const rel = path.startsWith(`${root.path}/`) ? path.slice(root.path.length + 1) : path;
   const header = el('div', 'file-header');
   const name = el('span', 'file-name', ` / ${rel}`);
@@ -512,28 +532,29 @@ function fileHeader(path: string, root: TreeRoot): HTMLElement {
   const reveal = el('button', 'file-reveal', 'Открыть в системе');
   reveal.title = 'Открыть файл приложением системы по умолчанию';
   reveal.addEventListener('click', () => void api.openPath(path));
-  header.append(el('span', 'file-root', root.label), name, reveal);
+  header.append(el('span', 'file-root', root.label), name, actions, reveal);
   return header;
 }
 
 async function showPreview(path: string, root: TreeRoot, line?: number): Promise<void> {
   closePreview();
-  const header = fileHeader(path, root);
+  const body = el('div', 'file-body');
+  const viewer = createViewer(path, body, root);
+  const header = fileHeader(path, root, viewer.actions);
   const close = el('button', 'close', '×');
   close.title = 'Закрыть';
   close.addEventListener('click', () => closePreview());
   header.prepend(close);
-  const body = el('div', 'file-body');
   filePreview.replaceChildren(header, body);
   filePreview.classList.add('active');
   empty.hidden = true;
-  preview = new FileViewer(path, body);
-  await preview.load();
-  if (line !== undefined) void preview.reveal(line);
+  preview = viewer;
+  await viewer.load();
+  if (line !== undefined) void viewer.reveal(line);
 }
 
 function closePreview(): void {
-  preview?.dispose();
+  preview?.close();
   preview = null;
   filePreview.replaceChildren();
   filePreview.classList.remove('active');
@@ -840,7 +861,7 @@ function closeSession(s: Session, force: boolean): void {
   notifier.dismiss(s.id);
   commandBars.detach(s.command);
   s.term.dispose();
-  for (const f of s.files) f.viewer.dispose();
+  for (const f of s.files) f.viewer.close();
   s.stripTab.remove();
   s.container.remove();
   // sessions идёт в порядке полосы: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
@@ -865,11 +886,11 @@ function openFile(s: Session, path: string, root: TreeRoot, line?: number): void
     return;
   }
   const pane = el('div', 'pane file');
-  const header = fileHeader(path, root);
   const body = el('div', 'file-body');
-  pane.append(header, body);
+  const file: FileTab = { viewer: null as unknown as Viewer, rootLabel: root.label, tab: null as unknown as HTMLElement, pane };
+  file.viewer = createViewer(path, body, root, (dirty) => file.tab.classList.toggle('dirty', dirty));
+  pane.append(fileHeader(path, root, file.viewer.actions), body);
   s.innerPanes.append(pane);
-  const file: FileTab = { viewer: new FileViewer(path, body), rootLabel: root.label, tab: null as unknown as HTMLElement, pane };
   file.tab = makeTab('file', basename(path), () => closeFile(s, file));
   file.tab.title = path;
   file.tab.draggable = true;
@@ -891,7 +912,7 @@ function labelFiles(s: Session): void {
 
 function closeFile(s: Session, file: FileTab): void {
   const index = s.files.indexOf(file);
-  file.viewer.dispose();
+  file.viewer.close();
   file.tab.remove();
   file.pane.remove();
   s.files.splice(index, 1);
@@ -1464,7 +1485,7 @@ api.on<void>('menu:prompts', () => void promptEditor.open());
 // Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта.
 const searchDialog = new SearchDialog({
   roots: () => (active ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),
-  open: (path, root, line) => (active ? openFile(active, path, root, line) : void showPreview(path, root, line)),
+  open: openAnywhere,
 });
 api.on<SearchMode>('menu:search', (mode) => searchDialog.open(mode));
 // Расширения читаются по репозиториям проекта и по рабочему каталогу активной сессии.

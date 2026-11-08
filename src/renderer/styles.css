@@ -779,10 +779,136 @@ select:disabled {
   text-overflow: ellipsis;
 }
 
-.file-reveal {
+.file-reveal,
+.file-action {
   flex: none;
   padding: 2px 8px;
   font: 12px system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.file-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-unsaved {
+  color: var(--modified);
+  font: 12px system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.tab.dirty .label::after {
+  content: ' ●';
+  color: var(--modified);
+}
+
+/* Отрендеренный Markdown: колонка для чтения, размер шрифта - общий с редактором (D-02 фичи 10). */
+.md-view {
+  height: 100%;
+  overflow: auto;
+  padding: 20px 28px 40px;
+  font: calc(var(--viewer-font-size, 13px) + 1px) / 1.6 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--fg);
+  outline: none;
+}
+
+.md-view > * {
+  max-width: 860px;
+}
+
+.md-view h1,
+.md-view h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-view h1,
+.md-view h2,
+.md-view h3,
+.md-view h4 {
+  margin: 1.4em 0 0.6em;
+  line-height: 1.25;
+}
+
+.md-view > :first-child {
+  margin-top: 0;
+}
+
+.md-view a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.md-view a:hover {
+  text-decoration: underline;
+}
+
+.md-view code {
+  padding: 0.15em 0.35em;
+  font: 0.9em var(--font-mono);
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.md-view pre {
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--bg-side);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.md-view pre code {
+  padding: 0;
+  background: none;
+}
+
+.md-view blockquote {
+  margin: 0 0 1em;
+  padding: 0 1em;
+  color: var(--fg-dim);
+  border-left: 3px solid var(--border-strong);
+}
+
+.md-view table {
+  border-collapse: collapse;
+  margin: 0 0 1em;
+}
+
+.md-view th,
+.md-view td {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+}
+
+.md-view th {
+  background: var(--bg-side);
+}
+
+.md-view img {
+  max-width: 100%;
+}
+
+.md-view img.md-blocked {
+  display: inline-block;
+  min-width: 24px;
+  min-height: 1em;
+  outline: 1px dashed var(--border-strong);
+}
+
+.md-view hr {
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.md-view li > input[type='checkbox'] {
+  margin: 0 0.4em 0 -1.2em;
+}
+
+.md-view ul:has(> li > input[type='checkbox']) {
+  list-style: none;
 }
 
 .file-body {

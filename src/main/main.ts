@@ -9,7 +9,7 @@ import { CommandStore } from './command-store';
 import { savePromptsText } from './prompts';
 import { PromptStore } from './prompt-store';
 import { openablePath, webUrl } from './open-path';
-import { listDir, readTextFile, walkFiles } from './files';
+import { listDir, readTextFile, walkFiles, writeTextFile } from './files';
 import { gitDiffSearch, gitGrep } from './git-search';
 import { SearchRunner } from './search-run';
 import { claudePaths, createClaudeRunner, loadExtensions, probeMcp } from './extensions';
@@ -115,6 +115,7 @@ const paths = createPathHandlers({
   searchText: (request) => searches.run<SearchReply>(`text:${request.root}`, (signal) => gitGrep(request, signal), { hits: [], truncated: false }),
   searchChanges: (request) => searches.run<SearchReply>(`changes:${request.root}`, (signal) => gitDiffSearch(request, signal), { hits: [], truncated: false }),
   readTextFile,
+  writeTextFile,
   gitRoot,
   gitBranch,
   gitStatus,
@@ -150,8 +151,22 @@ app.on('before-quit', () => {
   quitting = true;
 });
 
+// Число файлов с несохранённой правкой сообщает интерфейс: закрытие окна и смена воркспейса её потеряли бы.
+let unsavedEdits = 0;
+
 /** Закрытие окна, выход и смена воркспейса завершают все сессии: как и закрытие вкладки, они спрашивают, пока сессия работает. */
 function confirmEndSessions(button = 'Закрыть', detail = 'При закрытии окна они будут завершены.'): boolean {
+  if (unsavedEdits) {
+    const discard = dialog.showMessageBoxSync(win!, {
+      type: 'warning',
+      buttons: [button, 'Отмена'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Файлов с несохранённой правкой: ${unsavedEdits}`,
+      detail: 'Правка будет потеряна.',
+    });
+    if (discard !== 0) return false;
+  }
   const running = sessions.count();
   if (!running) return true;
   const choice = dialog.showMessageBoxSync(win!, {
@@ -432,6 +447,10 @@ ipcMain.handle('hubs:change', (_event, op: unknown) => {
 });
 ipcMain.handle('hubs:fetch', (_event, id: unknown, force: unknown) => extensions.hubFetch(id, force));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
+ipcMain.handle('fs:write', (_event, request: unknown) => paths.write(request));
+ipcMain.on('edits:unsaved', (_event, count: unknown) => {
+  unsavedEdits = Number.isInteger(count) && (count as number) > 0 ? (count as number) : 0;
+});
 ipcMain.handle('git:root', (_event, dir: unknown) => paths.root(dir));
 ipcMain.handle('git:branch', (_event, root: unknown) => paths.branch(root));
 ipcMain.handle('git:status', (_event, root: unknown) => paths.status(root));
