@@ -58,7 +58,7 @@
     {
       "do": "probe",
       "name": "заголовок",
-      "js": "document.title"
+      "js": "document.title.replace(/ v\\.\\S+/, ' v.<версия>')"
     }
   ],
   "expect": {
@@ -166,7 +166,7 @@
     "probes": {
       "проект до": "Smoke\nBare",
       "проект после": "Second",
-      "заголовок": "second - Second - Cyborg v.0.1.0+1c1d6b7"
+      "заголовок": "second - Second - Cyborg v.<версия>"
     }
   },
   "volatile": []

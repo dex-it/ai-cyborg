@@ -10,13 +10,14 @@
 // Каждый прогон - свежие запуски Electron с новым каталогом данных (холодный профиль Chromium), подставными claude, gh, jira
 // и репозиторием-пробой из fixtures/. Живая сеть и настоящие программы не нужны. Итог: минимум, медиана и максимум по прогонам
 // и описание среды (машина, ОС, нагрузка); сырые прогоны - в --json. Нужен дисплей (на Linux - xvfb-run).
+// CYBORG_APP_DIR=<каталог> меряет сборку другого экземпляра репозитория (например, worktree на нужном коммите после `npm run build`).
 // Память: macOS - `footprint` (phys_footprint), Linux - Pss из /proc/<pid>/smaps_rollup; меры разные и не сравниваются между ОС.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { cpus, loadavg, release, tmpdir, totalmem, type as osType } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { cdp, clickMenu, fixtures, killLeftovers, launch, prepareFixtures, root, sleep, stop, waitFor } from './lib/driver.mjs';
+import { appRoot, cdp, clickMenu, fixtures, killLeftovers, launch, prepareFixtures, root, sleep, stop, waitFor } from './lib/driver.mjs';
 
 // ---------- параметры ----------
 
@@ -51,7 +52,7 @@ function environment() {
       return '';
     }
   };
-  const electronVersion = JSON.parse(readFileSync(join(root, 'node_modules', 'electron', 'package.json'), 'utf8')).version;
+  const electronVersion = JSON.parse(readFileSync(join([appRoot, root].find((dir) => existsSync(join(dir, 'node_modules', 'electron', 'package.json'))), 'node_modules', 'electron', 'package.json'), 'utf8')).version;
   return {
     machine: mac ? text('sysctl', ['-n', 'hw.model']) || osType() : osType(),
     cpu: `${cpus()[0]?.model ?? '?'} x${cpus().length}`,
@@ -60,7 +61,7 @@ function environment() {
     power: mac ? (text('pmset', ['-g', 'ps']).split('\n')[0] ?? '') : '',
     node: process.version,
     electron: electronVersion,
-    commit: text('git', ['-C', root, 'rev-parse', '--short', 'HEAD']),
+    commit: text('git', ['-C', appRoot, 'rev-parse', '--short', 'HEAD']),
     loadavgAtStart: loadavg().map((x) => Number(x.toFixed(2))),
     uptime: mac ? text('uptime', []) : '',
   };
@@ -389,7 +390,7 @@ function benchBundles() {
   const out = {};
   const files = [['main.js', 'dist/main.js'], ['preload.js', 'dist/preload.js'], ['renderer/app.js', 'dist/renderer/app.js'], ['renderer/styles.css', 'dist/renderer/styles.css']];
   for (const [name, file] of files) {
-    const path = join(root, file);
+    const path = join(appRoot, file);
     if (!existsSync(path)) throw new Error(`нет ${file}: сначала npm run build`);
     const bytes = readFileSync(path);
     out[`бандл ${name}, КиБ`] = bytes.length / 1024;
@@ -397,14 +398,14 @@ function benchBundles() {
   }
   const size = (dir) =>
     readdirSync(dir, { withFileTypes: true }).reduce((sum, e) => sum + (e.isDirectory() ? size(join(dir, e.name)) : e.name.endsWith('.map') ? 0 : statSync(join(dir, e.name)).size), 0);
-  out['dist целиком без sourcemap, МиБ'] = size(join(root, 'dist')) / 2 ** 20;
-  out['dist/renderer/vs (Monaco), МиБ'] = size(join(root, 'dist', 'renderer', 'vs')) / 2 ** 20;
+  out['dist целиком без sourcemap, МиБ'] = size(join(appRoot, 'dist')) / 2 ** 20;
+  out['dist/renderer/vs (Monaco), МиБ'] = size(join(appRoot, 'dist', 'renderer', 'vs')) / 2 ** 20;
   return out;
 }
 
 // ---------- прогон ----------
 
-if (!existsSync(join(root, 'dist', 'main.js'))) {
+if (!existsSync(join(appRoot, 'dist', 'main.js'))) {
   console.error('bench: нет dist/, сначала npm run build');
   process.exit(1);
 }

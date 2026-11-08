@@ -4,6 +4,10 @@
   "baseline": "e4beb72",
   "kind": "recorded",
   "about": "Хук Stop с хвостом <!-- cyborg-buttons: [...] --> даёт session:suggest: на полосе кнопки с ✦, не больше двух, реплика с «!» отброшена. «Отправь» шлёт текст с Enter, «Вставь» - без.",
+  "volatile": [
+    "invoke git:status",
+    "invoke git:branch"
+  ],
   "steps": [
     {
       "do": "key",
@@ -133,20 +137,9 @@
           "result": {
             "a.txt": "M"
           }
-        },
-        {
-          "args": [
-            "<repo>"
-          ]
         }
       ],
       "invoke git:branch": [
-        {
-          "args": [
-            "<repo>"
-          ],
-          "result": "main"
-        },
         {
           "args": [
             "<repo>"
@@ -267,8 +260,5 @@
         "✦ Вставь"
       ]
     }
-  },
-  "volatile": [
-    "invoke git:branch"
-  ]
+  }
 }

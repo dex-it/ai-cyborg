@@ -4,6 +4,10 @@
   "baseline": "e4beb72",
   "kind": "recorded",
   "about": "Встроенная «Сливай» шлёт текст с Enter; набор из воркспейса (commands:save) добавляет кнопку с подстановкой {branch}, нажатие шлёт «ветка main».",
+  "volatile": [
+    "invoke git:status",
+    "invoke git:branch"
+  ],
   "steps": [
     {
       "do": "key",
@@ -175,7 +179,8 @@
         {
           "args": [
             "<repo>"
-          ]
+          ],
+          "result": "main"
         }
       ],
       "send session:resize": [
@@ -273,9 +278,5 @@
         "Ветка"
       ]
     }
-  },
-  "volatile": [
-    "invoke git:status",
-    "invoke git:branch"
-  ]
+  }
 }

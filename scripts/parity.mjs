@@ -4,6 +4,8 @@
 //   npm run build && node scripts/parity.mjs [--record] [--full] [--dir test/parity] [--electron-arg --no-sandbox] [S01 S04 ...]
 //   --full не обрезает строки в сообщении о расхождении.
 //
+// CYBORG_APP_DIR=<каталог> проигрывает записи против сборки другого экземпляра репозитория: записи сняты с коммита e4beb72,
+// и проверяет их `git worktree add <каталог> e4beb72`, `npm run build` в нём и `CYBORG_APP_DIR=<каталог> node scripts/parity.mjs`.
 // Без --record каждая запись проигрывается в свежем Electron (новый каталог данных, домашний каталог, репозиторий-проба,
 // подставные программы из fixtures/) и сверяется с записанным `expect`; расхождение - код возврата 1 и первая различающаяся строка.
 // С --record `expect` переписывается тем, что показал прогон; прогонов два, а каналы, различавшиеся между ними (гонки, опрос по
@@ -22,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { cdp, clickMenu, killLeftovers, launch, prepareFixtures, root, sleep, stop, waitFor } from './lib/driver.mjs';
+import { appRoot, cdp, clickMenu, killLeftovers, launch, prepareFixtures, root, sleep, stop, waitFor } from './lib/driver.mjs';
 
 const argv = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -325,7 +327,7 @@ function diff(session, want, got) {
 
 // ---------- запуск ----------
 
-if (!existsSync(join(root, 'dist', 'main.js'))) {
+if (!existsSync(join(appRoot, 'dist', 'main.js'))) {
   console.error('parity: нет dist/, сначала npm run build');
   process.exit(1);
 }

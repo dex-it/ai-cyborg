@@ -1,11 +1,13 @@
 // Общий драйвер Electron для дымового теста, замеров и проигрывателя записей: запуск dist/ с подставными программами из
 // fixtures/, управление окном по DevTools Protocol, ожидание условий. Ничего не пишет вне переданных временных каталогов.
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const root = resolve(import.meta.dirname, '..', '..');
 export const fixtures = join(root, 'fixtures');
+/** Проверяемая сборка: по умолчанию этот репозиторий; CYBORG_APP_DIR указывает на другой его экземпляр (например, `git worktree` на нужном коммите после `npm run build`). */
+export const appRoot = resolve(process.env.CYBORG_APP_DIR || root);
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export const TIMEOUT_MS = 20_000;
@@ -101,9 +103,9 @@ export async function cdp(url, timeoutMs = CDP_TIMEOUT_MS) {
  * `env` - окружение сверх унаследованного (переменные CYBORG_* родителя отбрасываются: смоук, запущенный из сессии Cyborg,
  * унаследовал бы её CYBORG_CWD, и относительный --workspace считался бы не от cwd).
  */
-export async function launch({ dataDir, env, args = [], electronArgs = [], cwd = root }) {
-  const electron = join(root, 'node_modules', '.bin', 'electron');
-  const proc = spawn(electron, [root, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
+export async function launch({ dataDir, env, args = [], electronArgs = [], cwd = appRoot }) {
+  const electron = [appRoot, root].map((dir) => join(dir, 'node_modules', '.bin', 'electron')).find((file) => existsSync(file));
+  const proc = spawn(electron, [appRoot, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
     cwd,
     env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CYBORG_'))), ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
