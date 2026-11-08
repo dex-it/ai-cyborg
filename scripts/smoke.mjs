@@ -5,25 +5,20 @@
 // Нужен дисплей (на Linux - xvfb-run).
 // Ничего не пишет вне временного каталога, свой `claude` и ~/.claude не трогает (CLAUDE_CONFIG_DIR указывает в него).
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { cdp, clickMenu, launch as driverLaunch, prepareFixtures, root, sleep, sockets, stop, waitFor } from './lib/driver.mjs';
 
-const root = resolve(import.meta.dirname, '..');
 const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const electronArgs = process.argv.slice(2);
-const TIMEOUT_MS = 20_000;
-// Вызов DevTools под нагрузкой машины (свопинг, чужие процессы, Monaco при первом показе) отвечает дольше 15 с: на CI и на ноутбуке это давало случайные падения.
-const CDP_TIMEOUT_MS = 30_000;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'cyborg-smoke-')));
 const userData = join(base, 'userdata');
 const repo = join(base, 'repo');
 const worktree = join(base, 'repo-wt');
-const fakeBin = join(base, 'bin');
-for (const dir of [userData, repo, fakeBin]) mkdirSync(dir);
+for (const dir of [userData, repo]) mkdirSync(dir);
 
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=smoke', '-c', 'user.email=smoke@example.com', '-C', cwd, ...args], { stdio: 'pipe' });
 git(repo, 'init', '-q', '-b', 'main');
@@ -46,97 +41,11 @@ writeFileSync(
   }),
 );
 
-// Хвост ответа с кнопками, как его отдаёт хук Stop: подставной claude дописывает эту строку в файл событий по команде `suggest`.
-const fakeArgsLog = join(fakeBin, 'args.log');
-const fakeSuggest = join(fakeBin, 'suggest.json');
-writeFileSync(
-  fakeSuggest,
-  JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'Готово.\n\n<!-- cyborg-buttons: [{"label":"Оболочка","text":"!echo pwned","submit":true},{"label":"Отправь","text":"отправь это","submit":true},{"label":"Вставь","text":"вставь это"},{"label":"Лишняя","text":"лишняя"}] -->' }) + '\n',
-);
-// Данные Claude Code для окна «Расширения»: каталог настроек, магазин на диске, личный скилл и сервер MCP с «секретом» в адресе.
-const claudeHome = join(base, 'claude-home');
+// Подставные claude, gh, jira и каталог настроек Claude - из fixtures/ (их же берут замеры и проигрыватель записей).
+const fixture = prepareFixtures(base);
+const { argsLog: fakeArgsLog, pluginLog, claudeHome } = fixture;
 // Хаб по теме GitHub ходит в сеть: в пробе он отключён заранее.
 writeFileSync(join(userData, 'hubs.json'), JSON.stringify({ custom: [], disabled: ['github-topic'] }));
-const market = join(base, 'market');
-const pluginLog = join(fakeBin, 'plugin.log');
-for (const dir of [join(claudeHome, 'skills', 'own-skill'), join(market, '.claude-plugin'), join(market, 'plugins', 'smk-plugin', 'skills', 'smk-skill')]) mkdirSync(dir, { recursive: true });
-writeFileSync(join(claudeHome, 'skills', 'own-skill', 'SKILL.md'), '---\ndescription: Личный скилл пробы\n---\n');
-writeFileSync(join(claudeHome, '.claude.json'), JSON.stringify({ mcpServers: { 'smk-mcp': { type: 'http', url: 'https://mcp.example.com/p?k=SMOKE_SECRET', headers: { Authorization: 'SMOKE_SECRET' } } } }));
-writeFileSync(
-  join(market, '.claude-plugin', 'marketplace.json'),
-  JSON.stringify({ name: 'smoke-market', plugins: [{ name: 'smk-plugin', source: './plugins/smk-plugin', description: 'Плагин пробы' }, { name: 'smk-remote', source: { source: 'url', url: 'https://example.invalid/r.git' }, description: 'Удалённый плагин пробы' }] }),
-);
-writeFileSync(join(market, 'plugins', 'smk-plugin', 'skills', 'smk-skill', 'SKILL.md'), '---\ndescription: Скилл плагина пробы\n---\n');
-
-// Подставной claude: SessionStart при старте, по строке `cd <dir>` - событие с новым cwd, строка, оканчивающаяся на `suggest`, - ответ с кнопками, на `ask` - запрос человека (вставленный без Enter текст остаётся в строке ввода), остальной ввод эхом.
-const fakeClaude = join(fakeBin, 'claude');
-writeFileSync(
-  fakeClaude,
-  `#!/bin/sh
-# Подкоманды окна «Расширения» отвечают и выходят, не открывая сессию; вызовы плагинов пишутся в журнал.
-case "$1" in
-  --version) echo "2.1.314 (Claude Code)"; exit 0;;
-  plugin)
-    echo "$*" >> "$FAKE_PLUGIN_LOG"
-    case "$2 $3" in
-      "marketplace list") printf '[{"name":"smoke-market","source":"directory","path":"%s","installLocation":"%s"}]\\n' "$SMOKE_MARKET" "$SMOKE_MARKET";;
-      "list --json") printf '[{"id":"smk-plugin@smoke-market","version":"1.0.0","scope":"user","enabled":true,"installPath":"%s/plugins/smk-plugin"}]\\n' "$SMOKE_MARKET";;
-      "install "*|"uninstall "*) printf '{"command":"%s","outcome":"ok","message":"Готово: %s"}\\n' "$2" "$3";;
-      "marketplace add") printf '{"command":"marketplace-add","outcome":"ok","message":"Магазин подключён"}\\n';;
-      "marketplace remove") echo "✔ Successfully removed marketplace: $4";;
-    esac
-    exit 0;;
-  mcp)
-    printf 'Checking MCP server health…\\n\\nsmk-mcp: https://mcp.example.com (HTTP) - ✔ Connected\\nclaude.ai Gmail: https://gmailmcp.example.com/mcp/v1 - ✔ Connected\\n'
-    exit 0;;
-esac
-printf '{"hook_event_name":"SessionStart","cwd":"%s"}\\n' "$PWD" >> "$CYBORG_EVENTS"
-echo "fake-claude ready"
-echo "ARGS: $*"
-printf '%s\\n' "$*" >> "$FAKE_ARGS_LOG"
-while IFS= read -r line; do
-  case "$line" in
-    "cd "*) dir=\${line#cd }; printf '{"hook_event_name":"PostToolUse","cwd":"%s","tool_name":"EnterWorktree"}\\n' "$dir" >> "$CYBORG_EVENTS"; echo "moved";;
-    *suggest) cat "$FAKE_SUGGEST" >> "$CYBORG_EVENTS"; echo "suggested";;
-    *ask) printf '{"hook_event_name":"UserPromptSubmit"}\\n' >> "$CYBORG_EVENTS"; echo "asked";;
-    *) echo "got: [$line]";;
-  esac
-done
-`,
-);
-chmodSync(fakeClaude, 0o755);
-// Подставной gh: вход не выполнен. Панель открывается без сети и без настоящего входа разработчика.
-const fakeGh = join(fakeBin, 'gh');
-writeFileSync(fakeGh, '#!/bin/sh\necho "You are not logged in to any GitHub hosts." >&2\nexit 1\n');
-chmodSync(fakeGh, 0o755);
-// Сессия стартует через `$SHELL -lc`, а login-профиль (на Ubuntu - ~/.profile) ставит ~/.local/bin с настоящим claude впереди подставного.
-const fakeShell = join(fakeBin, 'shell');
-writeFileSync(fakeShell, '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n');
-chmodSync(fakeShell, 0o755);
-
-// Подставной jira: вход есть, одна задача SMK-1 в работе; формы ответов - как у jira-cli 1.7.0 (`--raw`, `--plain`).
-const fakeJira = join(fakeBin, 'jira');
-writeFileSync(
-  fakeJira,
-  `#!/bin/sh
-case "$1" in
-  version) echo 'Version="1.7.0", GitCommit="smoke"';;
-  me) echo 'smoke@example.com';;
-  open) echo "https://jira.example/browse/$2";;
-  project) printf 'KEY\\tNAME\\t\\t\\tTYPE\\tLEAD\\nSMK\\tSmoke\\t\\t\\tsoftware\\tIvan\\nOTH\\tOther\\t\\t\\tsoftware\\tOlga\\n';;
-  issue)
-    if [ "$2" = list ]; then
-      case "$*" in
-        *--plain*) echo "SMK-1";;
-        *) echo '[{"key":"SMK-1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress"},"issueType":{"name":"Bug"},"priority":{"name":"High"},"assignee":{"displayName":"Я"},"updated":"2026-10-26T12:00:00.000+0300","labels":[],"description":"x"}}]';;
-      esac
-    else
-      echo '{"key":"SMK-1","self":"https://jira.example/rest/api/2/issue/1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Bug"},"description":"Описание из Jira","comment":{"total":1,"comments":[{"id":"1","author":{"displayName":"Коллега"},"body":"Комментарий из Jira"}]}}}'
-    fi;;
-esac
-`,
-);
-chmodSync(fakeJira, 0o755);
 
 const mac = process.platform === 'darwin';
 const commandModifier = mac ? 4 : 2; // CDP: Alt=1, Ctrl=2, Meta=4, Shift=8
@@ -147,7 +56,6 @@ let app;
 let stderrOfMain;
 let ws;
 const extraApps = [];
-const sockets = [];
 const log = (text) => console.log(`smoke: ${text}`);
 
 async function cleanup() {
@@ -175,93 +83,12 @@ async function cleanup() {
   rmSync(base, { recursive: true, force: true });
 }
 
-async function waitFor(what, probe, timeout = TIMEOUT_MS) {
-  const deadline = Date.now() + timeout;
-  let last;
-  while (Date.now() < deadline) {
-    try {
-      last = await probe();
-      if (last) return last;
-    } catch (e) {
-      last = e;
-    }
-    await sleep(150);
-  }
-  throw new Error(`не дождались: ${what}${last instanceof Error ? ` (${last.message})` : ''}`);
-}
-
-// Соединение с целью DevTools: страницей окна или главным процессом (--inspect). Без ответа на вызов прогон падает с причиной, а не висит.
-async function cdp(url) {
-  const socket = new WebSocket(url);
-  sockets.push(socket);
-  await new Promise((r, j) => {
-    socket.onopen = r;
-    socket.onerror = () => j(new Error('нет соединения с DevTools'));
-  });
-  let seq = 0;
-  const pending = new Map();
-  socket.onmessage = (m) => {
-    const d = JSON.parse(m.data);
-    if (d.id && pending.has(d.id)) pending.get(d.id)(d);
-  };
-  const send = (method, params = {}) =>
-    new Promise((res, rej) => {
-      const id = ++seq;
-      const timer = setTimeout(() => rej(new Error(`DevTools ${method}${typeof params.expression === 'string' ? ` «${params.expression.replace(/\s+/g, ' ').slice(0, 90)}»` : ''}: нет ответа за ${CDP_TIMEOUT_MS / 1000} с`)), CDP_TIMEOUT_MS);
-      pending.set(id, (reply) => {
-        clearTimeout(timer);
-        res(reply);
-      });
-      socket.send(JSON.stringify({ id, method, params }));
-    });
-  const ev = async (expression) => {
-    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-    if (r.result?.exceptionDetails) throw new Error(`в странице: ${r.result.exceptionDetails.text} ${r.result.exceptionDetails.exception?.description ?? ''}`);
-    return r.result?.result?.value;
-  };
-  return { socket, send, ev };
-}
-
-// Запуск Electron с отдельным каталогом данных; возвращает процесс, чтение stderr и адреса DevTools окна и главного процесса.
-async function launch(dataDir, args = [], cwd = root) {
-  const electron = join(root, 'node_modules', '.bin', 'electron');
-  const proc = spawn(electron, [root, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
-    cwd,
-    // Смоук, запущенный из сессии Cyborg, унаследовал бы её CYBORG_CWD, и относительный --workspace считался бы не от cwd.
-    env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CYBORG_'))), PATH: `${fakeBin}:${process.env.PATH}`, SHELL: fakeShell, FAKE_SUGGEST: fakeSuggest, FAKE_ARGS_LOG: fakeArgsLog, FAKE_PLUGIN_LOG: pluginLog, SMOKE_MARKET: market, CLAUDE_CONFIG_DIR: claudeHome },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let stderr = '';
-  proc.stdout.on('data', () => {});
-  proc.stderr.on('data', (d) => (stderr += d));
-  proc.once('exit', (code) => {
-    if (code) stderr += `\n[electron завершился с кодом ${code}]`;
-  });
-  const port = await waitFor('порт DevTools', () => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//.exec(stderr)?.[1]).catch((e) => {
-    throw new Error(`${e.message}\n${stderr}`);
-  });
-  const inspect = await waitFor('отладчик главного процесса', () => /Debugger listening on (ws:\/\/\S+)/.exec(stderr)?.[1]);
-  const pages = async () => (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter((t) => t.type === 'page');
-  return { proc, port, inspect, pages, stderr: () => stderr };
-}
+const launch = (dataDir, args = [], cwd = root) => driverLaunch({ dataDir, args, cwd, electronArgs, env: fixture.env });
 
 async function terminate(proc, tail) {
-  // Node при выходе ждёт, пока отладчик отключится.
-  for (const socket of sockets.splice(0)) socket.close();
-  proc.kill('SIGTERM');
-  const exited = await Promise.race([new Promise((r) => (proc.exitCode !== null ? r(true) : proc.once('exit', () => r(true)))), sleep(8000).then(() => false)]);
+  const exited = await stop(proc);
   assert.ok(exited, `приложение не завершилось по SIGTERM за 8 с\n${tail?.() ?? ''}`);
 }
-
-// Пункт системного меню по подписям меню -> подпись («Воркспейс» по умолчанию); клик в главном процессе.
-const clickMenu = (mainEv, label, menu = 'Воркспейс') =>
-  mainEv(`(() => {
-    const { Menu } = process.mainModule.require('electron');
-    const item = Menu.getApplicationMenu().items.find((i) => i.label === ${JSON.stringify(menu)}).submenu.items.find((i) => i.label === ${JSON.stringify(label)});
-    if (!item) throw new Error('нет пункта ${label}');
-    item.click();
-    return item.enabled;
-  })()`);
 
 async function main() {
   const started = await launch(userData);
