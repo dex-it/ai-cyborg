@@ -390,6 +390,29 @@ select:disabled {
   flex: 1;
   overflow: auto;
   padding: 0 6px 12px;
+  user-select: none;
+}
+
+.history-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px;
+  background: var(--bg-side);
+}
+
+.history-bar[hidden] {
+  display: none;
+}
+
+.history-count {
+  flex: 1;
+  color: var(--fg-dim);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 #tree-back {
@@ -905,8 +928,29 @@ select:focus-visible {
 
 .history-item {
   position: relative;
+  padding-left: 30px;
   padding-right: 32px;
   border: 1px solid transparent;
+}
+
+.history-item.selected {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.history-check {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  margin: 0;
+  transform: translateY(-50%);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.history-item:hover .history-check,
+#history.selecting .history-check {
+  opacity: 1;
 }
 
 .history-item:hover {
