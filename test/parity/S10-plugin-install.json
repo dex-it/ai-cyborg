@@ -1,0 +1,359 @@
+{
+  "id": "S10",
+  "title": "Установка плагина Claude Code",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Окно «Расширения» -> «Магазины»: фильтр находит удалённый плагин, форма установки (область local по умолчанию), submit зовёт claude plugin install <плагин>@<магазин> --scope local --json без подтверждения чужих команд.",
+  "steps": [
+    {
+      "do": "menu",
+      "menu": "Расширения",
+      "item": "Магазины…"
+    },
+    {
+      "do": "wait",
+      "what": "магазин виден",
+      "js": "[...document.querySelectorAll('#ext-tree [role=treeitem] .ext-label')].some((l) => l.textContent === \"smoke-market\")"
+    },
+    {
+      "do": "js",
+      "js": "(() => { const f = document.querySelector(\"#ext-filter\"); f.value = \"smk-remote\"; f.dispatchEvent(new Event('input')); })()"
+    },
+    {
+      "do": "wait",
+      "what": "удалённый плагин найден",
+      "js": "[...document.querySelectorAll('#ext-tree [role=treeitem] .ext-label')].some((l) => l.textContent === \"smk-remote\")"
+    },
+    {
+      "do": "wait",
+      "what": "кнопка установки",
+      "js": "(() => { const r = [...document.querySelectorAll('#ext-tree [role=treeitem]')].find((x) => x.querySelector('.ext-label')?.textContent === \"smk-remote\"); const b = r && [...r.querySelectorAll('button')].find((x) => x.textContent === \"\\u0423\\u0441\\u0442\\u0430\\u043d\\u043e\\u0432\\u0438\\u0442\\u044c\\u2026\"); if (b) b.click(); return !!b; })()"
+    },
+    {
+      "do": "wait",
+      "what": "форма установки",
+      "js": "!document.querySelector('#ext-action').hidden && /smk-remote@smoke-market/.test(document.querySelector('#ext-action-title').innerText)"
+    },
+    {
+      "do": "probe",
+      "name": "область",
+      "js": "document.querySelector('#ext-action-scope').value"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector('#ext-action').requestSubmit()"
+    },
+    {
+      "do": "wait",
+      "what": "установка выполнена",
+      "js": "/Готово: smk-remote@smoke-market/.test(document.querySelector('#ext-action-result').innerText)"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "event menu:extensions": [
+        {
+          "args": [
+            "marketplaces"
+          ]
+        }
+      ],
+      "invoke extensions:load": [
+        {
+          "args": [
+            {
+              "dirs": [
+                "<repo>"
+              ]
+            }
+          ],
+          "result": {
+            "claude": {
+              "version": "2.1.314"
+            },
+            "marketplaces": [
+              {
+                "name": "smoke-market",
+                "source": "directory <fixtures>/market",
+                "known": true,
+                "declaredBy": [],
+                "plugins": [
+                  {
+                    "name": "smk-plugin",
+                    "description": "Плагин пробы",
+                    "remote": false,
+                    "components": [
+                      {
+                        "kind": "skill",
+                        "name": "smk-skill",
+                        "description": "Скилл плагина пробы"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "smk-remote",
+                    "description": "Удалённый плагин пробы",
+                    "remote": true,
+                    "components": null
+                  }
+                ],
+                "truncated": false
+              }
+            ],
+            "plugins": [
+              {
+                "id": "smk-plugin@smoke-market",
+                "name": "smk-plugin",
+                "marketplace": "smoke-market",
+                "version": "1.0.0",
+                "scope": "user",
+                "enabledGlobal": true,
+                "enabledIn": {
+                  "<repo>": true
+                },
+                "components": [
+                  {
+                    "kind": "skill",
+                    "name": "smk-skill",
+                    "description": "Скилл плагина пробы"
+                  }
+                ],
+                "mcp": [],
+                "errors": []
+              }
+            ],
+            "standalone": [
+              {
+                "kind": "skill",
+                "name": "own-skill",
+                "description": "Личный скилл пробы",
+                "scope": "user"
+              }
+            ],
+            "mcp": [
+              {
+                "scope": "user",
+                "name": "smk-mcp",
+                "transport": "http",
+                "target": "https://mcp.example.com"
+              }
+            ],
+            "problems": []
+          }
+        },
+        {
+          "args": [
+            {
+              "dirs": [
+                "<repo>"
+              ]
+            }
+          ],
+          "result": {
+            "claude": {
+              "version": "2.1.314"
+            },
+            "marketplaces": [
+              {
+                "name": "smoke-market",
+                "source": "directory <fixtures>/market",
+                "known": true,
+                "declaredBy": [],
+                "plugins": [
+                  {
+                    "name": "smk-plugin",
+                    "description": "Плагин пробы",
+                    "remote": false,
+                    "components": [
+                      {
+                        "kind": "skill",
+                        "name": "smk-skill",
+                        "description": "Скилл плагина пробы"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "smk-remote",
+                    "description": "Удалённый плагин пробы",
+                    "remote": true,
+                    "components": null
+                  }
+                ],
+                "truncated": false
+              }
+            ],
+            "plugins": [
+              {
+                "id": "smk-plugin@smoke-market",
+                "name": "smk-plugin",
+                "marketplace": "smoke-market",
+                "version": "1.0.0",
+                "scope": "user",
+                "enabledGlobal": true,
+                "enabledIn": {
+                  "<repo>": true
+                },
+                "components": [
+                  {
+                    "kind": "skill",
+                    "name": "smk-skill",
+                    "description": "Скилл плагина пробы"
+                  }
+                ],
+                "mcp": [],
+                "errors": []
+              }
+            ],
+            "standalone": [
+              {
+                "kind": "skill",
+                "name": "own-skill",
+                "description": "Личный скилл пробы",
+                "scope": "user"
+              }
+            ],
+            "mcp": [
+              {
+                "scope": "user",
+                "name": "smk-mcp",
+                "transport": "http",
+                "target": "https://mcp.example.com"
+              }
+            ],
+            "problems": []
+          }
+        }
+      ],
+      "invoke hubs:list": [
+        {
+          "args": [],
+          "result": [
+            {
+              "id": "anthropic",
+              "name": "Anthropic",
+              "description": "Магазины, которые публикует Anthropic: официальный, сообщества и тематические.",
+              "url": null,
+              "enabled": true,
+              "builtin": true
+            },
+            {
+              "id": "dex-it",
+              "name": "DEX",
+              "description": "Магазин команды DEX.",
+              "url": null,
+              "enabled": true,
+              "builtin": true
+            },
+            {
+              "id": "github-top",
+              "name": "GitHub",
+              "description": "Самые звёздные магазины на GitHub, где несколько плагинов: пример подключения. Список составлен 2026-10-30, звёзды и число плагинов - на эту дату. Anthropic эти магазины не проверяет.",
+              "url": null,
+              "enabled": true,
+              "builtin": true
+            },
+            {
+              "id": "github-topic",
+              "name": "GitHub: поиск по теме",
+              "description": "Репозитории с темой claude-code-marketplace (от 20 звёзд, по убыванию), у которых есть .claude-plugin/marketplace.json. Anthropic их не проверяет: прочтите описание и состав, прежде чем ставить плагины.",
+              "url": null,
+              "enabled": false,
+              "builtin": true
+            }
+          ]
+        },
+        {
+          "args": [],
+          "result": [
+            {
+              "id": "anthropic",
+              "name": "Anthropic",
+              "description": "Магазины, которые публикует Anthropic: официальный, сообщества и тематические.",
+              "url": null,
+              "enabled": true,
+              "builtin": true
+            },
+            {
+              "id": "dex-it",
+              "name": "DEX",
+              "description": "Магазин команды DEX.",
+              "url": null,
+              "enabled": true,
+              "builtin": true
+            },
+            {
+              "id": "github-top",
+              "name": "GitHub",
+              "description": "Самые звёздные магазины на GitHub, где несколько плагинов: пример подключения. Список составлен 2026-10-30, звёзды и число плагинов - на эту дату. Anthropic эти магазины не проверяет.",
+              "url": null,
+              "enabled": true,
+              "builtin": true
+            },
+            {
+              "id": "github-topic",
+              "name": "GitHub: поиск по теме",
+              "description": "Репозитории с темой claude-code-marketplace (от 20 звёзд, по убыванию), у которых есть .claude-plugin/marketplace.json. Anthropic их не проверяет: прочтите описание и состав, прежде чем ставить плагины.",
+              "url": null,
+              "enabled": false,
+              "builtin": true
+            }
+          ]
+        }
+      ],
+      "invoke extensions:usage": [
+        {
+          "args": [],
+          "result": {
+            "calls": {},
+            "files": 0
+          }
+        },
+        {
+          "args": [],
+          "result": {
+            "calls": {},
+            "files": 0
+          }
+        }
+      ],
+      "invoke extensions:act": [
+        {
+          "args": [
+            {
+              "kind": "install",
+              "plugin": "smk-remote@smoke-market",
+              "scope": "local",
+              "dir": "<repo>"
+            }
+          ],
+          "result": {
+            "ok": true,
+            "message": "Готово: smk-remote@smoke-market"
+          }
+        }
+      ]
+    },
+    "programs": {
+      "plugin": [
+        "plugin install smk-remote@smoke-market --scope local --json",
+        "plugin list --json",
+        "plugin list --json",
+        "plugin list --json",
+        "plugin list --json",
+        "plugin marketplace list --json",
+        "plugin marketplace list --json"
+      ],
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "область": "local"
+    }
+  },
+  "volatile": []
+}

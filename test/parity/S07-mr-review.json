@@ -1,0 +1,329 @@
+{
+  "id": "S07",
+  "title": "Ревью MR",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Панель «MR/PR»: чужие MR (где вы ревьюер) с кнопкой «Ревью», свои - «Доработать». «Ревью» создаёт сессию с намерением review и промптом mr.review.",
+  "world": {
+    "gh": "data"
+  },
+  "steps": [
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#mrs-toggle\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "три MR в панели",
+      "js": "document.querySelectorAll('#tasks-panel .task-row').length >= 3"
+    },
+    {
+      "do": "wait",
+      "what": "детали догружены",
+      "js": "!/пайплайн: …/.test(document.querySelector('#tasks-panel').innerText)"
+    },
+    {
+      "do": "probe",
+      "name": "кнопки",
+      "js": "[...document.querySelectorAll('#tasks-panel .task-row .task-actions button')].map((b) => b.textContent)"
+    },
+    {
+      "do": "js",
+      "js": "[...document.querySelectorAll('#tasks-panel .task-row button')].find((b) => b.textContent === 'Ревью').click()"
+    },
+    {
+      "do": "wait",
+      "what": "вкладок не меньше 1",
+      "js": "document.querySelectorAll('#session-list > *').length >= 1"
+    },
+    {
+      "do": "waitTrace",
+      "channel": "session:activity",
+      "what": "claude стартовал (SessionStart)"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "invoke mrs:list": [
+        {
+          "args": [
+            "p1",
+            "all",
+            [],
+            false
+          ],
+          "result": {
+            "mrs": [
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 1,
+                "key": "github:github.com/acme/demo!1",
+                "title": "MR 1",
+                "author": "fake-user",
+                "sourceBranch": "feat-1",
+                "targetBranch": "main",
+                "draft": false,
+                "state": "open",
+                "pipeline": null,
+                "approvals": null,
+                "url": "https://github.com/acme/demo/pull/1",
+                "createdAt": "2026-10-01T10:00:00Z",
+                "updatedAt": "2026-10-21T10:00:00Z",
+                "own": true,
+                "comments": null,
+                "repos": [
+                  "<repo>"
+                ]
+              },
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 2,
+                "key": "github:github.com/acme/demo!2",
+                "title": "MR 2",
+                "author": "colleague",
+                "sourceBranch": "feat-2",
+                "targetBranch": "main",
+                "draft": false,
+                "state": "open",
+                "pipeline": null,
+                "approvals": null,
+                "url": "https://github.com/acme/demo/pull/2",
+                "createdAt": "2026-10-01T10:00:00Z",
+                "updatedAt": "2026-10-22T10:00:00Z",
+                "own": false,
+                "comments": null,
+                "repos": [
+                  "<repo>"
+                ]
+              },
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 3,
+                "key": "github:github.com/acme/demo!3",
+                "title": "MR 3",
+                "author": "fake-user",
+                "sourceBranch": "feat-3",
+                "targetBranch": "main",
+                "draft": false,
+                "state": "open",
+                "pipeline": null,
+                "approvals": null,
+                "url": "https://github.com/acme/demo/pull/3",
+                "createdAt": "2026-10-01T10:00:00Z",
+                "updatedAt": "2026-10-23T10:00:00Z",
+                "own": true,
+                "comments": null,
+                "repos": [
+                  "<repo>"
+                ]
+              }
+            ],
+            "sources": [
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo"
+              }
+            ],
+            "tracked": [],
+            "enabled": {
+              "github": true,
+              "gitlab": false
+            },
+            "detailsId": 3,
+            "awaiting": [
+              "github:github.com/acme/demo!1",
+              "github:github.com/acme/demo!2",
+              "github:github.com/acme/demo!3"
+            ]
+          }
+        }
+      ],
+      "invoke mrs:details": [
+        {
+          "args": [
+            3
+          ],
+          "result": {
+            "details": [
+              {
+                "key": "github:github.com/acme/demo!1",
+                "pipeline": "успешен",
+                "approvals": "апрувов: 1",
+                "comments": false
+              },
+              {
+                "key": "github:github.com/acme/demo!2",
+                "pipeline": "успешен",
+                "approvals": "апрувов: 1",
+                "comments": false
+              },
+              {
+                "key": "github:github.com/acme/demo!3",
+                "pipeline": "успешен",
+                "approvals": "апрувов: 1",
+                "comments": false
+              }
+            ],
+            "tracked": []
+          }
+        }
+      ],
+      "invoke session:create": [
+        {
+          "args": [
+            "<repo>",
+            [],
+            {
+              "mr": {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 2
+              },
+              "intent": "review"
+            }
+          ],
+          "result": 1
+        }
+      ],
+      "invoke git:root": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "<repo>"
+        }
+      ],
+      "event session:activity": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "SessionStart"
+            }
+          ]
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        }
+      ],
+      "send session:resize": [
+        {
+          "args": [
+            1,
+            80,
+            24
+          ]
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ],
+      "event session:data": [
+        {
+          "id": 1,
+          "text": "fake-claude ready\nARGS: --settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или комм…[1093 знаков, sha1 4b1a7018]"
+        }
+      ]
+    },
+    "programs": {
+      "claude": [
+        "--settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или коммитом - EnterWorktree, да…[1068 знаков, sha1 15ef9183]"
+      ],
+      "claudeTail": [
+        "\"submit\":true добавляй, только если реплику можно отправить без правки; иначе поле не пиши, и человек допишет реплику сам. Реплика не начинается с «!». Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай. /dex-auto:auto review https://github.com/acme/demo/pull/2"
+      ],
+      "gh": [
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/1/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/1/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/2/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/2/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/3/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/3/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {number,title,draft,created_at,updated_at,user:.user.login,head_ref:.head.ref,head_label:.head.label,head_repo:.head.repo.full_name,head_sha:.head.sha,base_ref:.base.ref,assignees:[.assignees[].login],reviewers:[.requested_reviewers[].login]} repos/acme/demo/pulls?state=open&per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {number,title,draft,created_at,updated_at,user:.user.login,head_ref:.head.ref,head_label:.head.label,head_repo:.head.repo.full_name,head_sha:.head.sha,base_ref:.base.ref,assignees:[.assignees[].login],reviewers:[.requested_reviewers[].login]} repos/acme/demo/pulls?state=open&per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {number,title,draft,created_at,updated_at,user:.user.login,head_ref:.head.ref,head_label:.head.label,head_repo:.head.repo.full_name,head_sha:.head.sha,base_ref:.base.ref,assignees:[.assignees[].login],reviewers:[.requested_reviewers[].login]} repos/acme/demo/pulls?state=open&per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "кнопки": [
+        "Ревью"
+      ]
+    }
+  },
+  "volatile": []
+}

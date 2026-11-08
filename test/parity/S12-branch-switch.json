@@ -1,0 +1,122 @@
+{
+  "id": "S12",
+  "title": "Смена ветки в дереве",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Кнопка ветки в шапке дерева открывает меню веток (git:branches), выбор ветки зовёт git:switch, дерево перерисовывается с новой веткой; изменённый файл остаётся.",
+  "steps": [
+    {
+      "do": "wait",
+      "what": "ветка в шапке",
+      "js": "document.querySelector('#tree button.branch')"
+    },
+    {
+      "do": "probe",
+      "name": "ветка до",
+      "js": "document.querySelector('#tree button.branch').textContent"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#tree button.branch\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "меню веток",
+      "js": "[...document.querySelectorAll('.branch-item')].some((i) => i.textContent.includes('smk-5-feature'))"
+    },
+    {
+      "do": "js",
+      "js": "[...document.querySelectorAll('.branch-item')].find((i) => i.textContent.includes('smk-5-feature')).click()"
+    },
+    {
+      "do": "wait",
+      "what": "ветка сменилась",
+      "js": "document.querySelector('#tree button.branch')?.textContent.includes('smk-5-feature')"
+    },
+    {
+      "do": "probe",
+      "name": "ветка после",
+      "js": "document.querySelector('#tree button.branch').textContent"
+    },
+    {
+      "do": "probe",
+      "name": "дерево",
+      "js": "document.querySelector('#tree').innerText.replace(/\\s+/g, ' ')"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "invoke git:branches": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "current": "main",
+            "local": [
+              "main",
+              "parity-wt",
+              "smk-5-feature"
+            ],
+            "remote": []
+          }
+        }
+      ],
+      "invoke git:switch": [
+        {
+          "args": [
+            "<repo>",
+            "smk-5-feature"
+          ],
+          "result": {}
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "smk-5-feature"
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ]
+    },
+    "programs": {
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "ветка до": "⎇ main",
+      "ветка после": "⎇ smk-5-feature",
+      "дерево": "▾ repo ⎇ smk-5-feature ±1 a.txt M"
+    }
+  },
+  "volatile": []
+}

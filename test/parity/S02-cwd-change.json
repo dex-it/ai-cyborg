@@ -1,0 +1,233 @@
+{
+  "id": "S02",
+  "title": "Смена рабочего каталога сессии",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Хук PostToolUse(EnterWorktree) пишет новый cwd в файл событий сессии: главный процесс шлёт session:cwd, дерево переходит в worktree.",
+  "steps": [
+    {
+      "do": "key",
+      "key": "N",
+      "code": "KeyN",
+      "vk": 78,
+      "mods": [
+        "cmd",
+        "shift"
+      ]
+    },
+    {
+      "do": "wait",
+      "what": "вкладок не меньше 1",
+      "js": "document.querySelectorAll('#session-list > *').length >= 1"
+    },
+    {
+      "do": "wait",
+      "what": "в терминале «fake-claude ready»",
+      "js": "[...document.querySelectorAll('.xterm-rows')].some((e) => e.offsetParent && e.textContent.replace(/\\s+/g, '').includes(\"fake-claudeready\"))"
+    },
+    {
+      "do": "input",
+      "session": 1,
+      "text": "cd {worktree}\r"
+    },
+    {
+      "do": "waitTrace",
+      "channel": "session:cwd",
+      "what": "session:cwd"
+    },
+    {
+      "do": "wait",
+      "what": "дерево в worktree",
+      "js": "document.querySelector('#tree-meta').innerText.includes('repo-wt')"
+    },
+    {
+      "do": "probe",
+      "name": "мета дерева",
+      "js": "document.querySelector('#tree-meta').innerText"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "invoke commands:load": [
+        {
+          "args": [],
+          "result": {}
+        },
+        {
+          "args": [],
+          "result": {}
+        }
+      ],
+      "invoke session:create": [
+        {
+          "args": [
+            "<repo>",
+            [],
+            null
+          ],
+          "result": 1
+        }
+      ],
+      "invoke git:root": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "<repo>"
+        },
+        {
+          "args": [
+            "<worktree>"
+          ],
+          "result": "<worktree>"
+        }
+      ],
+      "event session:activity": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "SessionStart"
+            }
+          ]
+        },
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "PostToolUse",
+              "tool": "EnterWorktree"
+            }
+          ]
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<worktree>"
+          ],
+          "result": {}
+        },
+        {
+          "args": [
+            "<worktree>"
+          ],
+          "result": {}
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<worktree>"
+          ],
+          "result": "parity-wt"
+        },
+        {
+          "args": [
+            "<worktree>"
+          ],
+          "result": "parity-wt"
+        }
+      ],
+      "send session:resize": [
+        {
+          "args": [
+            1,
+            162,
+            56
+          ]
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<worktree>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<worktree>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ],
+      "send session:input": [
+        {
+          "id": 1,
+          "data": "cd <worktree>\r"
+        }
+      ],
+      "event session:cwd": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "cwd": "<worktree>"
+            }
+          ]
+        }
+      ],
+      "event session:data": [
+        {
+          "id": 1,
+          "text": "fake-claude ready\nARGS: --settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или комм…[1055 знаков, sha1 7da9c637]"
+        }
+      ]
+    },
+    "programs": {
+      "claude": [
+        "--settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или коммитом - EnterWorktree, да…[1010 знаков, sha1 4e2db67a]"
+      ],
+      "claudeTail": [
+        "\",\"text\":\"реплика человека к тебе, одной строкой\"}] --> . \"submit\":true добавляй, только если реплику можно отправить без правки; иначе поле не пиши, и человек допишет реплику сам. Реплика не начинается с «!». Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай."
+      ],
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "мета дерева": "‎<worktree>"
+    }
+  },
+  "volatile": []
+}

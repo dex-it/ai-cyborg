@@ -5,6 +5,8 @@
 #   `cd <dir>`      - событие с новым cwd (как хук после EnterWorktree);
 #   `...suggest`    - хвост ответа с кнопками из $FAKE_SUGGEST (событие Stop);
 #   `...ask`        - запрос человека (UserPromptSubmit);
+#   `perm`          - запрос разрешения (Notification, permission_prompt);
+#   `link`          - строки со ссылкой и абсолютным путём к файлу (для кликов по выводу);
 #   `flood N [W]`   - N строк по W символов (по умолчанию 100) с цветом и номером, в конце строка `FLOOD-DONE N`;
 #   `trickle N`     - N коротких строк по одной записи в pty на строку (поток мелких кусков, как токены ответа), в конце `FLOOD-DONE N`;
 #   остальное       - эхом `got: [строка]`.
@@ -52,6 +54,8 @@ while IFS= read -r line; do
     "flood "*) set -- $line; flood "$2" "$3";;
     "trickle "*) set -- $line; trickle "$2";;
     *suggest) cat "$FAKE_SUGGEST" >> "$CYBORG_EVENTS"; echo "suggested";;
+    perm) printf '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow Bash(rm -rf /)?"}\n' >> "$CYBORG_EVENTS"; echo "asking permission";;
+    link) echo "ссылка:"; echo "https://example.com/docs/start"; echo "файл:"; echo "$PWD/a.txt";;
     *ask) printf '{"hook_event_name":"UserPromptSubmit"}\n' >> "$CYBORG_EVENTS"; echo "asked";;
     *) echo "got: [$line]";;
   esac
