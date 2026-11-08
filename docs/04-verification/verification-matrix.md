@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 153; с автотестом - 137, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 170; с автотестом - 152, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -102,6 +102,7 @@ date: 2026-10-26
 | FR-8002 | Продолжение прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8003 | Удаление прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8004 | Список прошлых сессий управляется с клавиатуры | 08-session-history | автотест | `test/list-keys.test.ts` |
+| FR-8005 | Удаление нескольких прошлых сессий разом | 08-session-history | автотест + smoke | `test/selection.test.ts`, `scripts/smoke.mjs` |
 | FR-9001 | Инструкция изоляции в каждой сессии | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9002 | Порядок аргументов запуска | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9003 | Решает модель, Cyborg передаёт и следит | 09-session-isolation | автотест | `src/main/sessions.test.ts` |
@@ -109,7 +110,7 @@ date: 2026-10-26
 | FR-10002 | Фильтры и сортировка панелей переживают перезапуск | 10-ui-preferences | автотест | `test/prefs.test.ts`, `test/model.test.ts` |
 | FR-10003 | `Shift+Enter` - перевод строки в запросе | 10-ui-preferences | осмотр и демонстрация | - |
 | FR-10004 | Порядок репозиториев проекта | 10-ui-preferences | автотест | `test/reorder.test.ts`, `test/roots.test.ts` |
-| FR-10005 | Версия приложения, воркспейс и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `test/workspaces.test.ts`, `scripts/smoke.mjs` |
+| FR-10005 | Версия приложения, воркспейс и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `test/workspaces.test.ts`, `test/app-version.test.ts`, `scripts/smoke.mjs` |
 | FR-10006 | Уведомление, когда сессия ждёт человека | 10-ui-preferences | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/notify-args.test.ts`, `test/menu.test.ts` |
 | FR-10007 | Системное меню «Воркспейс» вместо меню проекта на панели | 10-ui-preferences | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-10008 | Вкладки управляются с клавиатуры | 10-ui-preferences | автотест | `test/tabs.test.ts` |
@@ -166,3 +167,19 @@ date: 2026-10-26
 | FR-14015 | Статистика вызовов по журналам сессий | 14-extensions | автотест | `test/extensions-usage.test.ts`, `test/static-guards.test.ts` |
 | FR-14016 | Переход на страницу магазина | 14-extensions | автотест | `test/extensions-usage.test.ts`, `test/extensions-model.test.ts` |
 | FR-14017 | Размер окна меняется ручкой в углу и помнится | 14-extensions | автотест | `test/static-guards.test.ts` |
+| FR-15001 | Сессия, запущенная Cyborg, подключена к его MCP-серверу своим конфигом | 15-session-mcp | автотест | `src/main/sessions.test.ts`, `test/mcp.test.ts`, `test/static-guards.test.ts` |
+| NFR-15001 | Сервер принимает вызовы только от сессий Cyborg по их токену | 15-session-mcp | автотест | `test/mcp.test.ts`, `src/main/sessions.test.ts` |
+| FR-15002 | Протокол: JSON-RPC в POST /mcp без потока SSE | 15-session-mcp | автотест | `test/mcp.test.ts` |
+| FR-15003 | Передача вкладки интерфейсу по одноразовому ключу | 15-session-mcp | автотест | `test/session-tools.test.ts` |
+| FR-15004 | open_session открывает вкладку в том же проекте с заданием первым сообщением | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/mcp.test.ts` |
+| FR-15005 | Состояние сессии для инструментов - по событиям хуков | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
+| FR-15006 | list_sessions перечисляет вкладки проекта с состоянием и хвостом ответа | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
+| FR-15007 | send_to_session пишет в ждущую вкладку вставкой и Enter, не задевая чужой запрос разрешения | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
+| FR-15008 | Очередь сообщений работающей вкладке | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
+| FR-16001 | Markdown-файл открывается отрендеренным документом | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |
+| NFR-16001 | Документ из репозитория не исполняет кода, не грузит сеть и не меняет окно | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/md-links.test.ts` |
+| FR-16002 | Ссылки и картинки документа | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |
+| FR-16003 | Правка исходника по кнопке и сохранение | 16-markdown-view | smoke | `scripts/smoke.mjs` |
+| FR-16004 | Канал fs:write перезаписывает только существующий Markdown внутри разрешённых каталогов | 16-markdown-view | автотест | `test/allowed-paths.test.ts`, `test/write-file.test.ts`, `test/static-guards.test.ts` |
+| FR-16005 | Файл изменён на диске после начала правки - вопрос, без согласия не перезаписан | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/write-file.test.ts` |
+| FR-16006 | Несохранённая правка не теряется молча | 16-markdown-view | smoke | `scripts/smoke.mjs` |

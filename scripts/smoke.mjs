@@ -6,12 +6,14 @@
 // Ничего не пишет вне временного каталога, свой `claude` и ~/.claude не трогает (CLAUDE_CONFIG_DIR указывает в него).
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { appVersion } from './app-version.mjs';
 import { cdp, clickMenu, launch as driverLaunch, prepareFixtures, root, sleep, sockets, stop, waitFor } from './lib/driver.mjs';
 
-const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const version = appVersion(root);
+const versionRe = version.replaceAll('.', '\\.');
 const electronArgs = process.argv.slice(2);
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'cyborg-smoke-')));
@@ -83,7 +85,7 @@ async function cleanup() {
   rmSync(base, { recursive: true, force: true });
 }
 
-const launch = (dataDir, args = [], cwd = root) => driverLaunch({ dataDir, args, cwd, electronArgs, env: fixture.env });
+const launch = (dataDir, args = [], cwd = root, env = {}) => driverLaunch({ dataDir, args, cwd, electronArgs, env: { ...fixture.env, ...env } });
 
 async function terminate(proc, tail) {
   const exited = await stop(proc);
@@ -110,7 +112,7 @@ async function main() {
   const tabs = () => ev('document.querySelectorAll("#session-list > *").length');
   const fontSize = () => ev('localStorage.getItem("cyborg.fontSize")');
 
-  // Заголовок окна - «Проект - Cyborg v.версия[+хеш коммита]»; проект появляется после загрузки списка проектов.
+  // Заголовок окна - «Проект - Cyborg v.мажор.минор.ДДММ-хеш»; проект появляется после загрузки списка проектов.
   const title = () => ev('document.title');
   await waitFor('окно приложения', async () => (await title()).includes(`Cyborg v.${version}`));
   log(`окно открыто (${Math.round(performance.now() - startedAt)} мс от запуска)`);
@@ -264,7 +266,7 @@ async function main() {
   await waitFor('окно расширений закрыто', async () => !(await extOpen()));
   log('расширения: меню, вкладки, область, фильтр, установка и удаление плагина, MCP без секретов и проверка связи, хабы и подключение магазина');
 
-  assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок окна: проект, приложение и версия');
+  assert.match(await title(), new RegExp(`^Smoke - Cyborg v\\.${versionRe}$`), 'заголовок окна: проект, приложение и версия');
   log('заголовок окна с проектом и версией');
 
   // Прежний projects.json открывается как есть: «Недавние» получают его путь, замок лежит рядом, строка меню видна без Alt.
@@ -557,6 +559,8 @@ async function main() {
   assert.ok(!existsSync(`${legacyFile}.lock`), 'замок остался после SIGTERM');
   log('SIGTERM снял замок');
   await firstRun();
+  await historyBulk();
+  await markdownEdit();
 }
 
 // Первый запуск с пустым userData: окно создания воркспейса, «Отмена», «Создать…» из меню, файл, «Недавние», замок, настройки в своей сессии.
@@ -574,7 +578,7 @@ async function firstRun() {
   assert.equal(await ev('document.querySelector("#workspace-create").disabled'), true, '«Создать» доступна без данных');
   await ev('document.querySelector("#workspace-cancel").click()');
   await waitFor('«Отмена» закрыла окно', async () => !(await opened()));
-  assert.match(await ev('document.title'), new RegExp(`^Cyborg v\\.${version.replaceAll('.', '\\.')}(\\+[0-9a-f]+)?$`), 'заголовок пустого Cyborg');
+  assert.match(await ev('document.title'), new RegExp(`^Cyborg v\\.${versionRe}$`), 'заголовок пустого Cyborg');
   assert.match(await text0(ev, '#empty'), /Воркспейс не открыт/, 'нет подсказки пустого Cyborg');
   assert.equal(await mainEv('process.mainModule.require("electron").Menu.getApplicationMenu().getMenuItemById("project-new").enabled'), false, '«Новый проект» доступен без воркспейса');
   log('первый запуск: окно создания, «Отмена» оставляет пустой Cyborg');
@@ -602,7 +606,7 @@ async function firstRun() {
   ({ ev } = await cdp(pageAfter.webSocketDebuggerUrl));
   await waitFor('проект в новом окне', async () => /Основной/.test(await text0(ev, '#project-select')));
   const newTitle = await ev('document.title');
-  assert.match(newTitle, new RegExp(`^team - Основной - Cyborg v\\.${version.replaceAll('.', '\\.')}`), `заголовок: воркспейс, проект, приложение; получено «${newTitle}»`);
+  assert.match(newTitle, new RegExp(`^team - Основной - Cyborg v\\.${versionRe}`), `заголовок: воркспейс, проект, приложение; получено «${newTitle}»`);
   assert.equal((await started.pages()).length, 1, 'после создания не одно окно');
   const written = JSON.parse(readFileSync(wsFile, 'utf8'));
   assert.equal(written.projects.length, 1);
@@ -639,6 +643,168 @@ async function firstRun() {
   assert.ok(!existsSync(missingFile), 'старт на несуществующий файл создал его');
   await terminate(missing.proc);
   log('--workspace на несуществующий файл: файл не создаётся');
+}
+
+// Вкладка «Сессии» с подставным HOME: журналы Claude Code читаются из ~/.claude/projects, настоящий каталог смоук не трогает.
+async function historyBulk() {
+  const home = join(base, 'history-home');
+  const journals = join(home, '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(journals, { recursive: true });
+  const ids = [1, 2, 3, 4, 5].map((n) => `0000000${n}-0000-4000-8000-000000000000`);
+  const now = Date.now() / 1000;
+  ids.forEach((id, i) => {
+    const file = join(journals, `${id}.jsonl`);
+    writeFileSync(file, `${JSON.stringify({ type: 'user', entrypoint: 'cli', message: { content: `сессия ${i + 1}` } })}\n`);
+    utimesSync(file, now - i * 60, now - i * 60);
+  });
+  const data = join(base, 'userdata-history');
+  mkdirSync(data);
+  writeFileSync(join(data, 'projects.json'), JSON.stringify({ projects: [{ id: 'h1', name: 'History', description: '', repos: [repo], trackers: { github: false, gitlab: false } }], lastProjectId: 'h1' }));
+  const started = await launch(data, [], root, { HOME: home });
+  extraApps.push(started.proc);
+  const page = await waitFor('страница окна истории', async () => (await started.pages())[0]);
+  const { send, ev } = await cdp(page.webSocketDebuggerUrl);
+  await waitFor('проект History', async () => /History/.test(await text0(ev, '#project-select')));
+  await ev('document.querySelector("#side-history").click()');
+  await waitFor('пять прошлых сессий', async () => (await ev('document.querySelectorAll(".history-item").length')) === 5);
+  assert.equal(await ev('[...document.querySelectorAll(".history-title")].map((e) => e.textContent).join()'), 'сессия 1,сессия 2,сессия 3,сессия 4,сессия 5', 'порядок сессий');
+  const click = async (selector, index, modifiers = 0) => {
+    const { x, y } = await ev(`(() => { const r = document.querySelectorAll(${JSON.stringify(selector)})[${index}].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers });
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, modifiers });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, modifiers });
+  };
+  const state = () =>
+    ev('({ bar: !document.querySelector(".history-bar").hidden, count: document.querySelector(".history-count").textContent, marks: [...document.querySelectorAll(".history-item")].map((e) => (e.getAttribute("aria-selected") === "true" ? 1 : 0)).join("") })');
+  const tabs = () => ev('document.querySelectorAll("#session-list > *").length');
+  const tabsBefore = await tabs();
+  assert.deepEqual(await state(), { bar: false, count: 'Выбрано: 0', marks: '00000' }, 'выделение до щелчков');
+
+  await click('.history-item', 1, commandModifier);
+  await click('.history-item', 3, SHIFT);
+  assert.deepEqual(await state(), { bar: true, count: 'Выбрано: 3', marks: '01110' }, 'Ctrl+клик и Shift+клик: диапазон 2..4');
+  await click('.history-item', 0);
+  assert.equal((await state()).marks, '11110', 'клик при выделении выделяет, а не продолжает');
+  await click('.history-check', 0);
+  assert.equal((await state()).marks, '01110', 'флажок снимает выделение');
+  assert.equal(await tabs(), tabsBefore, 'клик при выделении открыл сессию');
+
+  await ev('window.__asked = []; window.confirm = (q) => (window.__asked.push(q), true)');
+  await ev('[...document.querySelectorAll(".history-bar button")].find((b) => b.textContent === "Удалить").click()');
+  await waitFor('остались две сессии', async () => (await ev('document.querySelectorAll(".history-item").length')) === 2);
+  assert.deepEqual(await ev('window.__asked'), ['Удалить 3 сессии? Журналы будут стёрты, продолжить эти сессии станет нельзя.'], 'одно подтверждение на пачку');
+  assert.deepEqual(readdirSync(journals).sort(), [`${ids[0]}.jsonl`, `${ids[4]}.jsonl`], 'стёрты не те журналы');
+  assert.deepEqual(await state(), { bar: false, count: 'Выбрано: 0', marks: '00' }, 'выделение после удаления');
+  log('сессии: Ctrl+клик, Shift+клик, флажок, одно подтверждение и удаление выделенных');
+
+  await click('.history-item', 1, commandModifier);
+  assert.equal((await state()).bar, true, 'нет полосы выделения');
+  await ev('[...document.querySelectorAll(".history-bar button")].find((b) => b.textContent === "Отмена").click()');
+  assert.deepEqual(await state(), { bar: false, count: 'Выбрано: 0', marks: '00' }, '«Отмена» не сняла выделение');
+  await click('.history-item', 0);
+  await waitFor('клик без выделения продолжил сессию', async () => (await tabs()) === tabsBefore + 1);
+  log('сессии: «Отмена» снимает выделение, клик без выделения продолжает сессию');
+  await terminate(started.proc, started.stderr);
+}
+
+// Markdown в просмотрщике: рендер без скриптов и сети, ссылка на файл, правка по кнопке, Ctrl/Cmd+S, конфликт с диском.
+async function markdownEdit() {
+  const docs = join(base, 'md-repo');
+  mkdirSync(docs);
+  const readme = join(docs, 'README.md');
+  writeFileSync(
+    readme,
+    '# Заголовок\n\n[к разделу](#второй-раздел) [другой](other.md)\n\n![сеть](https://example.com/p.png) ![локальная](pic.png)\n\n<img src="x" onerror="window.__xss = 1"><script>window.__xss = 2</script>\n\n- [x] сделано\n\n## Второй раздел\n',
+  );
+  writeFileSync(join(docs, 'other.md'), '# Другой\n');
+  git(docs, 'init', '-q', '-b', 'main');
+  git(docs, 'add', '-A');
+  git(docs, 'commit', '-q', '-m', 'docs');
+  const data = join(base, 'userdata-md');
+  mkdirSync(data);
+  writeFileSync(join(data, 'projects.json'), JSON.stringify({ projects: [{ id: 'm1', name: 'Docs', description: '', repos: [docs], trackers: { github: false, gitlab: false } }], lastProjectId: 'm1' }));
+  const started = await launch(data);
+  extraApps.push(started.proc);
+  const page = await waitFor('страница окна Markdown', async () => (await started.pages())[0]);
+  const { send, ev } = await cdp(page.webSocketDebuggerUrl);
+  const openRow = (file) => ev(`[...document.querySelectorAll('#tree .row.file')].find((r) => r.title === ${JSON.stringify(file)}).click()`);
+  const h1 = () => text0(ev, '#file-preview .md-view h1');
+  await waitFor('README.md в дереве', async () => /README\.md/.test(await text0(ev, '#tree')));
+  await openRow(readme);
+  await waitFor('отрендеренный README', async () => (await h1()) === 'Заголовок');
+  const rendered = await ev(`(() => {
+    const view = document.querySelector('#file-preview .md-view');
+    const imgs = [...view.querySelectorAll('img')];
+    return {
+      scripts: view.querySelectorAll('script').length,
+      handlers: imgs.filter((i) => i.hasAttribute('onerror')).length,
+      xss: window.__xss ?? null,
+      remote: imgs.filter((i) => i.classList.contains('md-blocked') && !i.hasAttribute('src')).length,
+      local: imgs.map((i) => i.getAttribute('src') ?? '').filter((s) => s.startsWith('file://') && s.endsWith('/md-repo/pic.png')).length,
+      anchor: view.querySelector('h2').id,
+      task: view.querySelector('input[type=checkbox]').disabled,
+      buttons: [...document.querySelectorAll('#file-preview .file-actions button')].map((b) => b.textContent).join(),
+    };
+  })()`);
+  assert.deepEqual(rendered, { scripts: 0, handlers: 0, xss: null, remote: 1, local: 1, anchor: 'md-второй-раздел', task: true, buttons: 'Править' }, 'рендер Markdown');
+  await ev(`[...document.querySelectorAll('#file-preview .md-view a')].find((a) => a.textContent === 'другой').click()`);
+  await waitFor('ссылка открыла other.md', async () => (await h1()) === 'Другой');
+  log('Markdown: рендер без скриптов и картинок из сети, якоря заголовков, ссылка открывает файл');
+
+  await openRow(readme);
+  await waitFor('README снова', async () => (await h1()) === 'Заголовок');
+  const action = (label) => ev(`[...document.querySelectorAll('#file-preview .file-actions button')].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
+  const state = () =>
+    ev(`({ editor: document.querySelectorAll('#file-preview .monaco-editor').length, unsaved: !document.querySelector('#file-preview .file-unsaved')?.hidden, save: document.querySelector('#file-preview .file-actions button.primary')?.disabled === false })`);
+  const focused = () => ev(`!!document.activeElement?.closest('#file-preview .monaco-editor')`);
+  await action('Править');
+  await waitFor('редактор правки', async () => (await state()).editor === 1);
+  assert.deepEqual(await state(), { editor: 1, unsaved: false, save: false }, 'правка до ввода');
+  await waitFor('фокус в редакторе', focused);
+  await send('Input.insertText', { text: 'Правка. ' });
+  assert.deepEqual(await state(), { editor: 1, unsaved: true, save: true }, 'правка после ввода');
+  const k = { key: 's', code: 'KeyS', windowsVirtualKeyCode: 83, modifiers: commandModifier };
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+  await waitFor('Ctrl/Cmd+S записал файл', () => readFileSync(readme, 'utf8').startsWith('Правка. # Заголовок'));
+  await waitFor('после сохранения правка чистая', async () => (await state()).unsaved === false);
+  log('Markdown: «Править», ввод, Ctrl/Cmd+S пишет файл на диск');
+
+  writeFileSync(readme, '# Сессия переписала\n');
+  await send('Input.insertText', { text: 'Ещё. ' });
+  await ev('window.__asked = []; window.__answers = [false, false]; window.confirm = (q) => (window.__asked.push(q), window.__answers.shift() ?? false)');
+  await action('Сохранить');
+  await waitFor('вопрос о конфликте', async () => (await ev('window.__asked.length')) === 2);
+  assert.match(await ev('window.__asked[0]'), /изменён на диске после начала правки/, 'нет вопроса о конфликте');
+  assert.equal(readFileSync(readme, 'utf8'), '# Сессия переписала\n', 'конфликт перезаписал файл без согласия');
+  assert.equal((await state()).unsaved, true, 'правка потеряна при отказе');
+  await ev('window.__answers = [true]');
+  await action('Сохранить');
+  await waitFor('перезапись по согласию', () => readFileSync(readme, 'utf8').startsWith('Правка. Ещё. # Заголовок'));
+  log('Markdown: файл изменён на диске - вопрос, без согласия не перезаписан, с согласием перезаписан');
+
+  await action('Готово');
+  await waitFor('просмотр после правки', async () => (await state()).editor === 0 && /Правка\. Ещё\./.test(await text0(ev, '#file-preview .md-view')));
+  const buttons = () => ev(`[...document.querySelectorAll('#file-preview .file-actions button')].map((b) => b.textContent).join()`);
+  await waitFor('кнопка сравнения у изменённого против HEAD', async () => (await buttons()) === 'Сравнение,Править');
+  await action('Сравнение');
+  await waitFor('сравнение с HEAD', () => ev(`!!document.querySelector('#file-preview .monaco-diff-editor') && !document.querySelector('#file-preview .md-view')`));
+  assert.equal(await buttons(), 'Документ,Править', 'кнопки в сравнении');
+  await action('Документ');
+  await waitFor('документ после сравнения', () => ev(`!document.querySelector('#file-preview .monaco-diff-editor') && !!document.querySelector('#file-preview .md-view h2')`));
+  log('Markdown: изменённый против HEAD переключается между документом и сравнением');
+  await action('Править');
+  await waitFor('редактор правки снова', async () => (await state()).editor === 1);
+  await waitFor('фокус в редакторе снова', focused);
+  await send('Input.insertText', { text: 'Брошено. ' });
+  await ev('window.__asked = []; window.__answers = [false]');
+  await ev(`document.querySelector('#file-preview .file-header .close').click()`);
+  assert.match(await ev('window.__asked[0] ?? ""'), /несохранённая правка/, 'закрытие не спросило о правке');
+  assert.equal(await ev(`document.querySelector('#file-preview').classList.contains('active')`), false, 'просмотр не закрыт');
+  await sleep(300);
+  assert.ok(!readFileSync(readme, 'utf8').includes('Брошено.'), 'отброшенная правка записана');
+  log('Markdown: закрытие с несохранённой правкой спрашивает, отказ её отбрасывает');
+  await terminate(started.proc, started.stderr);
 }
 
 const text0 = (ev, selector) => ev(`document.querySelector(${JSON.stringify(selector)})?.innerText ?? ''`);

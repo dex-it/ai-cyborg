@@ -10,11 +10,12 @@ export function prepareEventsDir(dir: string): void {
   fs.chmodSync(dir, DIR_MODE);
 }
 
-export function createEventsFile(file: string): void {
+export function createEventsFile(file: string, content = ''): void {
   const fd = fs.openSync(file, 'w', FILE_MODE);
   try {
     // mode у open не действует на существующий файл и урезается umask.
     fs.fchmodSync(fd, FILE_MODE);
+    if (content) fs.writeFileSync(fd, content);
   } finally {
     fs.closeSync(fd);
   }

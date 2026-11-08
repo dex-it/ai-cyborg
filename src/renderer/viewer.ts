@@ -4,9 +4,10 @@ import { loadFontSize } from './font-size';
 import { monacoTheme } from './theme';
 
 let fontSize = loadFontSize();
+document.documentElement.style.setProperty('--viewer-font-size', `${fontSize}px`);
 let monacoPromise: Promise<typeof Monaco> | null = null;
 
-function loadMonaco(): Promise<typeof Monaco> {
+export function loadMonaco(): Promise<typeof Monaco> {
   monacoPromise ??= new Promise((resolve, reject) => {
     window.require.config({ paths: { vs: 'vs' } });
     window.require(['vs/editor/editor.main'], () => resolve(window.monaco!), reject);
@@ -20,6 +21,7 @@ export function applyMonacoTheme(): void {
 
 export function applyMonacoFontSize(size: number): void {
   fontSize = size;
+  document.documentElement.style.setProperty('--viewer-font-size', `${size}px`);
   for (const editor of window.monaco?.editor.getEditors() ?? []) editor.updateOptions({ fontSize });
 }
 
@@ -62,72 +64,50 @@ export async function createJsonEditor(body: HTMLElement, value: string, onSave:
   };
 }
 
-/** Просмотр одного файла; содержимое перечитывается с диска при каждом показе, изменённый против HEAD - сравнением. */
-export class FileViewer {
-  private editor?: Monaco.editor.IStandaloneCodeEditor;
+export const editorOptions = () => ({ theme: monacoTheme(), automaticLayout: true, fontSize, scrollBeyondLastLine: false });
+
+/** Вкладка файла: что показывает просмотрщик и чем закрывается; кнопки режима просмотрщик кладёт в actions. */
+export interface Viewer {
+  readonly path: string;
+  readonly actions: HTMLElement;
+  readonly dirty: boolean;
+  load(): Promise<void>;
+  reveal(line: number): Promise<void>;
+  close(): void;
+}
+
+/** Строка по номеру в центр окна и кратко подсвечена. */
+export function revealLine(editor: Monaco.editor.ICodeEditor, line: number): void {
+  const model = editor.getModel();
+  if (!model) return;
+  const target = Math.min(Math.max(1, Math.trunc(line)), model.getLineCount());
+  editor.revealLineInCenter(target);
+  editor.setPosition({ lineNumber: target, column: 1 });
+  const mark = editor.createDecorationsCollection([
+    { range: { startLineNumber: target, startColumn: 1, endLineNumber: target, endColumn: 1 }, options: { isWholeLine: true, className: 'search-target-line' } },
+  ]);
+  window.setTimeout(() => mark.clear(), 2000);
+  editor.focus();
+}
+
+/** Сравнение рабочей версии с HEAD в одной колонке, только чтение. */
+export class HeadDiff {
   private diff?: Monaco.editor.IStandaloneDiffEditor;
 
   constructor(
-    readonly path: string,
     private readonly body: HTMLElement,
+    private readonly path: string,
   ) {}
 
-  /** Окончание последнего чтения: переход к строке ждёт, пока в редакторе появится содержимое. */
-  private loading: Promise<void> = Promise.resolve();
-
-  load(): Promise<void> {
-    this.loading = this.read();
-    return this.loading;
+  get shown(): boolean {
+    return this.diff !== undefined;
   }
 
-  /** Строка по номеру в центр окна и кратко подсвечена; у диф-редактора - в рабочей версии файла. */
-  async reveal(line: number): Promise<void> {
-    await this.loading;
-    const editor = this.editor ?? this.diff?.getModifiedEditor();
-    const model = editor?.getModel();
-    if (!editor || !model) return;
-    const target = Math.min(Math.max(1, Math.trunc(line)), model.getLineCount());
-    editor.revealLineInCenter(target);
-    editor.setPosition({ lineNumber: target, column: 1 });
-    const mark = editor.createDecorationsCollection([
-      { range: { startLineNumber: target, startColumn: 1, endLineNumber: target, endColumn: 1 }, options: { isWholeLine: true, className: 'search-target-line' } },
-    ]);
-    window.setTimeout(() => mark.clear(), 2000);
-    editor.focus();
+  get modified(): Monaco.editor.ICodeEditor | undefined {
+    return this.diff?.getModifiedEditor();
   }
 
-  private async read(): Promise<void> {
-    const [result, original] = await Promise.all([window.cyborg.readFile(this.path), window.cyborg.gitHeadContent(this.path)]);
-    if (result.content === undefined) {
-      this.dispose();
-      this.body.replaceChildren(el('div', 'file-error', result.error ?? 'Файл не прочитан'));
-      return;
-    }
-    const monaco = await loadMonaco();
-    if (original !== null && original !== result.content) this.showDiff(monaco, original, result.content);
-    else this.showFile(monaco, result.content);
-  }
-
-  private showFile(monaco: typeof Monaco, content: string): void {
-    if (this.diff) this.dispose();
-    if (!this.editor) {
-      this.body.replaceChildren();
-      this.editor = monaco.editor.create(this.body, {
-        value: content,
-        language: detectLanguage(monaco, this.path),
-        readOnly: true,
-        theme: monacoTheme(),
-        automaticLayout: true,
-        fontSize,
-        scrollBeyondLastLine: false,
-      });
-    } else if (this.editor.getValue() !== content) {
-      this.editor.getModel()?.setValue(content);
-    }
-  }
-
-  private showDiff(monaco: typeof Monaco, original: string, content: string): void {
-    if (this.editor) this.dispose();
+  show(monaco: typeof Monaco, original: string, content: string): void {
     if (!this.diff) {
       this.body.replaceChildren();
       const language = detectLanguage(monaco, this.path);
@@ -152,13 +132,83 @@ export class FileViewer {
   }
 
   dispose(): void {
-    this.editor?.getModel()?.dispose();
-    this.editor?.dispose();
-    this.editor = undefined;
     const model = this.diff?.getModel();
     this.diff?.dispose();
     model?.original.dispose();
     model?.modified.dispose();
     this.diff = undefined;
+  }
+}
+
+/** Просмотр одного файла; содержимое перечитывается с диска при каждом показе, изменённый против HEAD - сравнением. */
+export class FileViewer implements Viewer {
+  readonly actions = el('span', 'file-actions');
+  readonly dirty = false;
+  private editor?: Monaco.editor.IStandaloneCodeEditor;
+  private readonly diff: HeadDiff;
+
+  constructor(
+    readonly path: string,
+    private readonly body: HTMLElement,
+  ) {
+    this.diff = new HeadDiff(body, path);
+  }
+
+  /** Окончание последнего чтения: переход к строке ждёт, пока в редакторе появится содержимое. */
+  private loading: Promise<void> = Promise.resolve();
+
+  load(): Promise<void> {
+    this.loading = this.read();
+    return this.loading;
+  }
+
+  /** У диф-редактора строка ищется в рабочей версии файла. */
+  async reveal(line: number): Promise<void> {
+    await this.loading;
+    const editor = this.editor ?? this.diff.modified;
+    if (editor) revealLine(editor, line);
+  }
+
+  close(): void {
+    this.dispose();
+  }
+
+  private async read(): Promise<void> {
+    const [result, original] = await Promise.all([window.cyborg.readFile(this.path), window.cyborg.gitHeadContent(this.path)]);
+    if (result.content === undefined) {
+      this.dispose();
+      this.body.replaceChildren(el('div', 'file-error', result.error ?? 'Файл не прочитан'));
+      return;
+    }
+    const monaco = await loadMonaco();
+    if (original !== null && original !== result.content) {
+      if (this.editor) this.dispose();
+      this.diff.show(monaco, original, result.content);
+    } else this.showFile(monaco, result.content);
+  }
+
+  private showFile(monaco: typeof Monaco, content: string): void {
+    if (this.diff.shown) this.dispose();
+    if (!this.editor) {
+      this.body.replaceChildren();
+      this.editor = monaco.editor.create(this.body, {
+        value: content,
+        language: detectLanguage(monaco, this.path),
+        readOnly: true,
+        theme: monacoTheme(),
+        automaticLayout: true,
+        fontSize,
+        scrollBeyondLastLine: false,
+      });
+    } else if (this.editor.getValue() !== content) {
+      this.editor.getModel()?.setValue(content);
+    }
+  }
+
+  dispose(): void {
+    this.editor?.getModel()?.dispose();
+    this.editor?.dispose();
+    this.editor = undefined;
+    this.diff.dispose();
   }
 }

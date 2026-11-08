@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ActionReply, ExtensionsAction, ExtensionsReply, ExtensionsRequest, Hub, HubContent, HubOp, ProbeReply, UsageReply } from '../shared/extensions';
 import type { SearchReply, SearchRequest } from '../shared/search-pattern';
 import type { CommandsConfig, CommandsScope } from './commands';
-import type { DirEntry } from './files';
+import type { DirEntry, WriteReply } from './files';
 import type { Branches } from './git';
 import type { HistoryEntry } from './history';
 import type { JiraDetailsResult, JiraListResult, JiraProjectsResult, JiraStatus, JiraSuggestion } from './jira';
@@ -67,6 +67,8 @@ const api = {
   input: (id: number, data: string): void => ipcRenderer.send('session:input', id, data),
   resize: (id: number, cols: number, rows: number): void => ipcRenderer.send('session:resize', id, cols, rows),
   kill: (id: number): void => ipcRenderer.send('session:kill', id),
+  /** Вкладку по передаче от сессии открыть не удалось: причина вернётся передавшей модели. */
+  handoffFailed: (hid: string, reason: string): void => ipcRenderer.send('session:handoffFailed', hid, reason),
   notify: (id: number, title: string, body: string): void => ipcRenderer.send('session:notify', id, title, body),
   unnotify: (id: number): void => ipcRenderer.send('session:unnotify', id),
   notificationsState: (enabled: boolean): void => ipcRenderer.send('notifications:state', enabled),
@@ -82,6 +84,10 @@ const api = {
   changeHubs: (op: HubOp): Promise<{ hubs?: Hub[]; error?: string }> => ipcRenderer.invoke('hubs:change', op),
   fetchHub: (id: string, force = false): Promise<HubContent> => ipcRenderer.invoke('hubs:fetch', id, force),
   readFile: (file: string): Promise<{ content?: string; error?: string }> => ipcRenderer.invoke('fs:read', file),
+  /** Перезапись Markdown правкой; разошёлся с base - conflict, если не force. */
+  writeFile: (request: { file: string; content: string; base: string; force?: boolean }): Promise<WriteReply> => ipcRenderer.invoke('fs:write', request),
+  /** Сколько файлов с несохранённой правкой: закрытие окна спросит про них. */
+  reportUnsaved: (count: number): void => ipcRenderer.send('edits:unsaved', count),
   gitRoot: (dir: string): Promise<string | null> => ipcRenderer.invoke('git:root', dir),
   gitBranch: (root: string): Promise<string | null> => ipcRenderer.invoke('git:branch', root),
   gitStatus: (root: string): Promise<Record<string, string>> => ipcRenderer.invoke('git:status', root),

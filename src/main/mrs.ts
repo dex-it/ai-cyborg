@@ -58,7 +58,7 @@ export interface MrDetailsResult {
 }
 
 /** Что присылает интерфейс при старте сессии: только проверяемые ссылки, без названий и веток. */
-export type SessionStart = { task: TaskRef } | { mr: MrRef; intent: MrIntent } | { jira: { key: string } };
+export type SessionStart = { task: TaskRef } | { mr: MrRef; intent: MrIntent } | { jira: { key: string } } | { handoff: string };
 
 /** MR списка до запроса деталей: участники нужны фильтру, головной коммит - проверкам GitHub. */
 export interface ParsedMr {

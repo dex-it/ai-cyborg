@@ -10,6 +10,7 @@ import { basename, byId, el } from './dom';
 import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
 import { moveItem } from './reorder';
+import { clickSelection, sessionsCount } from './selection';
 import { windowTitle } from './title';
 import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
 import { initSourcesSection } from './sources';
@@ -25,7 +26,7 @@ import { neighborAfterClose } from './neighbor';
 import { returnTarget } from './panel-return';
 import { RenderTickets } from './render-ticket';
 import { asMenuItem, bindList, rove } from './list-keys';
-import { bindTablist, markTab, selectTab } from './tabs';
+import { bindTabDrag, bindTablist, markTab, selectTab } from './tabs';
 import { ExtensionsDialog, type ExtensionsTab } from './extensions-dialog';
 import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
@@ -34,14 +35,16 @@ import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
 import { bindTree, replaceTree, TreeView, type TreeRoot } from './tree';
-import { applyMonacoFontSize, applyMonacoTheme, FileViewer } from './viewer';
+import { applyMonacoFontSize, applyMonacoTheme, FileViewer, type Viewer } from './viewer';
+import { MarkdownViewer } from './md-viewer';
+import { isMarkdown } from './md-links';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 
 interface FileTab {
-  viewer: FileViewer;
+  viewer: Viewer;
   rootLabel: string;
   tab: HTMLElement;
   pane: HTMLElement;
@@ -98,7 +101,7 @@ const repoMenu = byId('repo-menu');
 const filePreview = byId('file-preview');
 // Без активной сессии дерево показывает репозитории проекта; раскрытие держится за проектом.
 const projectTrees = new Map<string, TreeView>();
-let preview: FileViewer | null = null;
+let preview: Viewer | null = null;
 const treeHeader = byId('tree-header');
 const historyEl = byId('history');
 const sideFiles = byId<HTMLButtonElement>('side-files');
@@ -503,7 +506,25 @@ async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
   replaceTree(treeEl, fragment);
 }
 
-function fileHeader(path: string, root: TreeRoot): HTMLElement {
+/** Markdown рендерится и правится по кнопке; ссылка документа открывает файл там же, где открылся бы файл из дерева. */
+function createViewer(path: string, body: HTMLElement, root: TreeRoot, onDirty: (dirty: boolean) => void = () => {}): Viewer {
+  if (!isMarkdown(path)) return new FileViewer(path, body);
+  return new MarkdownViewer(path, body, root.path, {
+    saveKey: shortcut(mac, 'S'),
+    dirtyChanged: onDirty,
+    open: (link) => {
+      if (link.kind === 'web') void api.openUrl(link.url);
+      else if (link.kind === 'file') openAnywhere(link.path, root, link.line);
+    },
+  });
+}
+
+function openAnywhere(path: string, root: TreeRoot, line?: number): void {
+  if (active) openFile(active, path, root, line);
+  else void showPreview(path, root, line);
+}
+
+function fileHeader(path: string, root: TreeRoot, actions: HTMLElement): HTMLElement {
   const rel = path.startsWith(`${root.path}/`) ? path.slice(root.path.length + 1) : path;
   const header = el('div', 'file-header');
   const name = el('span', 'file-name', ` / ${rel}`);
@@ -511,28 +532,29 @@ function fileHeader(path: string, root: TreeRoot): HTMLElement {
   const reveal = el('button', 'file-reveal', 'Открыть в системе');
   reveal.title = 'Открыть файл приложением системы по умолчанию';
   reveal.addEventListener('click', () => void api.openPath(path));
-  header.append(el('span', 'file-root', root.label), name, reveal);
+  header.append(el('span', 'file-root', root.label), name, actions, reveal);
   return header;
 }
 
 async function showPreview(path: string, root: TreeRoot, line?: number): Promise<void> {
   closePreview();
-  const header = fileHeader(path, root);
+  const body = el('div', 'file-body');
+  const viewer = createViewer(path, body, root);
+  const header = fileHeader(path, root, viewer.actions);
   const close = el('button', 'close', '×');
   close.title = 'Закрыть';
   close.addEventListener('click', () => closePreview());
   header.prepend(close);
-  const body = el('div', 'file-body');
   filePreview.replaceChildren(header, body);
   filePreview.classList.add('active');
   empty.hidden = true;
-  preview = new FileViewer(path, body);
-  await preview.load();
-  if (line !== undefined) void preview.reveal(line);
+  preview = viewer;
+  await viewer.load();
+  if (line !== undefined) void viewer.reveal(line);
 }
 
 function closePreview(): void {
-  preview?.dispose();
+  preview?.close();
   preview = null;
   filePreview.replaceChildren();
   filePreview.classList.remove('active');
@@ -656,11 +678,13 @@ function createTerminal(id: number): Terminal {
   return term;
 }
 
-type StartFrom = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
+type TrackerStart = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
+/** handoff - задача, переданная другой сессией через MCP Cyborg: её текст держит главный процесс. */
+type StartFrom = TrackerStart | { handoff: string };
 
 const refOf = (x: MrRef): MrRef => ({ kind: x.kind, host: x.host, path: x.path, number: x.number });
 
-async function newSession(repo: string, start?: StartFrom): Promise<void> {
+async function newSession(repo: string, start?: TrackerStart): Promise<void> {
   const owner = project;
   if (!owner) return;
   const key = start && ('task' in start ? start.task.key : 'mr' in start ? start.mr.key : `jira:${start.jira.key}`);
@@ -686,7 +710,14 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     : await api.createSession(
         repo,
         addDirs,
-        start && ('task' in start ? { task: refOf(start.task) } : 'mr' in start ? { mr: refOf(start.mr), intent: start.intent } : { jira: { key: start.jira.key } }),
+        start &&
+          ('handoff' in start
+            ? { handoff: start.handoff }
+            : 'task' in start
+              ? { task: refOf(start.task) }
+              : 'mr' in start
+                ? { mr: refOf(start.mr), intent: start.intent }
+                : { jira: { key: start.jira.key } }),
       );
   const root = (await api.gitRoot(repo)) ?? repo;
   const color = sessionColor(colorIndex++);
@@ -698,6 +729,14 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   container.style.setProperty('--session', color);
   const innerTabs = el('nav', 'inner-tabs');
   bindTablist(innerTabs, 'Вкладки сессии');
+  bindTabDrag(innerTabs, (from, to) => {
+    session.files = moveItem(
+      session.files,
+      session.files.findIndex((f) => f.tab === from),
+      session.files.findIndex((f) => f.tab === to),
+    );
+    innerTabs.append(...session.files.map((f) => f.tab));
+  });
   const innerPanes = el('div', 'inner-panes');
   const termPane = el('div', 'pane terminal');
   const host = el('div', 'term-host');
@@ -709,6 +748,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   term.open(host);
 
   const stripTab = makeTab('session', '', () => closeSession(session, false));
+  stripTab.draggable = true;
   stripTab.style.setProperty('--session', color);
   sessionList.append(stripTab);
   const claudeTab = makeTab('claude', 'Claude');
@@ -761,11 +801,11 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   if (project !== owner) {
     stripTab.hidden = true;
     alignHidden();
-  } else if (start && panel.isOpen) {
-    // Начатая из открытой панели сессия не уводит с панели: пользователь идёт по задачам дальше.
+  } else if (start && (panel.isOpen || 'handoff' in start)) {
+    // Начатая из открытой панели сессия не уводит с панели, переданная другой сессией - от неё: человек переключается сам.
     if (!active) activateSession(session, true);
     else alignHidden();
-    panel.repaint();
+    if (panel.isOpen) panel.repaint();
   } else activateSession(session);
 }
 
@@ -821,10 +861,10 @@ function closeSession(s: Session, force: boolean): void {
   notifier.dismiss(s.id);
   commandBars.detach(s.command);
   s.term.dispose();
-  for (const f of s.files) f.viewer.dispose();
+  for (const f of s.files) f.viewer.close();
   s.stripTab.remove();
   s.container.remove();
-  // Вкладки идут в порядке создания: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
+  // sessions идёт в порядке полосы: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
   const peers = sessions.filter((x) => x.project === s.project);
   sessions.splice(sessions.indexOf(s), 1);
   if (lastSessionOf.get(s.project.id) === s) lastSessionOf.delete(s.project.id);
@@ -846,13 +886,14 @@ function openFile(s: Session, path: string, root: TreeRoot, line?: number): void
     return;
   }
   const pane = el('div', 'pane file');
-  const header = fileHeader(path, root);
   const body = el('div', 'file-body');
-  pane.append(header, body);
+  const file: FileTab = { viewer: null as unknown as Viewer, rootLabel: root.label, tab: null as unknown as HTMLElement, pane };
+  file.viewer = createViewer(path, body, root, (dirty) => file.tab.classList.toggle('dirty', dirty));
+  pane.append(fileHeader(path, root, file.viewer.actions), body);
   s.innerPanes.append(pane);
-  const file: FileTab = { viewer: new FileViewer(path, body), rootLabel: root.label, tab: null as unknown as HTMLElement, pane };
   file.tab = makeTab('file', basename(path), () => closeFile(s, file));
   file.tab.title = path;
+  file.tab.draggable = true;
   file.tab.addEventListener('click', () => showInner(s, file));
   s.innerTabs.append(file.tab);
   s.files.push(file);
@@ -871,7 +912,7 @@ function labelFiles(s: Session): void {
 
 function closeFile(s: Session, file: FileTab): void {
   const index = s.files.indexOf(file);
-  file.viewer.dispose();
+  file.viewer.close();
   file.tab.remove();
   file.pane.remove();
   s.files.splice(index, 1);
@@ -929,6 +970,14 @@ api.on<{ id: number; reason: string }>('session:waiting', ({ id, reason }) => {
   const session = findSession(id);
   session?.stripTab.classList.remove('busy');
   if (session) notifier.waiting(id, `${sessionTitle(session)} · ${session.project.name}`, reason, session === active && document.hasFocus());
+});
+
+api.on<{ hid: string; from: number; repo: string }>('session:handoff', ({ hid, from, repo }) => {
+  const caller = findSession(from);
+  // Проект ищется по передавшей сессии: её вкладка уже в своём проекте, а главный процесс проектов сессий не знает.
+  if (!caller) return api.handoffFailed(hid, 'вкладка передавшей сессии не найдена');
+  if (!caller.project.repos.includes(repo)) return api.handoffFailed(hid, `каталог ${repo} больше не входит в проект ${caller.project.name}`);
+  createSessionView(caller.project, repo, { handoff: hid }).catch((error) => api.handoffFailed(hid, ipcErrorText(error)));
 });
 
 api.on<{ id: number }>('session:reveal', ({ id }) => {
@@ -1076,41 +1125,130 @@ function requestSession(anchor: HTMLElement = newSessionButton): void {
 // ---------- прошлые сессии ----------
 
 function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
+  historyEl.classList.remove('selecting');
   if (typeof entries === 'string') {
     historyEl.replaceChildren(el('div', 'menu-title', entries));
     return;
   }
-  historyEl.replaceChildren(
-    ...entries.map((entry) => {
-      const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
-      item.title = `Продолжить: ${entry.title}`;
-      const remove = el('button', 'close', '×');
-      remove.title = 'Удалить сессию (Delete)';
-      // Запись в порядке табуляции одна, поэтому кнопка удаления с клавиатуры - Delete на записи.
-      remove.tabIndex = -1;
-      remove.addEventListener('click', (event) => {
-        event.stopPropagation();
-        if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
-        api
-          .deleteHistory(owner.id, entry.repo, entry.id)
-          .then(() => item.remove())
-          .catch((err) => alert(String(err)));
-      });
-      item.append(
-        el('span', 'history-title', entry.title),
-        el('span', 'repo-path', `${basename(entry.repo)} · ${ago(entry.updated, Date.now())}`),
-        remove,
-      );
-      item.addEventListener('click', () => void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err))));
-      item.addEventListener('keydown', (event) => {
-        if (event.target === item && event.key === 'Delete') {
-          event.preventDefault();
-          remove.click();
-        }
-      });
-      return item;
-    }),
-  );
+  const keyOf = (entry: HistoryEntry): string => `${entry.repo}\n${entry.id}`;
+  const rows = new Map<string, { entry: HistoryEntry; item: HTMLElement; check: HTMLInputElement }>();
+  let selected = new Set<string>();
+  let anchor: string | null = null;
+  const count = el('span', 'history-count');
+  const selectAll = el('button', '', 'Все');
+  const removeSelected = el('button', 'danger', 'Удалить') as HTMLButtonElement;
+  const cancel = el('button', '', 'Отмена');
+  const bar = el('div', 'history-bar');
+  bar.append(count, selectAll, removeSelected, cancel);
+  const sync = (): void => {
+    bar.hidden = !selected.size;
+    historyEl.classList.toggle('selecting', selected.size > 0);
+    count.textContent = `Выбрано: ${selected.size}`;
+    for (const [key, { item, check }] of rows) {
+      const on = selected.has(key);
+      item.classList.toggle('selected', on);
+      item.setAttribute('aria-selected', String(on));
+      check.checked = on;
+    }
+  };
+  const pick = (key: string, mode: 'toggle' | 'range'): void => {
+    selected = clickSelection([...rows.keys()], selected, anchor, key, mode);
+    anchor = key;
+    sync();
+  };
+  const clear = (): void => {
+    selected = new Set();
+    anchor = null;
+    sync();
+  };
+  const dropRow = (key: string): void => {
+    rows.get(key)?.item.remove();
+    rows.delete(key);
+    selected.delete(key);
+  };
+  const afterDelete = (): void => {
+    sync();
+    if (!rows.size) renderHistory(owner, 'Прошлых сессий нет');
+    else rove(historyEl, '.history-item');
+  };
+  const deleteSelected = async (): Promise<void> => {
+    const targets = [...rows].filter(([key]) => selected.has(key));
+    if (!targets.length || !confirm(`Удалить ${sessionsCount(targets.length)}? Журналы будут стёрты, продолжить эти сессии станет нельзя.`)) return;
+    removeSelected.disabled = true;
+    const failed: string[] = [];
+    for (const [key, { entry }] of targets) {
+      try {
+        await api.deleteHistory(owner.id, entry.repo, entry.id);
+        dropRow(key);
+      } catch (err) {
+        failed.push(`«${entry.title}»: ${String(err)}`);
+      }
+    }
+    removeSelected.disabled = false;
+    afterDelete();
+    if (failed.length) alert(`Не удалось удалить:\n${failed.join('\n')}`);
+  };
+  selectAll.addEventListener('click', () => {
+    selected = new Set(rows.keys());
+    sync();
+  });
+  removeSelected.addEventListener('click', () => void deleteSelected());
+  cancel.addEventListener('click', clear);
+  for (const entry of entries) {
+    const key = keyOf(entry);
+    const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
+    item.title = `Продолжить: ${entry.title}\nВыделить: ${shortcut(mac, 'щелчок')}, диапазон: Shift+щелчок`;
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'history-check';
+    check.title = 'Выделить';
+    check.tabIndex = -1;
+    check.addEventListener('click', (event) => {
+      event.stopPropagation();
+      pick(key, event.shiftKey ? 'range' : 'toggle');
+    });
+    const remove = el('button', 'close', '×');
+    remove.title = 'Удалить сессию (Delete)';
+    // Запись в порядке табуляции одна, поэтому кнопка удаления с клавиатуры - Delete на записи.
+    remove.tabIndex = -1;
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
+      api
+        .deleteHistory(owner.id, entry.repo, entry.id)
+        .then(() => {
+          dropRow(key);
+          afterDelete();
+        })
+        .catch((err) => alert(String(err)));
+    });
+    item.append(
+      check,
+      el('span', 'history-title', entry.title),
+      el('span', 'repo-path', `${basename(entry.repo)} · ${ago(entry.updated, Date.now())}`),
+      remove,
+    );
+    item.addEventListener('click', (event) => {
+      // Пока что-то выделено, щелчок продолжает выделять: продолжить сессию случайно посреди отбора нельзя.
+      if (event.shiftKey) pick(key, 'range');
+      else if (commandKey(event) || selected.size) pick(key, 'toggle');
+      else void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err)));
+    });
+    item.addEventListener('keydown', (event) => {
+      if (event.target !== item) return;
+      if (event.key === 'Delete') {
+        event.preventDefault();
+        if (selected.size) void deleteSelected();
+        else remove.click();
+      } else if (event.key === 'Escape' && selected.size) {
+        event.preventDefault();
+        clear();
+      }
+    });
+    rows.set(key, { entry, item, check });
+  }
+  historyEl.replaceChildren(bar, ...[...rows.values()].map((row) => row.item));
+  sync();
   rove(historyEl, '.history-item');
 }
 
@@ -1241,6 +1379,15 @@ newSessionButton.addEventListener('click', (event) => {
 });
 bindTablist(byId('side-tabs'), 'Боковая панель');
 bindTablist(sessionList, 'Сессии');
+bindTabDrag(sessionList, (from, to) => {
+  const moved = moveItem(
+    sessions,
+    sessions.findIndex((s) => s.stripTab === from),
+    sessions.findIndex((s) => s.stripTab === to),
+  );
+  sessions.splice(0, sessions.length, ...moved);
+  sessionList.append(...sessions.map((s) => s.stripTab));
+});
 selectTab(sideFiles, true);
 selectTab(sideHistory, false);
 sideFiles.addEventListener('click', () => showSideView(false));
@@ -1248,6 +1395,7 @@ sideHistory.addEventListener('click', () => showSideView(true));
 bindList(repoMenu, '.menu-item');
 historyEl.setAttribute('role', 'listbox');
 historyEl.setAttribute('aria-label', 'Прошлые сессии');
+historyEl.setAttribute('aria-multiselectable', 'true');
 bindList(historyEl, '.history-item');
 document.addEventListener('click', (event) => {
   if (!repoMenu.contains(event.target as Node)) closeRepoMenu(false);
@@ -1337,7 +1485,7 @@ api.on<void>('menu:prompts', () => void promptEditor.open());
 // Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта.
 const searchDialog = new SearchDialog({
   roots: () => (active ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),
-  open: (path, root, line) => (active ? openFile(active, path, root, line) : void showPreview(path, root, line)),
+  open: openAnywhere,
 });
 api.on<SearchMode>('menu:search', (mode) => searchDialog.open(mode));
 // Расширения читаются по репозиториям проекта и по рабочему каталогу активной сессии.

@@ -56,3 +56,56 @@ export function bindTablist(list: HTMLElement, label: string): void {
     tabs[next].focus();
   });
 }
+
+// Свой тип данных: вкладка не принимается зонами броска пути (acceptsDrop), и терминал её не вставит.
+const TAB_DRAG_MIME = 'application/x-cyborg-tab';
+let dragged: HTMLElement | null = null;
+
+/** Перестановка вкладок с draggable мышью внутри списка; порядок в данных и в DOM меняет onMove(перетащенная, цель). */
+export function bindTabDrag(list: HTMLElement, onMove: (from: HTMLElement, to: HTMLElement) => void): void {
+  let over: HTMLElement | null = null;
+  const mark = (tab: HTMLElement | null): void => {
+    if (over === tab) return;
+    over?.classList.remove('drop-target');
+    over = tab;
+    over?.classList.add('drop-target');
+  };
+  const tabOf = (event: Event): HTMLElement | null => {
+    const tab = (event.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
+    return tab && tab.draggable && list.contains(tab) ? tab : null;
+  };
+  const dropTarget = (event: Event): HTMLElement | null => {
+    const tab = tabOf(event);
+    return tab && dragged && tab !== dragged && list.contains(dragged) ? tab : null;
+  };
+  list.addEventListener('dragstart', (event) => {
+    const tab = tabOf(event);
+    if (!tab || !event.dataTransfer) return;
+    dragged = tab;
+    event.dataTransfer.setData(TAB_DRAG_MIME, '');
+    event.dataTransfer.effectAllowed = 'move';
+    tab.classList.add('dragging');
+  });
+  list.addEventListener('dragover', (event) => {
+    const tab = dropTarget(event);
+    if (!tab || !event.dataTransfer) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    mark(tab);
+  });
+  list.addEventListener('dragleave', (event) => {
+    if (over && !over.contains(event.relatedTarget as Node | null)) mark(null);
+  });
+  list.addEventListener('drop', (event) => {
+    const tab = dropTarget(event);
+    mark(null);
+    if (!tab || !dragged) return;
+    event.preventDefault();
+    onMove(dragged, tab);
+  });
+  list.addEventListener('dragend', () => {
+    mark(null);
+    dragged?.classList.remove('dragging');
+    dragged = null;
+  });
+}

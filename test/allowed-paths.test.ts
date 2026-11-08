@@ -134,6 +134,7 @@ describe('обработчики каналов fs:* и git:*', () => {
       searchText: (request) => record('searchText')(request.root).then(() => ({ hits: [], truncated: false })),
       searchChanges: (request) => record('searchChanges')(request.root).then(() => ({ hits: [], truncated: false })),
       readTextFile: (file) => record('readTextFile')(file).then(() => ({ content: '' })),
+      writeTextFile: (file) => record('writeTextFile')(file).then(() => ({ saved: true as const })),
       gitRoot: (dir) => record('gitRoot')(dir).then(() => path.dirname(dir)),
       gitBranch: record('gitBranch'),
       gitStatus: (root) => record('gitStatus')(root).then(() => ({})),
@@ -209,6 +210,36 @@ describe('обработчики каналов fs:* и git:*', () => {
     assert.equal(handlers.picked(picked), picked);
     assert.equal(await handlers.root(picked), path.dirname(picked));
     await assert.rejects(async () => handlers.status(path.dirname(picked)), OUTSIDE);
+  });
+
+  it('fs:write: только существующий Markdown в физических границах репозитория и вне .git', async () => {
+    const repo = mkdir('repo');
+    const outside = mkdir('outside');
+    mkdir('repo', '.git');
+    const put = (file: string) => (fs.writeFileSync(file, 'x'), file);
+    const doc = put(path.join(repo, 'README.md'));
+    const upper = put(path.join(repo, 'Notes.MARKDOWN'));
+    const code = put(path.join(repo, 'a.ts'));
+    const inGit = put(path.join(repo, '.git', 'note.md'));
+    const foreign = put(path.join(outside, 'secret.md'));
+    fs.symlinkSync(foreign, path.join(repo, 'link.md'));
+    fs.symlinkSync(code, path.join(repo, 'code.md'));
+    const { handlers, calls } = setup(repo);
+    const write = (file: unknown, extra: object = {}) => handlers.write({ file, content: 'new', base: 'x', ...extra });
+    await assert.rejects(async () => write(foreign), OUTSIDE);
+    await assert.rejects(async () => write(path.join(repo, 'link.md')), OUTSIDE);
+    await assert.rejects(async () => write(`${repo}/../outside/secret.md`), OUTSIDE);
+    await assert.rejects(async () => write(code), /только Markdown/);
+    await assert.rejects(async () => write(path.join(repo, 'code.md')), /только Markdown/);
+    await assert.rejects(async () => write(inGit), /\.git/);
+    await assert.rejects(async () => write(path.join(repo, 'new.md')), /Файл не найден/);
+    for (const bad of [undefined, 42, { file: doc }, { file: doc, content: 1, base: '' }, { file: doc, content: '', base: '', force: 'yes' }]) {
+      await assert.rejects(async () => handlers.write(bad), /Некорректная запись файла/);
+    }
+    assert.deepEqual(calls, []);
+    await write(doc);
+    await write(upper, { force: true });
+    assert.deepEqual(calls, [`writeTextFile:${doc}`, `writeTextFile:${upper}`]);
   });
 
   it('каталог, выбранный в диалоге, доступен до сохранения проекта; отмена диалога ничего не выдаёт', async () => {
