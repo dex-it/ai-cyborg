@@ -26,6 +26,7 @@ export function prepareFixtures(base, extraEnv = {}) {
   const argsLog = join(logs, 'args.log');
   const pluginLog = join(logs, 'plugin.log');
   const ghLog = join(logs, 'gh.log');
+  const jiraLog = join(logs, 'jira.log');
   const market = join(fixtures, 'market');
   const suggest = join(fakeBin, 'suggest.json');
   const env = {
@@ -35,11 +36,12 @@ export function prepareFixtures(base, extraEnv = {}) {
     FAKE_ARGS_LOG: argsLog,
     FAKE_PLUGIN_LOG: pluginLog,
     FAKE_GH_LOG: ghLog,
+    FAKE_JIRA_LOG: jiraLog,
     FAKE_MARKET: market,
     CLAUDE_CONFIG_DIR: claudeHome,
     ...extraEnv,
   };
-  return { fakeBin, claudeHome, argsLog, pluginLog, ghLog, market, suggest, env };
+  return { fakeBin, claudeHome, argsLog, pluginLog, ghLog, jiraLog, market, suggest, env };
 }
 
 export async function waitFor(what, probe, timeout = TIMEOUT_MS) {
@@ -61,7 +63,7 @@ export async function waitFor(what, probe, timeout = TIMEOUT_MS) {
 export const sockets = [];
 
 /** Соединение с целью DevTools: страницей окна или главным процессом (--inspect). Без ответа на вызов прогон падает с причиной, а не висит. */
-export async function cdp(url) {
+export async function cdp(url, timeoutMs = CDP_TIMEOUT_MS) {
   const socket = new WebSocket(url);
   sockets.push(socket);
   await new Promise((r, j) => {
@@ -79,7 +81,7 @@ export async function cdp(url) {
   const send = (method, params = {}) =>
     new Promise((res, rej) => {
       const id = ++seq;
-      const timer = setTimeout(() => rej(new Error(`DevTools ${method}${typeof params.expression === 'string' ? ` «${params.expression.replace(/\s+/g, ' ').slice(0, 90)}»` : ''}: нет ответа за ${CDP_TIMEOUT_MS / 1000} с`)), CDP_TIMEOUT_MS);
+      const timer = setTimeout(() => rej(new Error(`DevTools ${method}${typeof params.expression === 'string' ? ` «${params.expression.replace(/\s+/g, ' ').slice(0, 90)}»` : ''}: нет ответа за ${timeoutMs / 1000} с`)), timeoutMs);
       pending.set(id, (reply) => {
         clearTimeout(timer);
         res(reply);

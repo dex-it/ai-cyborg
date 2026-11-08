@@ -91,6 +91,7 @@ async function terminate(proc, tail) {
 }
 
 async function main() {
+  const startedAt = performance.now();
   const started = await launch(userData);
   app = started.proc;
   stderrOfMain = started.stderr;
@@ -112,11 +113,11 @@ async function main() {
   // Заголовок окна - «Проект - Cyborg v.версия[+хеш коммита]»; проект появляется после загрузки списка проектов.
   const title = () => ev('document.title');
   await waitFor('окно приложения', async () => (await title()).includes(`Cyborg v.${version}`));
-  log('окно открыто');
+  log(`окно открыто (${Math.round(performance.now() - startedAt)} мс от запуска)`);
 
   await waitFor('проект и дерево', async () => /Smoke/.test(await text('#project-select')) && /a\.txt/.test(await text('#tree')));
   assert.match(await text('#tree'), /\bM\b/, 'изменённый файл без отметки M git-статуса');
-  log('проект, дерево и git-статус');
+  log(`проект, дерево и git-статус (${Math.round(performance.now() - startedAt)} мс от запуска)`);
 
   // Окно поиска не висит на экране: его открывает пункт меню «Поиск».
   assert.equal(await ev('document.querySelector("#search-dialog").open'), false, 'окно поиска открыто без вызова');

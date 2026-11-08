@@ -1,5 +1,6 @@
 #!/bin/sh
 # Подставной jira: вход есть, одна задача SMK-1 в работе; формы ответов - как у jira-cli 1.7.0 (`--raw`, `--plain`).
+[ -n "$FAKE_JIRA_LOG" ] && echo "$*" >> "$FAKE_JIRA_LOG"
 case "$1" in
   version) echo 'Version="1.7.0", GitCommit="smoke"';;
   me) echo 'smoke@example.com';;

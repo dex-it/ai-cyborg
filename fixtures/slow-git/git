@@ -1,0 +1,16 @@
+#!/bin/sh
+# Медленный git для замера «вывод пришёл раньше, чем окно создало вкладку»: `rev-parse --show-toplevel`
+# (его ждёт окно между ответом на создание сессии и созданием вкладки) отвечает через FAKE_GIT_DELAY секунд;
+# остальные вызовы и вызов без FAKE_GIT_DELAY идут в настоящий git без задержки.
+case " $* " in
+  *" rev-parse --show-toplevel "*) [ -n "$FAKE_GIT_DELAY" ] && sleep "$FAKE_GIT_DELAY";;
+esac
+self=$(cd "$(dirname "$0")" && pwd)
+IFS=:
+for dir in $PATH; do
+  [ -z "$dir" ] && continue
+  [ "$(cd "$dir" 2>/dev/null && pwd)" = "$self" ] && continue
+  [ -x "$dir/git" ] && exec "$dir/git" "$@"
+done
+echo "slow-git: настоящий git не найден в PATH" >&2
+exit 127

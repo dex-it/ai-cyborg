@@ -6,8 +6,10 @@
 #   `...suggest`    - хвост ответа с кнопками из $FAKE_SUGGEST (событие Stop);
 #   `...ask`        - запрос человека (UserPromptSubmit);
 #   `flood N [W]`   - N строк по W символов (по умолчанию 100) с цветом и номером, в конце строка `FLOOD-DONE N`;
+#   `trickle N`     - N коротких строк по одной записи в pty на строку (поток мелких кусков, как токены ответа), в конце `FLOOD-DONE N`;
 #   остальное       - эхом `got: [строка]`.
-# FAKE_FLOOD_ON_START=N - вывести N строк сразу при старте, до чтения ввода (вывод, пришедший раньше, чем окно создало вкладку).
+# FAKE_FLOOD_ON_START=N - вывести N строк сразу при старте, до чтения ввода (вывод, пришедший раньше, чем окно создало вкладку);
+# FAKE_FLOOD_STYLE=trickle - сделать это мелкими кусками (как `trickle`), а не одним потоком.
 case "$1" in
   --version) echo "2.1.314 (Claude Code)"; exit 0;;
   plugin)
@@ -31,15 +33,24 @@ flood() {
     printf "FLOOD-DONE %d\n", n
   }'
 }
+trickle() {
+  awk -v n="$1" 'BEGIN {
+    for (i = 1; i <= n; i++) { printf "line %d\n", i; fflush() }
+    printf "FLOOD-DONE %d\n", n
+  }'
+}
 printf '{"hook_event_name":"SessionStart","cwd":"%s"}\n' "$PWD" >> "$CYBORG_EVENTS"
 echo "fake-claude ready"
 echo "ARGS: $*"
 printf '%s\n' "$*" >> "$FAKE_ARGS_LOG"
-[ -n "$FAKE_FLOOD_ON_START" ] && flood "$FAKE_FLOOD_ON_START"
+if [ -n "$FAKE_FLOOD_ON_START" ]; then
+  if [ "$FAKE_FLOOD_STYLE" = trickle ]; then trickle "$FAKE_FLOOD_ON_START"; else flood "$FAKE_FLOOD_ON_START"; fi
+fi
 while IFS= read -r line; do
   case "$line" in
     "cd "*) dir=${line#cd }; printf '{"hook_event_name":"PostToolUse","cwd":"%s","tool_name":"EnterWorktree"}\n' "$dir" >> "$CYBORG_EVENTS"; echo "moved";;
     "flood "*) set -- $line; flood "$2" "$3";;
+    "trickle "*) set -- $line; trickle "$2";;
     *suggest) cat "$FAKE_SUGGEST" >> "$CYBORG_EVENTS"; echo "suggested";;
     *ask) printf '{"hook_event_name":"UserPromptSubmit"}\n' >> "$CYBORG_EVENTS"; echo "asked";;
     *) echo "got: [$line]";;
