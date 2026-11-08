@@ -52,3 +52,19 @@ export async function readTextFile(file: string): Promise<{ content?: string; er
     return { error: (error as Error).message };
   }
 }
+
+export type WriteReply = { saved: true } | { conflict: true } | { error: string };
+
+/** Перезапись существующего файла правкой; файл на диске разошёлся с версией, от которой шла правка, - конфликт, если не force. */
+export async function writeTextFile(file: string, content: string, base: string, force: boolean): Promise<WriteReply> {
+  if (Buffer.byteLength(content) > MAX_VIEW_BYTES) return { error: `Правка больше ${MAX_VIEW_BYTES / 1024 / 1024} МБ` };
+  const current = await readTextFile(file);
+  if (current.content === undefined) return { error: current.error ?? 'Файл не прочитан' };
+  if (!force && current.content !== base) return { conflict: true };
+  try {
+    await fs.writeFile(file, content);
+    return { saved: true };
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+}

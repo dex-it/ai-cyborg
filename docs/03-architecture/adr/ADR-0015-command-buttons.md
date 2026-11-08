@@ -24,7 +24,7 @@ quality-checks: входных записей нет
 ## Context
 
 У окна есть канал `session:input` (ввод в pty сессии) и файл воркспейса `{projects, lastProjectId}` (ADR-0014), которым владеет
-`ProjectStore`; просмотрщик Monaco только читает (BRD продукта, non-goals). О сессии интерфейс знает ветку (`git:branch`), ссылку PR/MR или
+`ProjectStore`; просмотрщик Monaco только читает, кроме Markdown (фича 16; BRD продукта, non-goals). О сессии интерфейс знает ветку (`git:branch`), ссылку PR/MR или
 задачу, из которых она начата (`Session.mr`, `Session.task`, `Session.jira`), и список MR проекта (`mrs:list`). Issue #26 называет место
 (полоса под терминалом), форму кнопки `{label, text, submit, hotkey}`, подстановки, канал `session:input`, набор «по умолчанию и из
 файла воркспейса», правку «пунктом меню, открывающим JSON в Monaco», и четыре «Решено не делать».

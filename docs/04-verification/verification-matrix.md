@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 163; с автотестом - 147, из них со smoke - 35; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 170; с автотестом - 152, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -176,3 +176,10 @@ date: 2026-10-26
 | FR-15006 | list_sessions перечисляет вкладки проекта с состоянием и хвостом ответа | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
 | FR-15007 | send_to_session пишет в ждущую вкладку вставкой и Enter, не задевая чужой запрос разрешения | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
 | FR-15008 | Очередь сообщений работающей вкладке | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
+| FR-16001 | Markdown-файл открывается отрендеренным документом | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |
+| NFR-16001 | Документ из репозитория не исполняет кода, не грузит сеть и не меняет окно | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/md-links.test.ts` |
+| FR-16002 | Ссылки и картинки документа | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |
+| FR-16003 | Правка исходника по кнопке и сохранение | 16-markdown-view | smoke | `scripts/smoke.mjs` |
+| FR-16004 | Канал fs:write перезаписывает только существующий Markdown внутри разрешённых каталогов | 16-markdown-view | автотест | `test/allowed-paths.test.ts`, `test/write-file.test.ts`, `test/static-guards.test.ts` |
+| FR-16005 | Файл изменён на диске после начала правки - вопрос, без согласия не перезаписан | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/write-file.test.ts` |
+| FR-16006 | Несохранённая правка не теряется молча | 16-markdown-view | smoke | `scripts/smoke.mjs` |
