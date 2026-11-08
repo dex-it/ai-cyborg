@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 162; с автотестом - 146, из них со smoke - 34; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 163; с автотестом - 147, из них со smoke - 35; только smoke - 8; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -102,6 +102,7 @@ date: 2026-10-26
 | FR-8002 | Продолжение прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8003 | Удаление прошлой сессии | 08-session-history | автотест | `test/history.test.ts` |
 | FR-8004 | Список прошлых сессий управляется с клавиатуры | 08-session-history | автотест | `test/list-keys.test.ts` |
+| FR-8005 | Удаление нескольких прошлых сессий разом | 08-session-history | автотест + smoke | `test/selection.test.ts`, `scripts/smoke.mjs` |
 | FR-9001 | Инструкция изоляции в каждой сессии | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9002 | Порядок аргументов запуска | 09-session-isolation | автотест | `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-9003 | Решает модель, Cyborg передаёт и следит | 09-session-isolation | автотест | `src/main/sessions.test.ts` |
@@ -109,7 +110,7 @@ date: 2026-10-26
 | FR-10002 | Фильтры и сортировка панелей переживают перезапуск | 10-ui-preferences | автотест | `test/prefs.test.ts`, `test/model.test.ts` |
 | FR-10003 | `Shift+Enter` - перевод строки в запросе | 10-ui-preferences | осмотр и демонстрация | - |
 | FR-10004 | Порядок репозиториев проекта | 10-ui-preferences | автотест | `test/reorder.test.ts`, `test/roots.test.ts` |
-| FR-10005 | Версия приложения, воркспейс и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `test/workspaces.test.ts`, `scripts/smoke.mjs` |
+| FR-10005 | Версия приложения, воркспейс и проект в заголовке окна | 10-ui-preferences | автотест + smoke | `test/title.test.ts`, `test/workspaces.test.ts`, `test/app-version.test.ts`, `scripts/smoke.mjs` |
 | FR-10006 | Уведомление, когда сессия ждёт человека | 10-ui-preferences | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/notify-args.test.ts`, `test/menu.test.ts` |
 | FR-10007 | Системное меню «Воркспейс» вместо меню проекта на панели | 10-ui-preferences | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-10008 | Вкладки управляются с клавиатуры | 10-ui-preferences | автотест | `test/tabs.test.ts` |

@@ -10,6 +10,7 @@ import { basename, byId, el } from './dom';
 import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
 import { moveItem } from './reorder';
+import { clickSelection, sessionsCount } from './selection';
 import { windowTitle } from './title';
 import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
 import { initSourcesSection } from './sources';
@@ -1103,41 +1104,130 @@ function requestSession(anchor: HTMLElement = newSessionButton): void {
 // ---------- прошлые сессии ----------
 
 function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
+  historyEl.classList.remove('selecting');
   if (typeof entries === 'string') {
     historyEl.replaceChildren(el('div', 'menu-title', entries));
     return;
   }
-  historyEl.replaceChildren(
-    ...entries.map((entry) => {
-      const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
-      item.title = `Продолжить: ${entry.title}`;
-      const remove = el('button', 'close', '×');
-      remove.title = 'Удалить сессию (Delete)';
-      // Запись в порядке табуляции одна, поэтому кнопка удаления с клавиатуры - Delete на записи.
-      remove.tabIndex = -1;
-      remove.addEventListener('click', (event) => {
-        event.stopPropagation();
-        if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
-        api
-          .deleteHistory(owner.id, entry.repo, entry.id)
-          .then(() => item.remove())
-          .catch((err) => alert(String(err)));
-      });
-      item.append(
-        el('span', 'history-title', entry.title),
-        el('span', 'repo-path', `${basename(entry.repo)} · ${ago(entry.updated, Date.now())}`),
-        remove,
-      );
-      item.addEventListener('click', () => void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err))));
-      item.addEventListener('keydown', (event) => {
-        if (event.target === item && event.key === 'Delete') {
-          event.preventDefault();
-          remove.click();
-        }
-      });
-      return item;
-    }),
-  );
+  const keyOf = (entry: HistoryEntry): string => `${entry.repo}\n${entry.id}`;
+  const rows = new Map<string, { entry: HistoryEntry; item: HTMLElement; check: HTMLInputElement }>();
+  let selected = new Set<string>();
+  let anchor: string | null = null;
+  const count = el('span', 'history-count');
+  const selectAll = el('button', '', 'Все');
+  const removeSelected = el('button', 'danger', 'Удалить') as HTMLButtonElement;
+  const cancel = el('button', '', 'Отмена');
+  const bar = el('div', 'history-bar');
+  bar.append(count, selectAll, removeSelected, cancel);
+  const sync = (): void => {
+    bar.hidden = !selected.size;
+    historyEl.classList.toggle('selecting', selected.size > 0);
+    count.textContent = `Выбрано: ${selected.size}`;
+    for (const [key, { item, check }] of rows) {
+      const on = selected.has(key);
+      item.classList.toggle('selected', on);
+      item.setAttribute('aria-selected', String(on));
+      check.checked = on;
+    }
+  };
+  const pick = (key: string, mode: 'toggle' | 'range'): void => {
+    selected = clickSelection([...rows.keys()], selected, anchor, key, mode);
+    anchor = key;
+    sync();
+  };
+  const clear = (): void => {
+    selected = new Set();
+    anchor = null;
+    sync();
+  };
+  const dropRow = (key: string): void => {
+    rows.get(key)?.item.remove();
+    rows.delete(key);
+    selected.delete(key);
+  };
+  const afterDelete = (): void => {
+    sync();
+    if (!rows.size) renderHistory(owner, 'Прошлых сессий нет');
+    else rove(historyEl, '.history-item');
+  };
+  const deleteSelected = async (): Promise<void> => {
+    const targets = [...rows].filter(([key]) => selected.has(key));
+    if (!targets.length || !confirm(`Удалить ${sessionsCount(targets.length)}? Журналы будут стёрты, продолжить эти сессии станет нельзя.`)) return;
+    removeSelected.disabled = true;
+    const failed: string[] = [];
+    for (const [key, { entry }] of targets) {
+      try {
+        await api.deleteHistory(owner.id, entry.repo, entry.id);
+        dropRow(key);
+      } catch (err) {
+        failed.push(`«${entry.title}»: ${String(err)}`);
+      }
+    }
+    removeSelected.disabled = false;
+    afterDelete();
+    if (failed.length) alert(`Не удалось удалить:\n${failed.join('\n')}`);
+  };
+  selectAll.addEventListener('click', () => {
+    selected = new Set(rows.keys());
+    sync();
+  });
+  removeSelected.addEventListener('click', () => void deleteSelected());
+  cancel.addEventListener('click', clear);
+  for (const entry of entries) {
+    const key = keyOf(entry);
+    const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
+    item.title = `Продолжить: ${entry.title}\nВыделить: ${shortcut(mac, 'щелчок')}, диапазон: Shift+щелчок`;
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'history-check';
+    check.title = 'Выделить';
+    check.tabIndex = -1;
+    check.addEventListener('click', (event) => {
+      event.stopPropagation();
+      pick(key, event.shiftKey ? 'range' : 'toggle');
+    });
+    const remove = el('button', 'close', '×');
+    remove.title = 'Удалить сессию (Delete)';
+    // Запись в порядке табуляции одна, поэтому кнопка удаления с клавиатуры - Delete на записи.
+    remove.tabIndex = -1;
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
+      api
+        .deleteHistory(owner.id, entry.repo, entry.id)
+        .then(() => {
+          dropRow(key);
+          afterDelete();
+        })
+        .catch((err) => alert(String(err)));
+    });
+    item.append(
+      check,
+      el('span', 'history-title', entry.title),
+      el('span', 'repo-path', `${basename(entry.repo)} · ${ago(entry.updated, Date.now())}`),
+      remove,
+    );
+    item.addEventListener('click', (event) => {
+      // Пока что-то выделено, щелчок продолжает выделять: продолжить сессию случайно посреди отбора нельзя.
+      if (event.shiftKey) pick(key, 'range');
+      else if (commandKey(event) || selected.size) pick(key, 'toggle');
+      else void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err)));
+    });
+    item.addEventListener('keydown', (event) => {
+      if (event.target !== item) return;
+      if (event.key === 'Delete') {
+        event.preventDefault();
+        if (selected.size) void deleteSelected();
+        else remove.click();
+      } else if (event.key === 'Escape' && selected.size) {
+        event.preventDefault();
+        clear();
+      }
+    });
+    rows.set(key, { entry, item, check });
+  }
+  historyEl.replaceChildren(bar, ...[...rows.values()].map((row) => row.item));
+  sync();
   rove(historyEl, '.history-item');
 }
 
@@ -1284,6 +1374,7 @@ sideHistory.addEventListener('click', () => showSideView(true));
 bindList(repoMenu, '.menu-item');
 historyEl.setAttribute('role', 'listbox');
 historyEl.setAttribute('aria-label', 'Прошлые сессии');
+historyEl.setAttribute('aria-multiselectable', 'true');
 bindList(historyEl, '.history-item');
 document.addEventListener('click', (event) => {
   if (!repoMenu.contains(event.target as Node)) closeRepoMenu(false);
