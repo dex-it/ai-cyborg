@@ -46,7 +46,7 @@ class FakeSsh implements SshTransport {
     const lines: ((l: string) => void)[] = [];
     const exits: ((code: number | null, stderr: string) => void)[] = [];
     let closed = false;
-    const conn = this.daemon.connect({ send: (m) => closed || queueMicrotask(() => lines.forEach((cb) => cb(JSON.stringify(m)))) });
+    const conn = this.daemon.connect({ send: (m) => closed || setImmediate(() => lines.forEach((cb) => cb(JSON.stringify(m)))) });
     const end = (code: number, stderr: string): void => {
       if (closed) return;
       closed = true;

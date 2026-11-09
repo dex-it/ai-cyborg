@@ -7,7 +7,7 @@ import { CLOSE_SELF_DELAY_MS, type Limits, type RemoteToolsPort, type ReportArgs
 import { sameDirs, type SessionManager, type TermPort } from '../sessions';
 import type { AgentdBundle } from './install';
 import { HostLink, realTimers, type Timers } from './host-link';
-import type { RemoteCreateArgs } from './remote-args';
+import type { RemoteCreateArgs, RemoteFsOp } from './remote-args';
 import type { SshTransport } from './ssh';
 
 export interface McpPort {
@@ -239,9 +239,15 @@ export class RemoteSessions implements RemoteToolsPort {
       } catch (error) {
         this.deps.emit('remote:link', { host, online: false, reason: (error as Error).message });
       }
-      if (![...this.byId.values()].some((e) => e.host === host)) link.close();
+      this.closeIfIdle(host);
     }
     return found;
+  }
+
+  /** Канал без вкладок и без призраков, ждущих свой итог, не нужен: призрак закрывается сам, когда итог доставлен. */
+  private closeIfIdle(host: string): void {
+    const busy = [...this.byId.values(), ...this.bySid.values()].some((e) => e.host === host);
+    if (!busy) this.links.get(host)?.close();
   }
 
   private async adopt(link: HostLink, project: Project, item: Record<string, unknown>): Promise<RemoteInfo | null> {
@@ -349,6 +355,7 @@ export class RemoteSessions implements RemoteToolsPort {
       this.deps.mcp.disconnect(entry.id);
       this.deps.sessions.finish(entry.id, Number(msg.code), reason);
     }
+    if (entry.ghost) this.closeIfIdle(entry.host);
     const { kept } = hostCleanup({ kept: msg.kept });
     if (kept.length && !entry.closing) this.deps.alert(`Сессия ${tag(entry)} на ${entry.host}`, closeText(tag(entry), entry.host, { removed: [], kept }));
     if (reason && entry.origin === 'human') this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${tag(entry)} · ${entry.host}`, body: reason.slice(0, 200) });
@@ -421,7 +428,7 @@ export class RemoteSessions implements RemoteToolsPort {
   }
 
   /** Файловая операция над клонами сессии: запись и смена ветки каналов не имеют. */
-  async fsOp(id: number, op: 'list' | 'read' | 'root' | 'branch' | 'status' | 'head', target: unknown): Promise<unknown> {
+  async fsOp(id: number, op: RemoteFsOp, target: unknown): Promise<unknown> {
     const entry = this.byId.get(id);
     if (!entry) throw new Error('Сессия не удалённая');
     if (typeof target !== 'string' || !path.posix.isAbsolute(target) || target.split('/').includes('..')) throw new Error('Путь вне каталогов удалённой сессии');

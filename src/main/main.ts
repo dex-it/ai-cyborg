@@ -31,7 +31,7 @@ import { SessionManager, sameDirs } from './sessions';
 import { McpServer } from './mcp';
 import { createSessionTools, Handoffs, type RemoteToolsPort, type SessionsPort } from './session-tools';
 import { bundleOf } from './remote/install';
-import { validateRemoteCreate } from './remote/remote-args';
+import { validateRemoteCreate, validateRemoteFs } from './remote/remote-args';
 import { RemoteSessions } from './remote/remote-sessions';
 import { systemSsh } from './remote/ssh';
 import { createTaskHandlers, TaskDetailsService } from './task-details';
@@ -367,10 +367,10 @@ ipcMain.handle('remote:discover', (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
   return project?.hosts?.length ? remote.discover(project) : [];
 });
-const REMOTE_FS_OPS = ['list', 'read', 'root', 'branch', 'status', 'head'] as const;
 ipcMain.handle('remote:fs', (_event, id: unknown, op: unknown, target: unknown) => {
-  if (typeof id !== 'number' || !REMOTE_FS_OPS.includes(op as (typeof REMOTE_FS_OPS)[number])) throw new Error('Некорректные аргументы remote:fs');
-  return remote.fsOp(id, op as (typeof REMOTE_FS_OPS)[number], target);
+  const args = validateRemoteFs(id, op);
+  if (!args) throw new Error('Некорректные аргументы remote:fs');
+  return remote.fsOp(args.id, args.op, target);
 });
 ipcMain.handle('history:list', (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);

@@ -26,3 +26,12 @@ export function validateRemoteCreate(value: unknown, project: Project | undefine
   const clean = cleanMessage(prompt);
   return clean ? { ...out, prompt: clean } : out;
 }
+
+export const REMOTE_FS_OPS = ['list', 'read', 'root', 'branch', 'status', 'head'] as const;
+export type RemoteFsOp = (typeof REMOTE_FS_OPS)[number];
+
+/** Аргументы remote:fs из интерфейса: номер вкладки и операция из читающего списка; иначе null. Правка файлов и смена ветки в список не входят. */
+export function validateRemoteFs(id: unknown, op: unknown): { id: number; op: RemoteFsOp } | null {
+  if (typeof id !== 'number' || !REMOTE_FS_OPS.includes(op as RemoteFsOp)) return null;
+  return { id, op: op as RemoteFsOp };
+}

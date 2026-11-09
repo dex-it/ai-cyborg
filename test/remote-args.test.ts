@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { branchNameProblem, validBranchName } from '../src/main/branch-name';
 import { ProjectStore, type Project } from '../src/main/projects';
 import { parsePreflight } from '../src/main/remote/preflight';
-import { validateRemoteCreate } from '../src/main/remote/remote-args';
+import { REMOTE_FS_OPS, validateRemoteCreate, validateRemoteFs } from '../src/main/remote/remote-args';
 import { classifySshError, sshArgs } from '../src/main/remote/ssh';
 import { MAX_TEXT_BYTES } from '../src/main/session-tools';
 import { validateProjectsState } from '../src/main/trackers';
@@ -80,10 +80,19 @@ describe('parsePreflight', () => {
   });
 });
 
+describe('remote:fs из интерфейса', () => {
+  it('операции только читающие: правка и смена ветки отвергаются, как и номер не числом', () => {
+    for (const op of REMOTE_FS_OPS) assert.deepEqual(validateRemoteFs(3, op), { id: 3, op });
+    for (const op of ['write', 'switch', 'delete', 'exec', '', undefined, 5]) assert.equal(validateRemoteFs(3, op), null, String(op));
+    assert.equal(validateRemoteFs('3', 'list'), null);
+    assert.deepEqual([...REMOTE_FS_OPS], ['list', 'read', 'root', 'branch', 'status', 'head']);
+  });
+});
+
 describe('hosts проекта', () => {
   const base = { id: '1', name: 'n', description: 'd', repos: ['/a'], trackers: { github: false, gitlab: false } };
   it('сохранение: ведущий «-», пробел, управляющий символ, не строка - отказ; без поля - как прежде', () => {
-    for (const h of ['-oProxyCommand=x', 'a b', 'a\x01', 5]) assert.equal(validateProjectsState({ projects: [{ ...base, hosts: [h] }], lastProjectId: null }), null, String(h));
+    for (const h of ['-oProxyCommand=x', 'a b', 'a\x01', '\x01a', '\x7fa', '', 'a'.repeat(256), 5]) assert.equal(validateProjectsState({ projects: [{ ...base, hosts: [h] }], lastProjectId: null }), null, String(h));
     assert.equal(validateProjectsState({ projects: [{ ...base, hosts: 'x' }], lastProjectId: null }), null);
     assert.equal(validateProjectsState({ projects: [{ ...base, hosts: Array(33).fill('h') }], lastProjectId: null }), null);
     assert.notEqual(validateProjectsState({ projects: [{ ...base, hosts: Array(32).fill('h') }], lastProjectId: null }), null);

@@ -30,7 +30,7 @@ export interface Project {
 }
 
 export const MAX_HOSTS = 32;
-export const HOST_ALIAS = /^[^\s-][^\s\x00-\x1f\x7f]{0,254}$/;
+export const HOST_ALIAS = /^[^\s\x00-\x1f\x7f-][^\s\x00-\x1f\x7f]{0,254}$/;
 
 /** Хосты из файла: строки по форме, без повторов, не больше MAX_HOSTS; не массив - null. */
 export function readHosts(value: unknown): string[] | null {
