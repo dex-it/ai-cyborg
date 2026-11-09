@@ -67,6 +67,8 @@ interface Entry {
   closing?: boolean;
   /** Запись без вкладки: завершившуюся без клиента сессию держат только ради доставки её итога. */
   ghost?: boolean;
+  /** Окно об отказе уборки уже показано: демон кладёт один и тот же результат уборки и в exit, и в ended. */
+  refusalShown?: boolean;
 }
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -357,7 +359,10 @@ export class RemoteSessions implements RemoteToolsPort {
     }
     if (entry.ghost) this.closeIfIdle(entry.host);
     const { kept } = hostCleanup({ kept: msg.kept });
-    if (kept.length && !entry.closing) this.deps.alert(`Сессия ${tag(entry)} на ${entry.host}`, closeText(tag(entry), entry.host, { removed: [], kept }));
+    if (kept.length && !entry.closing && !entry.refusalShown) {
+      entry.refusalShown = true;
+      this.deps.alert(`Сессия ${tag(entry)} на ${entry.host}`, closeText(tag(entry), entry.host, { removed: [], kept }));
+    }
     if (reason && entry.origin === 'human') this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${tag(entry)} · ${entry.host}`, body: reason.slice(0, 200) });
   }
 
@@ -369,7 +374,10 @@ export class RemoteSessions implements RemoteToolsPort {
     this.ending.delete(entry.sid);
     this.deliver(entry, { status: 'failed', summary: refused ? `${reason}\n${refused}` : reason });
     this.link(entry.host).send({ type: 'ack', sid: entry.sid });
-    if (refused) this.deps.alert(`Сессия ${tag(entry)} на ${entry.host}`, refused);
+    if (refused && !entry.refusalShown) {
+      entry.refusalShown = true;
+      this.deps.alert(`Сессия ${tag(entry)} на ${entry.host}`, refused);
+    }
     if (!entry.ghost) this.deps.closeTab(entry.id);
   }
 

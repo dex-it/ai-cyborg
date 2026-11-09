@@ -92,7 +92,7 @@ describe('remote:fs из интерфейса', () => {
 describe('hosts проекта', () => {
   const base = { id: '1', name: 'n', description: 'd', repos: ['/a'], trackers: { github: false, gitlab: false } };
   it('сохранение: ведущий «-», пробел, управляющий символ, не строка - отказ; без поля - как прежде', () => {
-    for (const h of ['-oProxyCommand=x', 'a b', 'a\x01', '\x01a', '\x7fa', '', 'a'.repeat(256), 5]) assert.equal(validateProjectsState({ projects: [{ ...base, hosts: [h] }], lastProjectId: null }), null, String(h));
+    for (const h of ['-oProxyCommand=x', 'a b', 'a\x01', '\x01a', '\x7fa', '\u009bx', 'a\u0085', '\u0085a', 'a\u202e', '\u200ex', '', 'a'.repeat(256), 5]) assert.equal(validateProjectsState({ projects: [{ ...base, hosts: [h] }], lastProjectId: null }), null, String(h));
     assert.equal(validateProjectsState({ projects: [{ ...base, hosts: 'x' }], lastProjectId: null }), null);
     assert.equal(validateProjectsState({ projects: [{ ...base, hosts: Array(33).fill('h') }], lastProjectId: null }), null);
     assert.notEqual(validateProjectsState({ projects: [{ ...base, hosts: Array(32).fill('h') }], lastProjectId: null }), null);

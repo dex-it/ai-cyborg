@@ -191,7 +191,7 @@ date: 2026-10-26
 | FR-17003 | Запуск: клоны репозиториев проекта, ветка, claude в script | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/remote-tools.test.ts` |
 | FR-17004 | Терминал, ввод, хуки и уведомления удалённой сессии | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
 | FR-17005 | Обрыв связи, переподключение, выход Cyborg и подхват | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
-| FR-17006 | Дерево, статус, ветка и просмотр файлов клонов без правки | 17-ssh-remote-agents | автотест | `test/agentd.test.ts` |
+| FR-17006 | Дерево, статус, ветка и просмотр файлов клонов без правки | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/static-guards.test.ts` |
 | FR-17007 | MCP-сервер Cyborg виден удалённой сессии обратным туннелем под токеном | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-tools.test.ts`, `test/remote-link.test.ts` |
 | FR-17008 | spawn_agent порождает на хосте агента с заданием | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/remote-link.test.ts` |
 | FR-17009 | report_done фиксирует итог агента явным вызовом | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts` |

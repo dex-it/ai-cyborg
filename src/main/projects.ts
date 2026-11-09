@@ -30,7 +30,8 @@ export interface Project {
 }
 
 export const MAX_HOSTS = 32;
-export const HOST_ALIAS = /^[^\s\x00-\x1f\x7f-][^\s\x00-\x1f\x7f]{0,254}$/;
+/** Без пробельных, управляющих (Cc, включая C1) и направляющих текст символов; ведущий «-» - ключ ssh. */
+export const HOST_ALIAS = /^[^\s\p{Cc}\u200e\u200f\u202a-\u202e\u2066-\u2069-][^\s\p{Cc}\u200e\u200f\u202a-\u202e\u2066-\u2069]{0,254}$/u;
 
 /** Хосты из файла: строки по форме, без повторов, не больше MAX_HOSTS; не массив - null. */
 export function readHosts(value: unknown): string[] | null {

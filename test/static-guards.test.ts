@@ -68,3 +68,15 @@ describe('диалоги названы для программ чтения с 
     }
   });
 });
+
+describe('поиск у удалённой вкладки недоступен (FR-17006)', () => {
+  it('обработчик menu:search до открытия окна поиска отказывает, если активна удалённая вкладка', () => {
+    const text = code('src/renderer/app.ts');
+    const handler = /api\.on<SearchMode>\('menu:search',[\s\S]*?\n\}\);/.exec(text)?.[0] ?? '';
+    assert.ok(handler, 'обработчик menu:search не найден');
+    const guard = handler.indexOf('active?.remote');
+    const open = handler.indexOf('searchDialog.open');
+    assert.ok(guard >= 0 && open > guard, 'проверка удалённой вкладки должна стоять до searchDialog.open');
+    assert.match(handler.slice(guard, open), /return/);
+  });
+});

@@ -635,6 +635,33 @@ describe('подхват: итог сессии, завершившейся бе
     await until(() => second.alerts.some((m) => /Уборка отказана/.test(m)));
     assert.equal(second.closedTabs.length, 0);
     await until(() => hostSessions(r2) === 0);
+    await new Promise((res) => setTimeout(res, 100));
+    assert.equal(second.alerts.length, 1, 'ended и exit призрака несут один результат уборки: окно одно');
+    assert.equal(second.events.filter((e) => e.channel === 'remote:report').length, 1);
+  });
+
+  it('на хосте живая вкладка человека и призрак с лимитом: после доставки итога призрака канал остаётся, ввод и вывод вкладки доходят', async (t) => {
+    const r2 = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r2.daemon, r2.home);
+    const first = side(t, ssh);
+    await first.remote.create(project, human, { origin: 'human' });
+    await first.remote.create(project, human, { origin: 'tool', limits: { task_timeout_min: 1 } });
+    await until(() => r2.spawned.length === 2);
+    first.remote.closeLinks();
+    r2.clock.now += 120_000;
+    await until(() => r2.killed.includes('SIGTERM'));
+    await until(() => (r2.daemon as unknown as { sessions: Map<string, { meta: { ended?: unknown } }> }).sessions.size === 2);
+    const second = side(t, ssh, { instance: 'inst-2' });
+    const found = await second.remote.discover(project);
+    assert.equal(found.length, 1);
+    await until(() => second.events.some((e) => e.channel === 'remote:report' && /^failed: /.test(e.payload.body)));
+    await until(() => hostSessions(r2) === 1);
+    await new Promise((res) => setTimeout(res, 100));
+    assert.equal(second.events.some((e) => e.channel === 'remote:link' && e.payload.online === false), false, 'канал живой вкладки не закрыт');
+    second.sessions.write(found[0].id, 'ls\r');
+    await until(() => r2.procs[0].written.includes('ls\r'));
+    r2.procs[0].emit('после итога');
+    await until(() => second.events.some((e) => e.channel === 'session:data' && String(e.payload.data).includes('после итога')));
   });
 });
 
