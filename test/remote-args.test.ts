@@ -64,7 +64,8 @@ describe('sshArgs и classifySshError', () => {
 
 describe('parsePreflight', () => {
   const good = 'home=/home/u\nnode=v20.1.0\ngit=/usr/bin/git\nclaude=/bin/claude\nscript=/usr/bin/script\nauth={"loggedIn":true}\n';
-  it('хост в порядке - домашний каталог', () => assert.deepEqual(parsePreflight(good), { home: '/home/u' }));
+  it('установленные версии агента берутся из строки agentd', () => assert.deepEqual(parsePreflight(good + 'agentd=aaa bbb \n'), { home: '/home/u', installed: ['aaa', 'bbb'] }));
+  it('хост в порядке - домашний каталог', () => assert.deepEqual(parsePreflight(good), { home: '/home/u', installed: [] }));
   it('называет все недостающие инструменты разом', () => {
     assert.deepEqual(parsePreflight('home=/h\nnode=v16.0.0\ngit=\nclaude=\nscript=/s\n'), { missing: ['на хосте нет: node ≥ 18, git, claude'] });
   });

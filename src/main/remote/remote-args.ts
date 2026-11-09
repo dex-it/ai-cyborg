@@ -1,6 +1,6 @@
 import { branchNameProblem } from '../branch-name';
 import type { Project } from '../projects';
-import { cleanMessage, MAX_TEXT_BYTES } from '../session-tools';
+import { cleanMessage, promptProblem } from '../session-tools';
 
 export interface RemoteCreateArgs {
   host: string;
@@ -20,10 +20,8 @@ export function validateRemoteCreate(value: unknown, project: Project | undefine
   const out: RemoteCreateArgs = { host, repo, branch: branch as string };
   if (prompt === undefined || prompt === null) return out;
   if (typeof prompt !== 'string') return 'задание - строка';
-  const head = prompt.trimStart();
-  if (head.startsWith('-')) return 'задание не может начинаться с «-»: claude примет его за ключ командной строки';
-  if (head.startsWith('!')) return 'задание не может начинаться с «!»: Claude Code выполнил бы его как команду оболочки';
-  if (Buffer.byteLength(prompt) > MAX_TEXT_BYTES) return `задание длиннее ${MAX_TEXT_BYTES} байт`;
+  const promptBad = promptProblem(prompt, 'задание');
+  if (promptBad) return promptBad;
   const clean = cleanMessage(prompt);
   return clean ? { ...out, prompt: clean } : out;
 }

@@ -38,6 +38,8 @@ import { bindTree, replaceTree, TreeView, type TreeRoot } from './tree';
 import { applyMonacoFontSize, applyMonacoTheme, FileViewer, type Viewer } from './viewer';
 import { MarkdownViewer } from './md-viewer';
 import { isMarkdown } from './md-links';
+import { localFs, remoteFs, type FsPort } from './fs-port';
+import type { RemoteInfo } from '../main/remote/remote-sessions';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
@@ -78,6 +80,8 @@ interface Session {
   tree: TreeView;
   /** Полоса кнопок-команд этой сессии (фича 12). */
   command: CommandTarget;
+  /** Удалённая сессия: дерево и просмотр читают клоны на хосте, правки и смены ветки нет. */
+  remote?: { host: string; roots: string[]; online: boolean; fs: FsPort };
 }
 
 const api = window.cyborg;
@@ -94,6 +98,7 @@ const treeMeta = byId('tree-meta');
 const treeBack = byId<HTMLButtonElement>('tree-back');
 const sessionList = byId('session-list');
 const newSessionButton = byId<HTMLButtonElement>('new-session');
+const newRemoteButton = byId<HTMLButtonElement>('new-remote-session');
 newSessionButton.title = `Новая сессия Claude Code (${newSessionShortcut})`;
 const sessionsEl = byId('sessions');
 const empty = byId('empty');
@@ -152,6 +157,8 @@ function selectProject(next: Project | null, save = true): void {
   api.projectSelected(!!next);
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
+  newRemoteButton.hidden = !next?.hosts?.length;
+  newRemoteButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
   if (session) activateSession(session, panel.isOpen);
   else showNoSession();
@@ -174,6 +181,7 @@ const projectDialog = byId<HTMLDialogElement>('project-dialog');
 const projectName = byId<HTMLInputElement>('project-name');
 const projectDescription = byId<HTMLTextAreaElement>('project-description');
 const projectRepos = byId('project-repos');
+const projectHosts = byId<HTMLInputElement>('project-hosts');
 const projectDelete = byId<HTMLButtonElement>('project-delete');
 const sources = initSourcesSection();
 
@@ -190,6 +198,7 @@ function editProject(target: Project | null): void {
   projectName.value = draft.name;
   projectDescription.value = draft.description;
   projectDelete.hidden = !target;
+  projectHosts.value = (draft.hosts ?? []).join(' ');
   renderDraftRepos();
   sources.open(draft.trackers, draft.jira, draft.repos);
   projectDialog.returnValue = '';
@@ -266,6 +275,8 @@ projectDialog.addEventListener('close', () => {
   if (projectDialog.returnValue !== 'save' || !draft) return;
   draft.name = projectName.value.trim();
   draft.description = projectDescription.value.trim();
+  const hosts = projectHosts.value.split(/[\s,]+/).filter(Boolean);
+  draft.hosts = hosts.length ? [...new Set(hosts)] : undefined;
   const read = sources.read();
   draft.trackers = read.trackers;
   draft.jira = read.jira;
@@ -400,8 +411,11 @@ api.on<'new' | 'edit'>('menu:project', (kind) => {
 
 // ---------- сессии ----------
 
-const rootLabel = (s: Session): string => sessionRootLabel({ ...s, repos: s.project.repos });
-const treeRoots = (s: Session): TreeRoot[] => sessionTreeRoots({ ...s, repos: s.project.repos });
+const rootLabel = (s: Session): string => (s.remote ? basename(s.root) : sessionRootLabel({ ...s, repos: s.project.repos }));
+const treeRoots = (s: Session): TreeRoot[] =>
+  s.remote
+    ? s.remote.roots.map((path) => ({ path, label: basename(path), hint: `клон на ${s.remote?.host}` }))
+    : sessionTreeRoots({ ...s, repos: s.project.repos });
 
 const sessionTitle = (s: Session): string =>
   s.mr
@@ -410,7 +424,9 @@ const sessionTitle = (s: Session): string =>
       ? sessionLabel(s.id, s.task)
       : s.jira
         ? `CC${s.id} · ${s.jira.key} ${s.jira.summary}`
-        : `CC${s.id} · ${rootLabel(s)}`;
+        : s.remote
+          ? `CC${s.id} · ${s.remote.host}${s.remote.online ? '' : ' · нет связи'}`
+          : `CC${s.id} · ${rootLabel(s)}`;
 
 /** Из сессии по MR или задаче - обратно к её строке в списке панели; кнопка видна, пока у проекта есть источники. */
 function updateBackButton(s: Session | null): void {
@@ -432,6 +448,8 @@ function updateSessionLabels(s: Session): void {
   (s.stripTab.querySelector('.label') as HTMLElement).textContent = label;
   s.stripTab.title = tooltip ? `${tooltip}\n${s.cwd}` : s.cwd;
   s.stripTab.classList.toggle('exited', s.exited);
+  s.stripTab.classList.toggle('remote', !!s.remote);
+  s.stripTab.classList.toggle('offline', !!s.remote && !s.remote.online && !s.exited);
   if (s === active) {
     treeTitle.textContent = label;
     treeTitle.title = tooltip;
@@ -507,7 +525,8 @@ async function renderProjectTree(onlyIfChanged: boolean): Promise<void> {
 }
 
 /** Markdown рендерится и правится по кнопке; ссылка документа открывает файл там же, где открылся бы файл из дерева. */
-function createViewer(path: string, body: HTMLElement, root: TreeRoot, onDirty: (dirty: boolean) => void = () => {}): Viewer {
+function createViewer(path: string, body: HTMLElement, root: TreeRoot, onDirty: (dirty: boolean) => void = () => {}, remote?: FsPort): Viewer {
+  if (remote) return new FileViewer(path, body, remote);
   if (!isMarkdown(path)) return new FileViewer(path, body);
   return new MarkdownViewer(path, body, root.path, {
     saveKey: shortcut(mac, 'S'),
@@ -524,7 +543,7 @@ function openAnywhere(path: string, root: TreeRoot, line?: number): void {
   else void showPreview(path, root, line);
 }
 
-function fileHeader(path: string, root: TreeRoot, actions: HTMLElement): HTMLElement {
+function fileHeader(path: string, root: TreeRoot, actions: HTMLElement, remote = false): HTMLElement {
   const rel = path.startsWith(`${root.path}/`) ? path.slice(root.path.length + 1) : path;
   const header = el('div', 'file-header');
   const name = el('span', 'file-name', ` / ${rel}`);
@@ -532,7 +551,8 @@ function fileHeader(path: string, root: TreeRoot, actions: HTMLElement): HTMLEle
   const reveal = el('button', 'file-reveal', 'Открыть в системе');
   reveal.title = 'Открыть файл приложением системы по умолчанию';
   reveal.addEventListener('click', () => void api.openPath(path));
-  header.append(el('span', 'file-root', root.label), name, actions, reveal);
+  header.append(el('span', 'file-root', root.label), name, actions);
+  if (!remote) header.append(reveal);
   return header;
 }
 
@@ -702,10 +722,12 @@ async function newSession(repo: string, start?: TrackerStart): Promise<void> {
   }
 }
 
-async function createSessionView(owner: Project, repo: string, start?: StartFrom, resume?: string): Promise<void> {
+async function createSessionView(owner: Project, repo: string, start?: StartFrom, resume?: string, remote?: RemoteInfo): Promise<void> {
   const addDirs = owner.repos.filter((r) => r !== repo);
   // В канал идут только ссылка и намерение: название, ветки и автор в первое сообщение не попадают.
-  const id = resume
+  const id = remote
+    ? remote.id
+    : resume
     ? await api.resumeSession(repo, addDirs, resume)
     : await api.createSession(
         repo,
@@ -719,7 +741,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
                 ? { mr: refOf(start.mr), intent: start.intent }
                 : { jira: { key: start.jira.key } }),
       );
-  const root = (await api.gitRoot(repo)) ?? repo;
+  const root = remote ? remote.cwd : ((await api.gitRoot(repo)) ?? repo);
   const color = sessionColor(colorIndex++);
   const term = createTerminal(id);
   const fit = new FitAddon();
@@ -758,9 +780,10 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     id,
     project: owner,
     repo,
-    cwd: repo,
+    cwd: remote ? remote.cwd : repo,
     root,
     exited: false,
+    remote: remote && { host: remote.host, roots: remote.roots, online: true, fs: remoteFs(id) },
     task: start && 'task' in start ? start.task : undefined,
     mr: start && 'mr' in start ? start.mr : undefined,
     jira: start && 'jira' in start ? start.jira : undefined,
@@ -778,6 +801,8 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     tree: new TreeView(
       (path, treeRoot) => openFile(session, path, treeRoot),
       () => void renderTree(session, false),
+      undefined,
+      remote ? remoteFs(id) : localFs,
     ),
     command: {
       id,
@@ -812,6 +837,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
 /** PR/MR сессии: из которого она начата, иначе открытый PR/MR ветки сессии среди всех PR/MR проекта (свой приоритетнее чужого). */
 async function prOfSession(s: Session, branch: string | null): Promise<string> {
   if (s.mr) return s.mr.url;
+  if (s.remote) throw new Error('PR удалённой сессии Cyborg не ищет: репозитории на хосте не входят в локальные трекеры');
   if (!branch) throw new Error('у сессии нет ветки git');
   const list = await api.listMrs(s.project.id, 'all', [], false);
   if (list.error) throw new Error(`не удалось получить PR/MR: ${list.error}`);
@@ -824,7 +850,7 @@ async function prOfSession(s: Session, branch: string | null): Promise<string> {
 /** Подстановки кнопок-команд (FR-12003): ветка - git сессии сейчас, PR - начальный либо найденный по ветке, задача - из которой начата сессия. */
 async function commandValues(s: Session, needs: Placeholder[]): Promise<PlaceholderValues> {
   const values: PlaceholderValues = {};
-  const branch = needs.includes('branch') || needs.includes('pr') ? await api.gitBranch(s.root) : null;
+  const branch = needs.includes('branch') || needs.includes('pr') ? await (s.remote?.fs ?? localFs).branch(s.root) : null;
   if (needs.includes('branch')) values.branch = branch;
   if (needs.includes('task')) values.task = s.jira ? s.jira.key : (s.task?.url ?? null);
   if (needs.includes('pr')) values.pr = await prOfSession(s, branch);
@@ -856,7 +882,10 @@ document.addEventListener('drop', (event) => {
 });
 
 function closeSession(s: Session, force: boolean): void {
-  if (!s.exited && !force && !confirm('Сессия Claude Code ещё работает. Завершить её?')) return;
+  if (s.remote && !s.exited && !force) {
+    if (!s.remote.online) return void alert(`Нет связи с ${s.remote.host}: закрыть сессию можно после переподключения.`);
+    if (!confirm(`Завершить удалённую сессию на ${s.remote.host} и убрать её клоны? Клоны с незапушенной работой останутся на хосте.`)) return;
+  } else if (!s.exited && !force && !confirm('Сессия Claude Code ещё работает. Завершить её?')) return;
   if (!s.exited) api.kill(s.id);
   notifier.dismiss(s.id);
   commandBars.detach(s.command);
@@ -888,8 +917,8 @@ function openFile(s: Session, path: string, root: TreeRoot, line?: number): void
   const pane = el('div', 'pane file');
   const body = el('div', 'file-body');
   const file: FileTab = { viewer: null as unknown as Viewer, rootLabel: root.label, tab: null as unknown as HTMLElement, pane };
-  file.viewer = createViewer(path, body, root, (dirty) => file.tab.classList.toggle('dirty', dirty));
-  pane.append(fileHeader(path, root, file.viewer.actions), body);
+  file.viewer = createViewer(path, body, root, (dirty) => file.tab.classList.toggle('dirty', dirty), s.remote?.fs);
+  pane.append(fileHeader(path, root, file.viewer.actions, !!s.remote), body);
   s.innerPanes.append(pane);
   file.tab = makeTab('file', basename(path), () => closeFile(s, file));
   file.tab.title = path;
@@ -934,7 +963,8 @@ api.on<{ id: number; cwd: string }>('session:cwd', async ({ id, cwd }) => {
   const session = findSession(id);
   if (!session) return;
   session.cwd = cwd;
-  const root = (await api.gitRoot(cwd)) ?? cwd;
+  const remoteRoots = session.remote?.roots;
+  const root = remoteRoots ? (remoteRoots.find((r) => cwd === r || cwd.startsWith(`${r}/`)) ?? session.root) : ((await api.gitRoot(cwd)) ?? cwd);
   const rootChanged = root !== session.root;
   session.root = root;
   updateSessionLabels(session);
@@ -972,11 +1002,19 @@ api.on<{ id: number; reason: string }>('session:waiting', ({ id, reason }) => {
   if (session) notifier.waiting(id, `${sessionTitle(session)} · ${session.project.name}`, reason, session === active && document.hasFocus());
 });
 
-api.on<{ hid: string; from: number; repo: string }>('session:handoff', ({ hid, from, repo }) => {
+api.on<{ hid: string; from: number; repo: string; host?: string }>('session:handoff', ({ hid, from, repo, host }) => {
   const caller = findSession(from);
   // Проект ищется по передавшей сессии: её вкладка уже в своём проекте, а главный процесс проектов сессий не знает.
   if (!caller) return api.handoffFailed(hid, 'вкладка передавшей сессии не найдена');
   if (!caller.project.repos.includes(repo)) return api.handoffFailed(hid, `каталог ${repo} больше не входит в проект ${caller.project.name}`);
+  if (host) {
+    // Ошибку создания главный процесс уже вернул вызвавшей модели через reject передачи.
+    api
+      .createRemoteSession({ projectId: caller.project.id, handoff: hid, repo })
+      .then((info) => createSessionView(caller.project, repo, { handoff: hid }, undefined, info))
+      .catch(() => undefined);
+    return;
+  }
   createSessionView(caller.project, repo, { handoff: hid }).catch((error) => api.handoffFailed(hid, ipcErrorText(error)));
 });
 
@@ -997,6 +1035,19 @@ api.on<{ id: number }>('session:reveal', ({ id }) => {
 
 window.addEventListener('focus', () => {
   if (active) notifier.dismiss(active.id);
+});
+
+api.on<{ host: string; online: boolean }>('remote:link', ({ host, online }) => {
+  for (const s of sessions) {
+    if (s.remote?.host !== host) continue;
+    s.remote.online = online;
+    updateSessionLabels(s);
+  }
+});
+
+api.on<{ id: number; title: string; body: string }>('remote:report', ({ id, title, body }) => {
+  const session = findSession(id);
+  notifier.waiting(id, `${title}${session ? ` · ${session.project.name}` : ''}`, body, !!session && session === active && document.hasFocus());
 });
 
 api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
@@ -1379,6 +1430,77 @@ const statusHub = new StatusHub({
   startJira,
 });
 
+// ---------- удалённая сессия ----------
+
+const remoteDialog = byId<HTMLDialogElement>('remote-dialog');
+const remoteHost = byId<HTMLSelectElement>('remote-host');
+const remoteRepo = byId<HTMLSelectElement>('remote-repo');
+const remoteBranch = byId<HTMLInputElement>('remote-branch');
+const remotePrompt = byId<HTMLTextAreaElement>('remote-prompt');
+const remoteError = byId('remote-error');
+const remoteCreate = byId<HTMLButtonElement>('remote-create');
+
+function showRemoteError(text: string): void {
+  remoteError.textContent = text;
+  remoteError.hidden = !text;
+}
+
+async function fillRemoteBranch(): Promise<void> {
+  const branch = await api.gitBranch(remoteRepo.value);
+  if (branch) remoteBranch.value = branch;
+}
+
+function openRemoteDialog(): void {
+  const owner = project;
+  if (!owner?.hosts?.length || remoteDialog.open) return;
+  remoteHost.replaceChildren(...owner.hosts.map((h) => new Option(h, h)));
+  remoteRepo.replaceChildren(...owner.repos.map((r) => new Option(`${basename(r)} · ${r}`, r)));
+  const own = active?.project === owner ? active.repo : owner.repos[0];
+  remoteRepo.value = own;
+  remoteBranch.value = '';
+  remotePrompt.value = '';
+  showRemoteError('');
+  remoteCreate.disabled = false;
+  void fillRemoteBranch();
+  remoteDialog.showModal();
+}
+
+remoteRepo.addEventListener('change', () => void fillRemoteBranch());
+byId('remote-cancel').addEventListener('click', () => remoteDialog.close());
+remoteCreate.addEventListener('click', async () => {
+  const owner = project;
+  if (!owner) return;
+  remoteCreate.disabled = true;
+  showRemoteError('Подключение к хосту и запуск сессии…');
+  try {
+    const info = await api.createRemoteSession({
+      projectId: owner.id,
+      host: remoteHost.value,
+      repo: remoteRepo.value,
+      branch: remoteBranch.value.trim(),
+      prompt: remotePrompt.value.trim() || undefined,
+    });
+    remoteDialog.close();
+    await createSessionView(owner, info.dirs[0], undefined, undefined, info);
+  } catch (error) {
+    showRemoteError(ipcErrorText(error));
+    remoteCreate.disabled = false;
+  }
+});
+newRemoteButton.addEventListener('click', openRemoteDialog);
+
+// Сессии, пережившие выход Cyborg, возвращаются вкладками: хосты проекта опрашиваются при открытии воркспейса.
+async function discoverRemote(owner: Project): Promise<void> {
+  if (!owner.hosts?.length) return;
+  try {
+    for (const info of await api.remoteDiscover(owner.id)) {
+      if (!findSession(info.id)) await createSessionView(owner, info.dirs[0], undefined, undefined, info);
+    }
+  } catch (error) {
+    console.error('Поиск удалённых сессий:', error);
+  }
+}
+
 newSessionButton.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleSessionMenu(newSessionButton);
@@ -1509,6 +1631,7 @@ void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, l
   void reloadCommands();
   const problem = await api.projectsProblem();
   selectProject(state.projects.find((p) => p.id === state.lastProjectId) ?? state.projects[0] ?? null, false);
+  for (const owner of state.projects) void discoverRemote(owner);
   if (problem) alert(projectsProblemText(problem, workspaceFile));
   if (!workspaceFile) openWorkspaceDialog();
 });

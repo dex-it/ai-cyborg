@@ -1,4 +1,5 @@
 import type * as Monaco from 'monaco-editor';
+import { localFs, type FsPort } from './fs-port';
 import { basename, el } from './dom';
 import { loadFontSize } from './font-size';
 import { monacoTheme } from './theme';
@@ -150,6 +151,7 @@ export class FileViewer implements Viewer {
   constructor(
     readonly path: string,
     private readonly body: HTMLElement,
+    private readonly fs: FsPort = localFs,
   ) {
     this.diff = new HeadDiff(body, path);
   }
@@ -174,7 +176,7 @@ export class FileViewer implements Viewer {
   }
 
   private async read(): Promise<void> {
-    const [result, original] = await Promise.all([window.cyborg.readFile(this.path), window.cyborg.gitHeadContent(this.path)]);
+    const [result, original] = await Promise.all([this.fs.read(this.path), this.fs.head(this.path)]);
     if (result.content === undefined) {
       this.dispose();
       this.body.replaceChildren(el('div', 'file-error', result.error ?? 'Файл не прочитан'));

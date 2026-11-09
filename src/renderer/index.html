@@ -34,6 +34,7 @@
           </button>
           <button id="tasks-toggle" class="panel-toggle" title="Задачи из трекеров" hidden>Задачи</button>
           <button id="mrs-toggle" class="panel-toggle" title="MR и PR репозиториев проекта" hidden>MR/PR</button>
+          <button id="new-remote-session" title="Сессия Claude Code на сервере по SSH" hidden>Удалённая…</button>
           <button id="new-session" title="Новая сессия Claude Code"><span class="plus" aria-hidden="true">+</span> Новая сессия</button>
         </nav>
         <div id="sessions">
@@ -63,6 +64,10 @@
           <ul id="project-repos"></ul>
           <button type="button" id="project-add-repo">Добавить репозиторий…</button>
         </div>
+        <label class="field">
+          <span>Хосты SSH</span>
+          <input id="project-hosts" autocomplete="off" placeholder="алиасы из ~/.ssh/config через пробел, например dev1 dev2" />
+        </label>
         <div class="field">
           <span>Источники задач</span>
           <div class="source">
@@ -90,6 +95,35 @@
           <span class="spacer"></span>
           <button value="cancel" formnovalidate>Отмена</button>
           <button value="save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="remote-dialog" aria-labelledby="remote-dialog-title">
+      <form method="dialog">
+        <h2 id="remote-dialog-title">Удалённая сессия</h2>
+        <label class="field">
+          <span>Хост</span>
+          <select id="remote-host"></select>
+        </label>
+        <label class="field">
+          <span>Репозиторий</span>
+          <select id="remote-repo"></select>
+        </label>
+        <label class="field">
+          <span>Ветка</span>
+          <input id="remote-branch" required autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Задание</span>
+          <textarea id="remote-prompt" rows="5" placeholder="Что сделать; пусто - сессия ждёт задания в терминале"></textarea>
+        </label>
+        <p class="hint">Все репозитории проекта клонируются на хост из их origin; ветка берётся с origin либо создаётся от его HEAD.</p>
+        <div id="remote-error" class="dialog-error" role="alert" hidden></div>
+        <footer>
+          <span class="spacer"></span>
+          <button type="button" id="remote-cancel">Отмена</button>
+          <button type="button" id="remote-create" class="primary">Создать</button>
         </footer>
       </form>
     </dialog>

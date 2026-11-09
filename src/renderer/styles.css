@@ -631,6 +631,26 @@ select:disabled {
   color: var(--fg-dim);
 }
 
+/* Удалённая сессия: квадратная метка вместо точки; нет связи - кольцо, как у завершённой, но подпись остаётся. */
+.tab.session.remote .icon {
+  border-radius: 2px;
+}
+
+.tab.session.offline .icon {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--fg-faint);
+}
+
+.tab.session.offline {
+  color: var(--fg-dim);
+}
+
+#remote-dialog select,
+#remote-dialog textarea,
+#remote-dialog input {
+  width: 100%;
+}
+
 #session-strip > button {
   height: auto;
   flex: none;

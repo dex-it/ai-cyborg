@@ -9,6 +9,7 @@ import type { JiraDetailsResult, JiraListResult, JiraProjectsResult, JiraStatus,
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsProblem, ProjectsState } from './projects';
 import type { TaskDetailsResult } from './task-details';
+import type { RemoteInfo } from './remote/remote-sessions';
 import type { TaskRef, TasksResult, TrackersStatus } from './trackers';
 
 export interface WorkspaceInfo {
@@ -43,6 +44,12 @@ const api = {
   revealConfig: (kind: 'commands' | 'commands-global' | 'prompts'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
   createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', cwd, addDirs, start),
+  /** Удалённая сессия: либо {projectId, host, repo, branch, prompt?}, либо {projectId, handoff, repo} по передаче от сессии. */
+  createRemoteSession: (request: { projectId: string; host?: string; repo: string; branch?: string; prompt?: string; handoff?: string }): Promise<RemoteInfo> =>
+    ipcRenderer.invoke('remote:create', request),
+  remoteDiscover: (projectId: string): Promise<RemoteInfo[]> => ipcRenderer.invoke('remote:discover', projectId),
+  /** Чтение клонов удалённой сессии: записи и смены ветки у канала нет. */
+  remoteFs: (id: number, op: 'list' | 'read' | 'root' | 'branch' | 'status' | 'head', path: string): Promise<unknown> => ipcRenderer.invoke('remote:fs', id, op, path),
   listHistory: (projectId: string): Promise<HistoryEntry[]> => ipcRenderer.invoke('history:list', projectId),
   deleteHistory: (projectId: string, repo: string, id: string): Promise<void> =>
     ipcRenderer.invoke('history:delete', projectId, repo, id),

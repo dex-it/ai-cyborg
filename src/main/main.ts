@@ -21,15 +21,19 @@ import type { SearchReply } from '../shared/search-pattern';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
-import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
+import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
 import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
 import { validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
-import { SessionManager } from './sessions';
+import { SessionManager, sameDirs } from './sessions';
 import { McpServer } from './mcp';
-import { createSessionTools, Handoffs } from './session-tools';
+import { createSessionTools, Handoffs, type RemoteToolsPort, type SessionsPort } from './session-tools';
+import { bundleOf } from './remote/install';
+import { validateRemoteCreate } from './remote/remote-args';
+import { RemoteSessions } from './remote/remote-sessions';
+import { systemSsh } from './remote/ssh';
 import { createTaskHandlers, TaskDetailsService } from './task-details';
 import {
   createCliRunner,
@@ -80,7 +84,33 @@ const closeSession = (id: number): void => {
   if (win && !win.isDestroyed()) win.webContents.send('session:close', { id });
   else sessions.kill(id);
 };
-const mcpServer = new McpServer(createSessionTools(sessions, handoffs, closeSession), app.getVersion());
+// Удалённая часть строится после MCP-сервера, которому нужны её инструменты: обращения идут через замыкания.
+const remoteTools: RemoteToolsPort = {
+  prepare: (host, repo, limits) => remote.prepare(host, repo, limits),
+  report: (id, report) => remote.report(id, report),
+  close: (id, keep) => remote.close(id, keep),
+};
+const hostsOf = (dirs: string[]): string[] => projects.load().projects.find((p) => sameDirs(p.repos, dirs))?.hosts ?? [];
+const sessionsPort: SessionsPort = {
+  dirsOf: (id) => sessions.dirsOf(id),
+  peers: (id) => sessions.peers(id),
+  say: (id, text) => sessions.say(id, text),
+  kindOf: (id) => (sessions.remoteOf(id) ? 'remote' : sessions.dirsOf(id) ? 'local' : null),
+  hostsOf,
+};
+const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools), app.getVersion());
+const remote = new RemoteSessions({
+  ssh: systemSsh,
+  bundle: bundleOf(fs.readFileSync(path.join(__dirname, 'agentd.js'), 'utf8')),
+  sessions,
+  mcp: mcpServer,
+  originUrl: gitOriginUrl,
+  emit: (channel, payload) => {
+    if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  },
+  closeTab: closeSession,
+  alert: (title, text) => void dialog.showMessageBox({ type: 'warning', message: title, detail: text }),
+});
 // Сессии создаёт окно, а оно грузится дольше, чем поднимается сервер; если порт не дали, сессии работают без MCP Cyborg.
 mcpServer
   .listen()
@@ -309,6 +339,38 @@ ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?
   const prompt = validateSessionStart(start, prompts.load());
   if (!prompt) throw new Error('Некорректный старт сессии');
   return sessions.create(cwd as string, addDirs as string[], prompt);
+});
+// Удалённая сессия: аргументы из интерфейса проверяются против проекта; запись в клоны и смена ветки каналов не имеют (ADR-0020).
+ipcMain.handle('remote:create', async (_event, arg: unknown) => {
+  const input = (typeof arg === 'object' && arg !== null ? arg : {}) as Record<string, unknown>;
+  const project = projects.load().projects.find((p) => p.id === input.projectId);
+  if (!project) throw new Error('Проект не найден');
+  if (typeof input.handoff === 'string') {
+    const handoff = handoffs.take(input.handoff, input.repo);
+    if (!handoff?.remote) throw new Error('Переданная задача не найдена или устарела');
+    try {
+      const args = validateRemoteCreate({ host: handoff.remote.host, repo: input.repo, branch: handoff.remote.branch, prompt: handoff.prompt }, project);
+      if (typeof args === 'string') throw new Error(args);
+      const info = await remote.create(project, args, { origin: 'tool', keep: handoff.remote.keep, spawnedBy: handoff.from, limits: handoff.remote.limits });
+      handoff.resolve(info.id);
+      return info;
+    } catch (error) {
+      handoff.reject(new Error(String(error instanceof Error ? error.message : error).slice(0, 500)));
+      throw error;
+    }
+  }
+  const args = validateRemoteCreate(input, project);
+  if (typeof args === 'string') throw new Error(args);
+  return remote.create(project, args, { origin: 'human' });
+});
+ipcMain.handle('remote:discover', (_event, projectId: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  return project?.hosts?.length ? remote.discover(project) : [];
+});
+const REMOTE_FS_OPS = ['list', 'read', 'root', 'branch', 'status', 'head'] as const;
+ipcMain.handle('remote:fs', (_event, id: unknown, op: unknown, target: unknown) => {
+  if (typeof id !== 'number' || !REMOTE_FS_OPS.includes(op as (typeof REMOTE_FS_OPS)[number])) throw new Error('Некорректные аргументы remote:fs');
+  return remote.fsOp(id, op as (typeof REMOTE_FS_OPS)[number], target);
 });
 ipcMain.handle('history:list', (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
@@ -610,7 +672,10 @@ async function replaceFromMenu(): Promise<void> {
   const outcome = replaceWorkspace(file, {
     current: current.file,
     confirm: () => confirmEndSessions('Открыть', 'При смене воркспейса они будут завершены.'),
-    endSessions: () => sessions.killAll(),
+    endSessions: () => {
+      sessions.killAll();
+      remote.closeLinks();
+    },
     openHere,
     releasePrevious: () => {
       if (previous) releaseLock(previous);
@@ -681,6 +746,7 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => {
   sessions.killAll();
+  remote.closeLinks();
   mcpServer.close();
   app.quit();
 });

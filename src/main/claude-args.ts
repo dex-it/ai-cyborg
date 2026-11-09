@@ -7,15 +7,18 @@ export const ISOLATION_PROMPT =
 /** Всё, что Cyborg дописывает к системному промту сессии: изоляция и кнопки от модели. */
 export const SESSION_PROMPT = `${ISOLATION_PROMPT}\n\n${SUGGEST_PROMPT}`;
 
+/** Удалённая сессия работает в своих клонах: изоляции нет, зато итог сдаётся веткой, PR и вызовом report_done. */
+export const REMOTE_SYSTEM_PROMPT = `${SUGGEST_PROMPT}\n\nТы работаешь на сервере разработчика в собственных клонах репозиториев. Закончив, запушь ветку и открой PR, затем вызови инструмент report_done: status (ok, failed или blocked), summary - итог одним сообщением, branch и pr, если есть. Незапушенная работа при уборке клона не удаляется.`;
+
 /**
  * Позиционные аргументы claude после --settings. Промпт стоит до --add-dir: тот вариадический
  * (`--add-dir <directories...>`) и забрал бы промпт, стоящий после каталогов.
  */
-export function claudeArgs(addDirs: string[], prompt?: string, resume?: string): string[] {
+export function claudeArgs(addDirs: string[], prompt?: string, resume?: string, systemPrompt: string = SESSION_PROMPT): string[] {
   return [
     ...(resume ? ['--resume', resume] : []),
     '--append-system-prompt',
-    SESSION_PROMPT,
+    systemPrompt,
     ...(prompt ? [prompt] : []),
     ...(addDirs.length ? ['--add-dir', ...addDirs] : []),
   ];
