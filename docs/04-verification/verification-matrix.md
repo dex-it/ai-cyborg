@@ -185,7 +185,7 @@ date: 2026-10-26
 | FR-16005 | Файл изменён на диске после начала правки - вопрос, без согласия не перезаписан | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/write-file.test.ts` |
 | FR-16006 | Несохранённая правка не теряется молча | 16-markdown-view | smoke | `scripts/smoke.mjs` |
 | FR-17001 | Хосты проекта и диалог «Удалённая сессия» | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts` |
-| NFR-17001 | Хост и его данные защищены: токен в файле 0600, чтение клонов в границе, без оболочки и без пароля | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts`, `test/agentd.test.ts`, `test/remote-tools.test.ts` |
+| NFR-17001 | Хост и его данные защищены: токен в файле 0600, чтение клонов в границе, без оболочки и без пароля | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts`, `test/agentd.test.ts`, `test/remote-tools.test.ts`, `src/main/sessions.test.ts`, `test/remote-link.test.ts` |
 | FR-17002 | Проверка хоста и установка агента | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts`, `test/remote-link.test.ts`, `test/remote-tools.test.ts` |
 | NFR-17002 | Совместимость хоста и версий агента | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/remote-link.test.ts` |
 | FR-17003 | Запуск: клоны репозиториев проекта, ветка, claude в script | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/remote-tools.test.ts` |

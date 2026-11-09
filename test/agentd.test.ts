@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { lockHolderAlive } from '../src/agentd/agentd';
 import { uniqueNames } from '../src/agentd/daemon';
 import type { Msg, SpawnMsg } from '../src/agentd/protocol';
 import { client, mode, rig, tick, until, type Rig } from './daemon-rig';
@@ -54,6 +57,23 @@ describe('daemon: запуск сессии', () => {
     assert.ok(launch.includes(`'задание с '\\''кавычкой'\\'''`), 'одинарная кавычка экранирована');
   });
 
+  it('launch.sh запускает claude в /bin/sh с аргументами как есть, логин-оболочка (fish, tcsh) не участвует', async (t) => {
+    const r = rig(t);
+    const { sid } = await open(r, { prompt: 'задание с \'кавычкой\' и $HOME' });
+    const dir = path.join(r.home, '.cyborg', 'sessions', sid);
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-bin-'));
+    t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done\n', { mode: 0o755 });
+    const run = spawnSync('/bin/sh', [path.join(dir, 'launch.sh')], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:/usr/bin:/bin`, SHELL: '/nonexistent/fish', CYBORG_DIR: dir, CYBORG_SETTINGS: 's.json', CYBORG_MCP: 'm.json' },
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const argv = run.stdout.trimEnd().split('\n');
+    assert.deepEqual(argv.slice(0, 4), ['--settings', 's.json', '--mcp-config', 'm.json']);
+    assert.ok(argv.includes('задание с \'кавычкой\' и $HOME'));
+  });
+
   it('ветка есть в origin - switch <ветка>; один репозиторий - без --add-dir', async (t) => {
     const r = rig(t);
     r.answers['ls-remote'] = { code: 0 };
@@ -62,7 +82,7 @@ describe('daemon: запуск сессии', () => {
     assert.equal(fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', sid, 'launch.sh'), 'utf8').includes('--add-dir'), false);
   });
 
-  it('токен лежит в mcp.json 0600 и не попадает ни в аргументы, ни в launch.sh, ни в окружение', async (t) => {
+  it('токен лежит в mcp.json 0600 и не попадает ни в аргументы, ни в launch.sh, ни в meta.json, ни в окружение', async (t) => {
     const r = rig(t);
     const { sid } = await open(r);
     const dir = path.join(r.home, '.cyborg', 'sessions', sid);
@@ -74,6 +94,7 @@ describe('daemon: запуск сессии', () => {
     const token = 'T'.repeat(43);
     assert.ok(fs.readFileSync(mcp, 'utf8').includes(`Bearer ${token}`));
     assert.equal(fs.readFileSync(path.join(dir, 'launch.sh'), 'utf8').includes(token), false);
+    assert.equal(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8').includes(token), false);
     assert.equal(JSON.stringify(r.spawned[0]).includes(token), false);
     assert.equal(r.spawned[0].env.CYBORG_MCP, mcp);
     assert.equal('CLAUDECODE' in r.spawned[0].env, false);
@@ -194,6 +215,7 @@ describe('daemon: переподключение', () => {
     const item = (c.of('list')[0].sessions as Record<string, unknown>[])[0];
     assert.equal(item.sid, sid);
     assert.deepEqual(item.dirs, ['/loc/a', '/loc/b']);
+    assert.equal(item.token, 'T'.repeat(43));
     assert.equal(item.busy, true);
     conn.receive({ type: 'attach', rid: 2, sid: 'nope' } as Msg);
     await until(() => c.of('error').length === 1);
@@ -227,6 +249,24 @@ describe('daemon: лимиты', () => {
     r.clock.now += 2000;
     await until(() => b.c.of('ended').length === 1);
     assert.match(String(b.c.of('ended')[0].reason), /простой .* working/);
+  });
+
+  it('лимит без клиента: attach отдаёт ended раньше exit, после ack сессии на хосте нет', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { conn, sid } = await open(r, { limits: { maxPerHost: 4, taskMs: 5000, idleMs: 3_600_000 } });
+    conn.close();
+    r.clock.now += 6000;
+    await until(() => r.killed.includes('SIGTERM'));
+    const c = client();
+    const back = r.daemon.connect(c);
+    back.receive({ type: 'hello', rid: 0, instance: 'inst-1' } as Msg);
+    await until(() => c.of('hello').length === 1);
+    back.receive({ type: 'attach', rid: 1, sid, outFrom: 0, evFrom: 0 } as Msg);
+    await until(() => c.of('exit').length === 1);
+    const order = c.got.map((m) => m.type).filter((type) => type === 'ended' || type === 'exit');
+    assert.deepEqual(order, ['ended', 'exit']);
+    back.receive({ type: 'ack', rid: 2, sid } as Msg);
+    await until(() => !fs.existsSync(path.join(r.home, '.cyborg', 'sessions', sid)));
   });
 
   it('в waiting простой не копится; сессия человека и сессия после report_done таймерам не подлежат', async (t) => {
@@ -357,6 +397,19 @@ describe('daemon: файлы сессии', () => {
     assert.match(String((await ask(`${work}/a/../../..`)).error), /вне каталогов/);
     assert.match(String((await ask(`${work}/a/link`)).error), /вне каталогов/);
     assert.ok(Array.isArray((await ask(`${work}/a`)).value));
+  });
+});
+
+describe('замок демона', () => {
+  it('живой pid чужого процесса замок не держит, живой agentd - держит', { skip: process.platform !== 'linux' }, async (t) => {
+    const other = spawn('sleep', ['30']);
+    const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '/h/.cyborg/agentd/v/agentd.js', 'serve']);
+    const bridge = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '/h/.cyborg/agentd/v/agentd.js', 'connect']);
+    t.after(() => (other.kill(), daemon.kill(), bridge.kill()));
+    await new Promise((res) => setTimeout(res, 100));
+    assert.equal(lockHolderAlive(other.pid!), false);
+    assert.equal(lockHolderAlive(bridge.pid!), false, 'мост connect замок не держит');
+    assert.equal(lockHolderAlive(daemon.pid!), true);
   });
 });
 

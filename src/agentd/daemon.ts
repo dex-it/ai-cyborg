@@ -57,6 +57,8 @@ export interface Connection {
 
 interface Sess {
   sid: string;
+  /** Только в памяти и в mcp.json 0600: meta.json читают отладка и уборка. */
+  token: string;
   dir: string;
   meta: SessionMeta;
   proc?: PtyProc;
@@ -144,7 +146,7 @@ export class Daemon {
         return reply({
           sessions: [...this.sessions.values()].map((s) => ({
             sid: s.sid,
-            token: s.meta.token,
+            token: s.token,
             dirs: s.meta.dirs,
             origin: s.meta.origin,
             keep: s.meta.keep,
@@ -220,7 +222,6 @@ export class Daemon {
     const selected = msg.selected;
     const meta: SessionMeta = {
       sid: msg.sid,
-      token: msg.token,
       dirs: [msg.repos[selected].local, ...msg.repos.filter((_, i) => i !== selected).map((r) => r.local)],
       origin: msg.origin,
       keep: msg.keep,
@@ -235,6 +236,7 @@ export class Daemon {
     };
     const sess: Sess = {
       sid: msg.sid,
+      token: msg.token,
       dir,
       meta,
       ring: [],
@@ -297,7 +299,7 @@ export class Daemon {
     const args = claudeArgs(addDirs, msg.prompt, undefined, REMOTE_SYSTEM_PROMPT);
     write(
       'launch.sh',
-      `#!/bin/sh\ntty > "$CYBORG_DIR/tty"\nexec "\${SHELL:-/bin/sh}" -lc 'exec claude --settings "$CYBORG_SETTINGS" --mcp-config "$CYBORG_MCP" "$@"' cyborg ${args.map(shQuote).join(' ')}\n`,
+      `#!/bin/sh\ntty > "$CYBORG_DIR/tty"\nexec claude --settings "$CYBORG_SETTINGS" --mcp-config "$CYBORG_MCP" ${args.map(shQuote).join(' ')}\n`,
       0o700,
     );
     const env: Record<string, string> = { ...(process.env as Record<string, string>) };
@@ -440,8 +442,9 @@ export class Daemon {
     while (begin < upto - sess.ringStart && (bytes[begin] & 0xc0) === 0x80) begin++;
     if (begin < upto - sess.ringStart) conn.send({ type: 'data', sid: sess.sid, at: sess.ringStart + begin, data: bytes.subarray(begin, upto - sess.ringStart).toString('utf8') });
     this.sendBacklog(conn, sess, msg.evFrom);
-    if (sess.exited) conn.send({ type: 'exit', sid: sess.sid, code: sess.exited.code, reason: sess.exited.reason, kept: sess.exited.kept });
+    // Порядок живого потока: после exit клиент забывает сессию, и ended следом не нашёл бы её.
     if (sess.meta.ended) conn.send({ type: 'ended', sid: sess.sid, ...sess.meta.ended });
+    if (sess.exited) conn.send({ type: 'exit', sid: sess.sid, code: sess.exited.code, reason: sess.exited.reason, kept: sess.exited.kept });
   }
 
   private sendBacklog(conn: Conn, sess: Sess, evFrom: unknown): void {
@@ -579,7 +582,7 @@ export class Daemon {
       const reason = force ? null : await this.dirtyReason(clone.path);
       if (reason) result.kept.push({ path: clone.path, reason });
       else {
-        fs.rmSync(clone.path, { recursive: true, force: true });
+        await fs.promises.rm(clone.path, { recursive: true, force: true });
         result.removed.push(clone.path);
       }
     }

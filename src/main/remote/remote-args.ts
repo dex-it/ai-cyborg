@@ -1,6 +1,7 @@
 import { branchNameProblem } from '../branch-name';
 import type { Project } from '../projects';
-import { cleanMessage, promptProblem } from '../session-tools';
+import { cleanMessage } from '../clean-text';
+import { promptProblem } from '../session-tools';
 
 export interface RemoteCreateArgs {
   host: string;

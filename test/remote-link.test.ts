@@ -257,6 +257,30 @@ describe('HostLink: проверка хоста и установка демон
     assert.equal(ssh.opens.length, 2);
   });
 
+  it('shutdown старого демона доходит до него раньше, чем закрывается канал', async (t) => {
+    const old = rig(t, { version: 'old-version' });
+    const fresh = rig(t, { version: BUNDLE.version });
+    const ssh = new FakeSsh(old.daemon, old.home);
+    ssh.installed = [BUNDLE.version];
+    const order: string[] = [];
+    const origOpen = ssh.open.bind(ssh);
+    ssh.open = (alias, cmd, extra) => {
+      const channel = origOpen(alias, cmd, extra);
+      const { write, close } = channel;
+      channel.write = (line) =>
+        void setTimeout(() => {
+          if (JSON.parse(line).type === 'shutdown') order.push('shutdown');
+          write(line);
+          if (JSON.parse(line).type === 'shutdown') ssh.daemon = fresh.daemon;
+        }, 5);
+      channel.close = () => (order.push('close'), close());
+      return channel;
+    };
+    const a = side(t, ssh);
+    await a.remote.prepare('dev1', '/loc/a');
+    assert.deepEqual(order.slice(0, 2), ['shutdown', 'close']);
+  });
+
   it('старая версия с сессиями и совместимым proto - работа со старым демоном без shutdown', async (t) => {
     const old = rig(t, { version: 'old-version' });
     const ssh = new FakeSsh(old.daemon, old.home);
@@ -375,6 +399,27 @@ describe('HostLink: обрыв связи и подхват', () => {
     await until(() => second.events.some((e) => e.channel === 'session:waiting'));
   });
 
+  it('смена воркспейса снимает удалённые записи и токены; повторный discover подхватывает сессию', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh);
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    a.remote.closeLinks();
+    assert.equal(a.remote.isRemote(info.id), false);
+    assert.equal(a.sessions.peers(info.id), null);
+    assert.ok(a.mcp.disconnected.includes(info.id));
+    const found = await a.remote.discover(project);
+    assert.equal(found.length, 1);
+    assert.equal(a.remote.isRemote(found[0].id), true);
+  });
+
+  it('discover без своих сессий на хосте закрывает канал: демону ничто не мешает выйти по простою', async (t) => {
+    const { ssh } = world(t);
+    const a = side(t, ssh);
+    assert.deepEqual(await a.remote.discover(project), []);
+    assert.equal((a.remote as unknown as { links: Map<string, { state: string }> }).links.get('dev1')?.state, 'offline');
+  });
+
   it('сессию, которую держит другое окно, не подхватывает', async (t) => {
     const { r, ssh } = world(t);
     const first = side(t, ssh);
@@ -387,6 +432,7 @@ describe('HostLink: обрыв связи и подхват', () => {
 
 describe('report_done, close_agent и лимиты', () => {
   const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
+  const outboxOf = (a: Side, id: number): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(id)?.outbox ?? [];
 
   it('итог вкладки spawn_agent уходит в очередь вызвавшей, вкладка без keep закрывается по правилам close_agent', async (t) => {
     const { r, ssh } = world(t);
@@ -454,6 +500,75 @@ describe('report_done, close_agent и лимиты', () => {
     await until(() => a.sessions.peers(caller)?.find((p) => p.id === caller)?.queued === 1);
     assert.ok(a.closedTabs.includes(info.id));
     void w;
+  });
+
+  it('лимит сработал во время обрыва: после переподключения итог failed у вызвавшей, ack ушёл, на хосте сессии нет', async (t) => {
+    const r2 = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r2.daemon, r2.home);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const caller = callerOf(a);
+    const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller, limits: { task_timeout_min: 1 } });
+    await until(() => r2.spawned.length === 1);
+    ssh.channels[0].cut();
+    r2.clock.now += 120_000;
+    await until(() => r2.killed.includes('SIGTERM'));
+    await new Promise((res) => setTimeout(res, 50));
+    clock.fire(RECONNECT_MS[0]);
+    await until(() => outboxOf(a, caller).length === 1);
+    assert.match(outboxOf(a, caller)[0], /failed[\s\S]*таймаут задачи/);
+    await until(() => ssh.seen.some((m) => m.type === 'ack'));
+    await until(() => !fs.existsSync(path.join(r2.home, '.cyborg', 'sessions', sidOf(ssh))));
+    assert.ok(a.closedTabs.includes(info.id));
+  });
+
+  it('автозакрытие после report_done с грязным клоном: путь на хосте приходит вызвавшей следом за итогом', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh);
+    const caller = callerOf(a);
+    const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
+    await until(() => r.spawned.length === 1);
+    r.answers['status --porcelain'] = { stdout: ' M f\n' };
+    await a.remote.report(info.id, { status: 'ok', summary: 'готово' });
+    await until(() => outboxOf(a, caller).length === 2);
+    assert.match(outboxOf(a, caller)[1], /Уборка отказана - оставлены dev1:\S+\/work\/\S+\/a \(изменения в рабочем дереве\)/);
+  });
+
+  it('текст хоста в итоге лимита очищен от управляющих символов и обрезан; отказ уборки - в итоге с путём', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh);
+    const caller = callerOf(a);
+    await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
+    await until(() => r.spawned.length === 1);
+    const route = (a.remote as unknown as { route(m: Msg): void }).route.bind(a.remote);
+    route({ type: 'ended', sid: sidOf(ssh), reason: `\x1b[201~\r!rm -rf ~${'я'.repeat(3000)}`, cleanup: { removed: [], kept: [{ path: '/h/w/a\x1b[201~', reason: 'незапушенные\x07 коммиты' }] } });
+    const [text] = outboxOf(a, caller);
+    assert.doesNotMatch(text, /[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+    assert.match(text, /\[201~\n!rm -rf ~я+\n/);
+    assert.ok(text.length < 2300);
+    assert.match(text, /dev1:\/h\/w\/a\[201~ \(незапушенные коммиты\)/);
+  });
+
+  it('демон прежней версии шлёт exit раньше ended: итог всё равно у вызвавшей и ack ушёл; после 60 с ended не принимается', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const caller = callerOf(a);
+    await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
+    await until(() => r.spawned.length === 1);
+    const route = (a.remote as unknown as { route(m: Msg): void }).route.bind(a.remote);
+    const sid = sidOf(ssh);
+    route({ type: 'exit', sid, code: 1 });
+    route({ type: 'ended', sid, reason: 'таймаут задачи' });
+    assert.match(outboxOf(a, caller)[0], /failed[\s\S]*таймаут задачи/);
+    await until(() => ssh.seen.some((m) => m.type === 'ack' && m.sid === sid));
+    await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
+    await until(() => r.spawned.length === 2);
+    const sid2 = String(ssh.seen.filter((m) => m.type === 'spawn')[1].sid);
+    route({ type: 'exit', sid: sid2, code: 1 });
+    clock.fire(60_000);
+    route({ type: 'ended', sid: sid2, reason: 'поздно' });
+    assert.equal(outboxOf(a, caller).length, 1);
   });
 
   it('prepare: сверх предела хоста - ошибка до передачи вкладки', async (t) => {

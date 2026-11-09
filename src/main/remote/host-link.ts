@@ -18,7 +18,7 @@ export interface Timers {
   clear(handle: unknown): void;
 }
 
-const realTimers: Timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) };
+export const realTimers: Timers ={ set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) };
 
 export interface HostLinkDeps {
   host: string;
@@ -104,7 +104,7 @@ export class HostLink {
         this.drop();
         throw new Error(`на хосте работает демон несовместимой версии с ${sessions} сессиями`);
       }
-      this.request({ type: 'shutdown' }).catch(() => undefined);
+      await this.request({ type: 'shutdown' }).catch(() => undefined);
       this.drop();
       await new Promise((resolve) => this.timers.set(() => resolve(undefined), 300));
     }

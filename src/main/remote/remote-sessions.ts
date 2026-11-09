@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_LIMITS, type Msg, type RepoSpec } from '../../agentd/protocol';
+import { cleanMessage } from '../clean-text';
 import type { Project } from '../projects';
 import { CLOSE_SELF_DELAY_MS, type Limits, type RemoteToolsPort, type ReportArgs } from '../session-tools';
 import { sameDirs, type SessionManager, type TermPort } from '../sessions';
 import type { AgentdBundle } from './install';
-import { HostLink, type Timers } from './host-link';
+import { HostLink, realTimers, type Timers } from './host-link';
 import type { RemoteCreateArgs } from './remote-args';
 import type { SshTransport } from './ssh';
 
@@ -67,6 +68,21 @@ interface Entry {
 }
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+const ENDED_GRACE_MS = 60_000;
+const HOST_TEXT_MAX = 2000;
+
+/** Текст с хоста недоверен (в stderr клона - ответ сервера origin): до очереди, окна и уведомления - без управляющих символов. */
+const hostText = (value: unknown): string => Array.from(cleanMessage(typeof value === 'string' ? value : '')).slice(0, HOST_TEXT_MAX).join('');
+
+type Cleanup = { removed: string[]; kept: { path: string; reason: string }[] };
+
+function hostCleanup(value: unknown): Cleanup {
+  const v = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  const list = (x: unknown): unknown[] => (Array.isArray(x) ? x : []);
+  const field = (x: unknown, key: string): string => hostText(typeof x === 'object' && x !== null ? (x as Record<string, unknown>)[key] : undefined);
+  return { removed: list(v.removed).map(hostText), kept: list(v.kept).map((k) => ({ path: field(k, 'path'), reason: field(k, 'reason') })) };
+}
+
 const minutes = (value: number | undefined, fallback: number): number => (value === undefined ? fallback : value * 60_000);
 
 /** Текст итога сессии вызвавшей и уведомления: одна форма для report_done и итога лимита. */
@@ -76,7 +92,7 @@ export function reportText(id: number, host: string, report: { status: string; s
     .join('\n');
 }
 
-export function closeText(id: number, host: string, result: { removed: string[]; kept: { path: string; reason: string }[] }): string {
+export function closeText(id: number, host: string, result: Cleanup): string {
   const parts = [`Сессия ${id} завершена.`];
   if (result.removed.length) parts.push(`Клоны удалены: ${result.removed.join(', ')}.`);
   if (result.kept.length) parts.push(`Уборка отказана - оставлены ${result.kept.map((k) => `${host}:${k.path} (${k.reason})`).join(', ')}.`);
@@ -87,10 +103,14 @@ export class RemoteSessions implements RemoteToolsPort {
   private readonly links = new Map<string, HostLink>();
   private readonly bySid = new Map<string, Entry>();
   private readonly byId = new Map<number, Entry>();
+  /** Завершённые, чей ended ещё может прийти: демон прежней версии шлёт его после exit. */
+  private readonly ending = new Map<string, { entry: Entry; timer: unknown }>();
+  private readonly timers: Timers;
   private readonly instance: string;
 
   constructor(private readonly deps: RemoteDeps) {
     this.instance = deps.instance ?? randomUUID();
+    this.timers = deps.timers ?? realTimers;
   }
 
   private link(host: string): HostLink {
@@ -214,6 +234,7 @@ export class RemoteSessions implements RemoteToolsPort {
       } catch (error) {
         this.deps.emit('remote:link', { host, online: false, reason: (error as Error).message });
       }
+      if (![...this.byId.values()].some((e) => e.host === host)) link.close();
     }
     return found;
   }
@@ -266,7 +287,8 @@ export class RemoteSessions implements RemoteToolsPort {
   }
 
   private route(msg: Msg): void {
-    const entry = typeof msg.sid === 'string' ? this.bySid.get(msg.sid) : undefined;
+    const sid = typeof msg.sid === 'string' ? msg.sid : '';
+    const entry = this.bySid.get(sid) ?? (msg.type === 'ended' ? this.ending.get(sid)?.entry : undefined);
     if (!entry) return;
     const { sessions } = this.deps;
     switch (msg.type) {
@@ -294,21 +316,27 @@ export class RemoteSessions implements RemoteToolsPort {
   }
 
   private onExit(entry: Entry, msg: Msg): void {
-    const reason = typeof msg.reason === 'string' ? msg.reason : undefined;
+    const reason = hostText(msg.reason) || undefined;
     this.forget(entry);
+    if (entry.origin === 'tool' && !entry.reported) {
+      this.ending.set(entry.sid, { entry, timer: this.timers.set(() => this.ending.delete(entry.sid), ENDED_GRACE_MS) });
+    }
     this.deps.mcp.disconnect(entry.id);
     this.deps.sessions.finish(entry.id, Number(msg.code), reason);
-    const kept = (msg.kept as { path: string; reason: string }[] | undefined) ?? [];
+    const { kept } = hostCleanup({ kept: msg.kept });
     if (kept.length && !entry.closing) this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, closeText(entry.id, entry.host, { removed: [], kept }));
     if (reason && entry.origin === 'human') this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${entry.id} · ${entry.host}`, body: reason.slice(0, 200) });
   }
 
   private onEnded(entry: Entry, msg: Msg): void {
-    const reason = String(msg.reason ?? '');
-    const cleanup = msg.cleanup as { removed: string[]; kept: { path: string; reason: string }[] } | undefined;
-    this.deliver(entry, { status: 'failed', summary: reason });
+    const reason = hostText(msg.reason);
+    const { kept } = hostCleanup(msg.cleanup);
+    const refused = kept.length ? closeText(entry.id, entry.host, { removed: [], kept }) : '';
+    this.timers.clear(this.ending.get(entry.sid)?.timer ?? null);
+    this.ending.delete(entry.sid);
+    this.deliver(entry, { status: 'failed', summary: refused ? `${reason}\n${refused}` : reason });
     this.link(entry.host).send({ type: 'ack', sid: entry.sid });
-    if (cleanup?.kept.length) this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, closeText(entry.id, entry.host, { removed: [], kept: cleanup.kept }));
+    if (refused) this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, refused);
     this.deps.closeTab(entry.id);
   }
 
@@ -329,7 +357,11 @@ export class RemoteSessions implements RemoteToolsPort {
     entry.reported = true;
     this.deliver(entry, report);
     if (entry.origin === 'tool' && !entry.keep) {
-      setTimeout(() => void this.close(id, false, true).catch((e: Error) => this.deps.alert(`Сессия ${id} на ${entry.host}`, e.message)), this.deps.closeDelayMs ?? CLOSE_SELF_DELAY_MS);
+      const autoClose = async (): Promise<void> => {
+        const { text, kept } = await this.shut(entry, false, true);
+        if (kept && entry.spawnedBy !== undefined) this.deps.sessions.enqueue(entry.spawnedBy, text);
+      };
+      setTimeout(() => void autoClose().catch((e: Error) => this.deps.alert(`Сессия ${id} на ${entry.host}`, e.message)), this.deps.closeDelayMs ?? CLOSE_SELF_DELAY_MS);
       return 'Итог принят. Вкладка закроется через секунду, клоны с незапушенной работой останутся на хосте.';
     }
     return 'Итог принят.';
@@ -339,17 +371,23 @@ export class RemoteSessions implements RemoteToolsPort {
   async close(id: number, keep: boolean, tab = true): Promise<string> {
     const entry = this.byId.get(id);
     if (!entry) throw new Error(`сессия ${id} не найдена`);
+    return (await this.shut(entry, keep, tab)).text;
+  }
+
+  private async shut(entry: Entry, keep: boolean, tab: boolean): Promise<{ text: string; kept: boolean }> {
     const link = this.link(entry.host);
     if (link.state !== 'online') throw new Error(`нет связи с ${entry.host}`);
     entry.closing = true;
-    const result = (await link.request({ type: 'close', sid: entry.sid, keep }, 30_000).catch((error: Error) => {
+    const reply = await link.request({ type: 'close', sid: entry.sid, keep }, 30_000).catch((error: Error) => {
       entry.closing = false;
       throw error;
-    })) as unknown as { removed: string[]; kept: { path: string; reason: string }[] };
-    const text = closeText(id, entry.host, result);
-    if (tab) this.deps.closeTab(id);
-    if (!keep && result.kept.length) this.deps.alert(`Сессия ${id} на ${entry.host}`, text);
-    return text;
+    });
+    const result = hostCleanup(reply);
+    const text = closeText(entry.id, entry.host, result);
+    if (tab) this.deps.closeTab(entry.id);
+    const kept = !keep && result.kept.length > 0;
+    if (kept) this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, text);
+    return { text, kept };
   }
 
   isRemote(id: number): boolean {
@@ -369,8 +407,15 @@ export class RemoteSessions implements RemoteToolsPort {
     return reply.value;
   }
 
-  /** Выход Cyborg: каналы закрываются, демон и сессии на хосте живут. */
+  /** Выход Cyborg либо смена воркспейса: каналы и записи закрываются, демон и сессии на хосте живут. */
   closeLinks(): void {
+    for (const entry of [...this.byId.values()]) {
+      this.forget(entry);
+      this.deps.mcp.disconnect(entry.id);
+      this.deps.sessions.discard(entry.id);
+    }
+    for (const { timer } of this.ending.values()) this.timers.clear(timer);
+    this.ending.clear();
     for (const link of this.links.values()) link.close();
   }
 }

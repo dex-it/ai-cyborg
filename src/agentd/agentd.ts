@@ -21,6 +21,17 @@ const alive = (pid: number): boolean => {
   }
 };
 
+/** После перезагрузки pid из замка мог достаться чужому процессу: держит замок только живой agentd. */
+export function lockHolderAlive(pid: number): boolean {
+  if (!alive(pid)) return false;
+  try {
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
+    return argv.some((a) => a.endsWith('agentd.js')) && argv.includes('serve');
+  } catch {
+    return true;
+  }
+}
+
 /** Замок демона: один на пользователя; замок мёртвого pid снимается. */
 function takeLock(): boolean {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -29,7 +40,7 @@ function takeLock(): boolean {
       return true;
     } catch {
       const pid = Number(fs.readFileSync(lock, 'utf8'));
-      if (pid && alive(pid)) return false;
+      if (pid && lockHolderAlive(pid)) return false;
       fs.rmSync(lock, { force: true });
     }
   }

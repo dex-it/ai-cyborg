@@ -97,7 +97,7 @@ describe('createSessionTools: удалённая часть', () => {
     const requested: unknown[][] = [];
     const peers = [peer(1, 'waiting'), peer(2, 'waiting', { host: 'dev1' })];
     const backend = createSessionTools(
-      { dirsOf: () => DIRS, peers: () => peers, say: async () => 'sent', kindOf: () => kind, hostsOf: () => ['dev1'] },
+      { dirsOf: () => DIRS, peers: () => peers, say: async () => 'sent', kindOf: (id) => (id === 2 ? 'remote' : kind), hostsOf: () => ['dev1'] },
       { request: async (...a) => (requested.push(a), 7) },
       () => undefined,
       10,
@@ -115,9 +115,18 @@ describe('createSessionTools: удалённая часть', () => {
 
   it('удалённая сессия не вызывает spawn_agent и close_agent, даже зная имя', async () => {
     const { backend, calls } = rig('remote');
-    await assert.rejects(backend.call(1, 'spawn_agent', { host: 'dev1', repo: '/repo/a', branch: 'b', prompt: 'p' }), /недоступен удалённой сессии/);
-    await assert.rejects(backend.call(1, 'close_agent', { id: 2 }), /недоступен удалённой сессии/);
+    await assert.rejects(backend.call(1, 'spawn_agent', { host: 'dev1', repo: '/repo/a', branch: 'b', prompt: 'p' }), /недоступен этой сессии/);
+    await assert.rejects(backend.call(1, 'close_agent', { id: 2 }), /недоступен этой сессии/);
     assert.deepEqual(calls, []);
+  });
+
+  it('удалённая сессия не вызывает open_session и close_session, а локальная - report_done', async () => {
+    const { backend, calls, requested } = rig('remote');
+    await assert.rejects(backend.call(1, 'open_session', { repo: '/repo/a', prompt: 'p' }), /недоступен этой сессии/);
+    await assert.rejects(backend.call(1, 'close_session', { id: 2 }), /недоступен этой сессии/);
+    const local = rig('local');
+    await assert.rejects(local.backend.call(1, 'report_done', { status: 'ok', summary: 's' }), /недоступен этой сессии/);
+    assert.deepEqual([calls, requested, local.calls], [[], [], []]);
   });
 
   it('report_done, close_agent и close_session над удалённой идут в удалённую часть', async () => {

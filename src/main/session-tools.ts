@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { McpBackend, McpTool } from './mcp.ts';
 import { branchNameProblem } from './branch-name.ts';
+import { cleanMessage } from './clean-text.ts';
 import type { SayResult, SessionInfo } from './sessions.ts';
 
 export const OPEN_SESSION_TOOL = 'open_session';
@@ -186,7 +187,8 @@ const SHELL_REFUSAL = 'текст не может начинаться с «!»:
 
 /** Общие проверки промпта старта (ADR-0017 п.3, ADR-0019 п.8): ведущие «-» и «!», предел длины; null - годится. */
 export function promptProblem(text: string, name: string, limitHint = ''): string | null {
-  const head = text.trimStart();
+  // Проверяется очищенный текст: ведущий управляющий символ вычищается позже и иначе открыл бы «!» или «-».
+  const head = cleanMessage(text);
   if (head.startsWith('-')) return `${name} не может начинаться с «-»: claude примет его за ключ командной строки`;
   if (head.startsWith('!')) return name === 'prompt' ? SHELL_REFUSAL : `${name} не может начинаться с «!»: Claude Code выполнил бы его как команду оболочки`;
   if (tooLong(text)) return `${name} длиннее ${MAX_TEXT_BYTES} байт${limitHint}`;
@@ -206,11 +208,6 @@ export function validateOpenSession(value: unknown, dirs: string[]): OpenSession
   if (problem) return problem;
   if (typeof repo !== 'string' || !dirs.includes(repo)) return `repo - один из каталогов проекта: ${dirs.join(', ')}`;
   return { prompt: prompt.trim(), repo };
-}
-
-/** Управляющие символы (кроме перевода строки и табуляции) вычищаются: ESC закрыл бы вставку и дальше текст пошёл бы в TUI клавишами. */
-export function cleanMessage(text: string): string {
-  return text.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').trim();
 }
 
 export function validateSend(value: unknown, peers: SessionInfo[], caller: number): { id: number; message: string } | string {
@@ -447,6 +444,8 @@ export function createSessionTools(
       const dirs = sessions.dirsOf(caller);
       const peers = sessions.peers(caller);
       if (!dirs || !peers) throw new Error('сессия завершена');
+      // tools/call не обязан следовать tools/list: набор инструментов контекста - и есть право вызова.
+      if (!sessionTools(dirs, contextOf(caller, dirs)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
       if (name === LIST_SESSIONS_TOOL) return describePeers(peers, caller);
       if (name === SEND_TO_SESSION_TOOL) {
         const valid = validateSend(value, peers, caller);
@@ -473,7 +472,6 @@ export function createSessionTools(
         if (typeof valid === 'string') throw new Error(valid);
         return remote.report(caller, valid);
       }
-      if ((name === CLOSE_AGENT_TOOL || name === SPAWN_AGENT_TOOL) && remote && contextOf(caller, dirs).kind === 'remote') throw new Error(`${name} недоступен удалённой сессии`);
       if (name === CLOSE_AGENT_TOOL && remote) {
         const valid = validateCloseAgent(value, peers);
         if (typeof valid === 'string') throw new Error(valid);

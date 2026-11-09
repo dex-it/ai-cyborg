@@ -21,6 +21,8 @@ export function parsePreflight(output: string): PreflightResult {
     const i = line.indexOf('=');
     if (i > 0) kv.set(line.slice(0, i), line.slice(i + 1).trim());
   }
+  const uname = kv.get('uname');
+  if (uname && uname !== 'Linux') return { missing: [`хост не Linux (${uname}): нужны script и stty из util-linux`] };
   const missing: string[] = [];
   const major = Number(/^v?(\d+)/.exec(kv.get('node') ?? '')?.[1]);
   if (!major || major < 18) missing.push('node ≥ 18');

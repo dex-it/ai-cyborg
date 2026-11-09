@@ -3,6 +3,7 @@ import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs } from './claude-args.ts';
+import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
 import { hookSettings, track, waitingReason, type SessionEvent, type SessionState } from './session-state.ts';
 
@@ -262,7 +263,8 @@ export class SessionManager {
     session.delivering = true;
     try {
       // Вставкой: перевод строки в тексте TUI мог бы принять за Enter и отправить сообщение по кускам.
-      write(`\x1b[200~${text}\x1b[201~`);
+      // Чистка у записи: в очередь попадает и текст хоста, минуя validateSend.
+      write(`\x1b[200~${cleanMessage(text)}\x1b[201~`);
       await new Promise((resolve) => setTimeout(resolve, SUBMIT_DELAY_MS));
       write('\r');
     } finally {

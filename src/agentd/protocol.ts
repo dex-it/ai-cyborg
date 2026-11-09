@@ -42,7 +42,6 @@ export interface SpawnMsg {
 
 export interface SessionMeta {
   sid: string;
-  token: string;
   /** Локальные репозитории проекта, выбранный первым. */
   dirs: string[];
   origin: 'tool' | 'human';

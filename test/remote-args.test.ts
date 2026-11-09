@@ -41,6 +41,8 @@ describe('validateRemoteCreate', () => {
   it('задание: «-» и «!» отвергаются, предел ровно 100000 байт принят, 100001 отвергнут', () => {
     assert.match(validateRemoteCreate({ ...ok, prompt: ' -x' }, project) as string, /«-»/);
     assert.match(validateRemoteCreate({ ...ok, prompt: '!ls' }, project) as string, /«!»/);
+    assert.match(validateRemoteCreate({ ...ok, prompt: '\x01!ls' }, project) as string, /«!»/);
+    assert.match(validateRemoteCreate({ ...ok, prompt: '\x1b -x' }, project) as string, /«-»/);
     assert.equal(typeof validateRemoteCreate({ ...ok, prompt: 'a'.repeat(MAX_TEXT_BYTES) }, project), 'object');
     assert.match(validateRemoteCreate({ ...ok, prompt: 'a'.repeat(MAX_TEXT_BYTES + 1) }, project) as string, /байт/);
   });
@@ -68,6 +70,10 @@ describe('parsePreflight', () => {
   it('хост в порядке - домашний каталог', () => assert.deepEqual(parsePreflight(good), { home: '/home/u', installed: [] }));
   it('называет все недостающие инструменты разом', () => {
     assert.deepEqual(parsePreflight('home=/h\nnode=v16.0.0\ngit=\nclaude=\nscript=/s\n'), { missing: ['на хосте нет: node ≥ 18, git, claude'] });
+  });
+  it('хост не Linux - отказ с причиной до проверки инструментов', () => {
+    assert.deepEqual(parsePreflight('uname=Darwin\n' + good), { missing: ['хост не Linux (Darwin): нужны script и stty из util-linux'] });
+    assert.deepEqual(parsePreflight('uname=Linux\n' + good), { home: '/home/u', installed: [] });
   });
   it('не залогинен: loggedIn не true, не-JSON, пусто', () => {
     for (const auth of ['{"loggedIn":false}', 'oops', '']) assert.match((parsePreflight(good.replace('{"loggedIn":true}', auth)) as { missing: string[] }).missing[0], /не залогинен/);
