@@ -188,6 +188,45 @@ describe('daemon: переподключение', () => {
     assert.equal((c2.of('events')[0].items as unknown[]).length, 1);
   });
 
+  it('догон событий при reattach ограничен хвостом, как при подхвате, и не растёт с длиной обрыва', async (t) => {
+    const r = rig(t);
+    const { conn, sid } = await open(r);
+    conn.close();
+    const file = path.join(r.home, '.cyborg', 'sessions', sid, 'events.jsonl');
+    const line = JSON.stringify({ hook_event_name: 'PostToolUse', tool_response: 'x'.repeat(1000) }) + '\n';
+    fs.appendFileSync(file, line.repeat(3000));
+    const c2 = client();
+    const conn2 = r.daemon.connect(c2);
+    conn2.receive({ type: 'hello', rid: 0, instance: 'inst-1' } as Msg);
+    conn2.receive({ type: 'attach', rid: 5, sid, outFrom: 0, evFrom: 0 } as Msg);
+    await until(() => c2.of('events').length > 0);
+    const items = c2.of('events').flatMap((m) => m.items as { off: number; line: string }[]);
+    assert.ok(items.length > 0 && items.length < 3000, `строк ${items.length}`);
+    assert.ok(items.reduce((n, i) => n + Buffer.byteLength(i.line) + 1, 0) <= 1024 * 1024);
+    assert.equal(items[items.length - 1].off + Buffer.byteLength(line), 3000 * Buffer.byteLength(line));
+  });
+
+  it('attach к завершившейся сессии отдаёт exit и снимает запись: повторный list её не возвращает, демон простаивает', async (t) => {
+    const r = rig(t);
+    const { conn, sid } = await open(r);
+    conn.close();
+    r.procs[0].exit(0);
+    await until(() => r.daemon.liveCount() === 0);
+    const c2 = client();
+    const conn2 = r.daemon.connect(c2);
+    conn2.receive({ type: 'hello', rid: 0, instance: 'inst-1' } as Msg);
+    conn2.receive({ type: 'list', rid: 1 } as Msg);
+    await until(() => c2.of('list').length === 1);
+    assert.equal((c2.of('list')[0].sessions as { exited: boolean }[])[0].exited, true);
+    conn2.receive({ type: 'attach', rid: 2, sid, outFrom: 0, evFrom: 'tail' } as Msg);
+    await until(() => c2.of('exit').length === 1);
+    conn2.receive({ type: 'list', rid: 3 } as Msg);
+    await until(() => c2.of('list').length === 2);
+    assert.deepEqual(c2.of('list')[1].sessions, []);
+    conn2.close();
+    assert.equal(r.daemon.idle(), true);
+  });
+
   it('сессию, которую держит другое окно, не подхватить; то же окно после обрыва - можно', async (t) => {
     const r = rig(t);
     const { sid } = await open(r);

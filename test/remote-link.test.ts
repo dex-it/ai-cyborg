@@ -579,3 +579,104 @@ describe('report_done, close_agent и лимиты', () => {
     await a.remote.prepare('dev1', '/loc/a');
   });
 });
+
+describe('подхват: сессия, завершившаяся на хосте без клиента', () => {
+  const hostSessions = (r: Rig): number => (r.daemon as unknown as { sessions: Map<string, unknown> }).sessions.size;
+
+  it('Cyborg закрыт, claude вышел: следующий запуск вкладку не открывает, запись на хосте снята, демон простаивает', async (t) => {
+    const { r, ssh } = world(t);
+    const first = side(t, ssh);
+    await first.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    first.remote.closeLinks();
+    r.procs[0].exit(0);
+    await until(() => r.daemon.liveCount() === 0);
+    assert.equal(hostSessions(r), 1);
+    const second = side(t, ssh, { instance: 'inst-2' });
+    assert.deepEqual(await second.remote.discover(project), []);
+    await until(() => hostSessions(r) === 0);
+    await until(() => r.daemon.idle());
+    const third = side(t, ssh, { instance: 'inst-3' });
+    assert.deepEqual(await third.remote.discover(project), []);
+  });
+
+  it('Cyborg работает, связь оборвалась, claude вышел: после переподключения вкладка завершена, запись на хосте снята', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    ssh.channels[0].cut();
+    r.procs[0].exit(0);
+    await until(() => r.daemon.liveCount() === 0);
+    clock.fire(RECONNECT_MS[0]);
+    await until(() => a.events.some((e) => e.channel === 'session:exit' && e.payload.id === info.id));
+    await until(() => hostSessions(r) === 0);
+  });
+});
+
+describe('RemoteSessions: файловый канал, запасной путь итога, сбой close', () => {
+  const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
+  const entryOf = (a: Side, id: number): { closing?: boolean } | undefined => (a.remote as unknown as { byId: Map<number, { closing?: boolean }> }).byId.get(id);
+
+  it('fsOp: путь вне клонов, относительный, с «..», чужая и локальная вкладка, нет связи - отказ; путь в клоне доходит до демона', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh, { timers: fakeTimers().timers });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    const root = info.roots[0];
+    for (const bad of ['/etc', 'work/a', `${root}/../x`, `${root}x`, 5, undefined]) {
+      await assert.rejects(a.remote.fsOp(info.id, 'list', bad), /Путь вне каталогов удалённой сессии/, String(bad));
+    }
+    await assert.rejects(a.remote.fsOp(callerOf(a), 'list', root), /не удалённая/);
+    assert.equal(ssh.seen.filter((m) => m.type === 'fs').length, 0, 'отвергнутые пути демону не уходят');
+    await a.remote.fsOp(info.id, 'list', root);
+    assert.equal(ssh.seen.filter((m) => m.type === 'fs').length, 1);
+    ssh.channels[0].cut();
+    await assert.rejects(a.remote.fsOp(info.id, 'list', root), /нет связи/);
+  });
+
+  it('итог вкладки spawn_agent, когда вызвавшей сессии уже нет, - уведомление рабочего стола', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh);
+    const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: 9999, keep: true });
+    await until(() => r.spawned.length === 1);
+    await a.remote.report(info.id, { status: 'ok', summary: 'готово' });
+    const note = a.events.find((e) => e.channel === 'remote:report');
+    assert.equal(note?.payload.id, info.id);
+    assert.match(note?.payload.body, /^ok: готово/);
+  });
+
+  it('close без ответа хоста: ошибка вызвавшему, closing сброшен, повторный close возможен', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    ssh.blocked = true;
+    const closing = a.remote.close(info.id, false);
+    await until(() => clock.queue.some((x) => x.alive && x.ms === 30_000));
+    assert.equal(entryOf(a, info.id)?.closing, true);
+    clock.fire(30_000);
+    await assert.rejects(closing, /не ответил/);
+    assert.equal(entryOf(a, info.id)?.closing, false);
+    assert.deepEqual(a.closedTabs, []);
+    ssh.blocked = false;
+    assert.match(await a.remote.close(info.id, false), /завершена/);
+  });
+
+  it('автозакрытие после report_done без ответа хоста: окно с причиной, вкладка не закрыта, closing сброшен', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const info = await a.remote.create(project, human, { origin: 'tool' });
+    await until(() => r.spawned.length === 1);
+    await a.remote.report(info.id, { status: 'ok', summary: 'готово' });
+    ssh.blocked = true;
+    await until(() => clock.queue.some((x) => x.alive && x.ms === 30_000));
+    clock.fire(30_000);
+    await until(() => a.alerts.some((m) => /не ответил/.test(m)));
+    assert.equal(entryOf(a, info.id)?.closing, false);
+    assert.deepEqual(a.closedTabs, []);
+  });
+});

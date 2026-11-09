@@ -218,6 +218,20 @@ describe('установка агента и проверка хоста: скр
     assert.equal(fs.existsSync(path.join(home, '.cyborg', 'agentd', bundle.version, 'agentd.js')), false);
   });
 
+  it('сорванная установка не оставляет каталога версии: проверка хоста её не видит, повторная установка чинит обломок', (t) => {
+    const home = tmpHome(t);
+    const bundle = bundleOf('console.log("agentd");\n');
+    const agentd = path.join(home, '.cyborg', 'agentd');
+    assert.notEqual(sh(installScript({ ...bundle, sha256: '0'.repeat(64) }), home).status, 0);
+    assert.deepEqual(fs.readdirSync(agentd), []);
+    assert.match(sh(PREFLIGHT_SCRIPT, home).stdout, /^agentd=$/m);
+    fs.mkdirSync(path.join(agentd, bundle.version));
+    fs.writeFileSync(path.join(agentd, bundle.version, 'connect.sh'), 'обломок');
+    assert.equal(sh(installScript(bundle), home).status, 0);
+    assert.deepEqual(fs.readdirSync(path.join(agentd, bundle.version)).sort(), ['agentd.js', 'connect.sh']);
+    assert.deepEqual(fs.readdirSync(agentd), [bundle.version]);
+  });
+
   it('исходник с разделителем heredoc внутри переносится целым', (t) => {
     const home = tmpHome(t);
     const bundle = bundleOf('const x = `\nCYBORG_EOF\n`;\n');

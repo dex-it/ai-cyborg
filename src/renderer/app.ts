@@ -1611,14 +1611,15 @@ api.on<void>('menu:commands', () => void commandEditor.open());
 const promptEditor = initPromptEditor();
 api.on<void>('menu:prompts', () => void promptEditor.open());
 // Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта.
+// Пути клонов удалённой вкладки лежат на хосте: поиск и расширения читают локальные каталоги, поэтому у неё берутся репозитории проекта.
 const searchDialog = new SearchDialog({
-  roots: () => (active ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),
+  roots: () => (active && !active.remote ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),
   open: openAnywhere,
 });
 api.on<SearchMode>('menu:search', (mode) => searchDialog.open(mode));
 // Расширения читаются по репозиториям проекта и по рабочему каталогу активной сессии.
 const extensionsDialog = new ExtensionsDialog({
-  context: () => ({ repos: project?.repos ?? [], session: active ? { root: active.root, repo: active.repo } : null }),
+  context: () => ({ repos: project?.repos ?? [], session: active && !active.remote ? { root: active.root, repo: active.repo } : null }),
 });
 api.on<ExtensionsTab>('menu:extensions', (tab) => extensionsDialog.open(tab));
 

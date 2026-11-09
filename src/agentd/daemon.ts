@@ -444,11 +444,14 @@ export class Daemon {
     this.sendBacklog(conn, sess, msg.evFrom);
     // Порядок живого потока: после exit клиент забывает сессию, и ended следом не нашёл бы её.
     if (sess.meta.ended) conn.send({ type: 'ended', sid: sess.sid, ...sess.meta.ended });
-    if (sess.exited) conn.send({ type: 'exit', sid: sess.sid, code: sess.exited.code, reason: sess.exited.reason, kept: sess.exited.kept });
+    if (sess.exited) {
+      conn.send({ type: 'exit', sid: sess.sid, code: sess.exited.code, reason: sess.exited.reason, kept: sess.exited.kept });
+      this.reap(sess);
+    }
   }
 
   private sendBacklog(conn: Conn, sess: Sess, evFrom: unknown): void {
-    let from = evFrom === 'tail' ? this.tailStart(sess) : Math.max(0, Number(evFrom) || 0);
+    let from = Math.max(this.tailStart(sess), evFrom === 'tail' ? 0 : Math.max(0, Number(evFrom) || 0));
     const file = path.join(sess.dir, 'events.jsonl');
     if (from > 0) {
       try {

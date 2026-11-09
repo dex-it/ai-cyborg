@@ -243,6 +243,12 @@ export class RemoteSessions implements RemoteToolsPort {
     const sid = String(item.sid);
     const dirs = item.dirs as string[];
     if (this.bySid.has(sid) || item.busy || !Array.isArray(dirs) || !sameDirs(dirs, project.repos)) return null;
+    if (item.exited === true) {
+      // Завершившуюся без клиента сессию вкладкой не открывают; attach и ack забирают у демона exit и снимают запись.
+      await link.request({ type: 'attach', sid, outFrom: 0, evFrom: 'tail' }).catch(() => undefined);
+      link.send({ type: 'ack', sid });
+      return null;
+    }
     if (typeof item.token !== 'string' || !TOKEN.test(item.token)) return null;
     const entry: Entry = {
       id: 0,

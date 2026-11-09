@@ -29,32 +29,35 @@ const delimiterFor = (...texts: string[]): string => {
   }
 };
 
-/** Скрипт установки для `sh -s`: файл во временное имя, проверка sha256 через node, затем mv - обрыв посреди переноса версию не создаёт. */
+/** Скрипт установки для `sh -s`: версия собирается в скрытом каталоге, проверяется sha256 через node и встаёт на место одним mv каталога - сорванная установка видимой версии не оставляет. */
 export function installScript(bundle: AgentdBundle): string {
   const d1 = delimiterFor(bundle.source, CONNECT_SH);
   const dir = `"$HOME/.cyborg/agentd/${bundle.version}"`;
+  const stage = `"$HOME/.cyborg/agentd/.${bundle.version}.tmp"`;
   return `set -e
 P=$("\${SHELL:-/bin/sh}" -lc env </dev/null 2>/dev/null | sed -n 's/^PATH=//p')
 [ -n "$P" ] && PATH=$P
 export PATH
 umask 077
-mkdir -p "$HOME/.cyborg/run" "$HOME/.cyborg/sessions" "$HOME/.cyborg/work" ${dir}
-chmod 700 "$HOME/.cyborg" "$HOME/.cyborg/run" "$HOME/.cyborg/sessions" "$HOME/.cyborg/work" "$HOME/.cyborg/agentd" ${dir}
-cat > ${dir}/agentd.js.tmp <<'${d1}'
+mkdir -p "$HOME/.cyborg/run" "$HOME/.cyborg/sessions" "$HOME/.cyborg/work" "$HOME/.cyborg/agentd"
+chmod 700 "$HOME/.cyborg" "$HOME/.cyborg/run" "$HOME/.cyborg/sessions" "$HOME/.cyborg/work" "$HOME/.cyborg/agentd"
+rm -rf ${stage}
+trap 'rm -rf ${stage}' EXIT
+mkdir ${stage}
+cat > ${stage}/agentd.js <<'${d1}'
 ${bundle.source}
 ${d1}
-sum=$(node -e 'process.stdout.write(require("crypto").createHash("sha256").update(require("fs").readFileSync(process.argv[1])).digest("hex"))' ${dir}/agentd.js.tmp </dev/null)
+sum=$(node -e 'process.stdout.write(require("crypto").createHash("sha256").update(require("fs").readFileSync(process.argv[1])).digest("hex"))' ${stage}/agentd.js </dev/null)
 if [ "$sum" != "${bundle.sha256}" ]; then
-  rm -f ${dir}/agentd.js.tmp
   echo "контрольная сумма агента не сошлась" >&2
   exit 1
 fi
-cat > ${dir}/connect.sh.tmp <<'${d1}'
+cat > ${stage}/connect.sh <<'${d1}'
 ${CONNECT_SH}
 ${d1}
-chmod 700 ${dir}/connect.sh.tmp
-mv ${dir}/connect.sh.tmp ${dir}/connect.sh
-mv ${dir}/agentd.js.tmp ${dir}/agentd.js
+chmod 700 ${stage}/connect.sh
+rm -rf ${dir}
+mv ${stage} ${dir}
 echo installed
 `;
 }
