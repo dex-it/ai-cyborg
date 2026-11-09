@@ -9,6 +9,7 @@ import {
   Handoffs,
   type HandoffRequest,
   MAX_TEXT_BYTES,
+  validateClose,
   validateOpenSession,
   validateSend,
 } from '../src/main/session-tools';
@@ -57,6 +58,28 @@ describe('validateSend', () => {
   });
 });
 
+describe('validateClose', () => {
+  const peers = [peer(1, 'working'), peer(2, 'waiting'), peer(3, 'asking', { reason: 'Просит разрешение' }), peer(4, 'starting'), peer(5, 'working')];
+
+  it('закрывает ждущую соседку и саму вызывающую, хотя она в своём ходу', () => {
+    assert.deepEqual(validateClose({ id: 2 }, peers, 1), { id: 2 });
+    assert.deepEqual(validateClose({ id: 1 }, peers, 1), { id: 1 });
+  });
+
+  it('работающую, ждущую человека и запускающуюся соседку закрывает только с force', () => {
+    assert.match(validateClose({ id: 5 }, peers, 1) as string, /работает.*force: true/);
+    assert.match(validateClose({ id: 3 }, peers, 1) as string, /ждёт человека \(Просит разрешение\)/);
+    assert.match(validateClose({ id: 4 }, peers, 1) as string, /запускается/);
+    for (const id of [3, 4, 5]) assert.deepEqual(validateClose({ id, force: true }, peers, 1), { id });
+  });
+
+  it('отвергает номер вне проекта и force не логическим', () => {
+    assert.match(validateClose({ id: 9 }, peers, 1) as string, /нет среди открытых/);
+    assert.match(validateClose({ id: '2' }, peers, 1) as string, /нет среди открытых/);
+    assert.match(validateClose({ id: 2, force: 'yes' }, peers, 1) as string, /force/);
+  });
+});
+
 describe('describePeers', () => {
   it('сессия-вызывающая помечена, причина и хвост ответа - только когда есть', () => {
     const long = 'начало ' + 'x'.repeat(ANSWER_TAIL);
@@ -74,6 +97,7 @@ describe('createSessionTools', () => {
   function tools(peers: SessionInfo[] | null) {
     const said: [number, string][] = [];
     const requested: unknown[] = [];
+    const closed: number[] = [];
     const backend = createSessionTools(
       {
         dirsOf: () => (peers ? DIRS : null),
@@ -81,8 +105,10 @@ describe('createSessionTools', () => {
         say: async (id, text) => (said.push([id, text]), peers?.find((p) => p.id === id)?.state === 'working' ? 'queued' : 'sent'),
       },
       { request: async (...args) => (requested.push(args), 42) },
+      (id) => closed.push(id),
+      10,
     );
-    return { backend, said, requested };
+    return { backend, said, requested, closed };
   }
 
   it('send_to_session пишет в ждущую сессию; о работающей говорит, что сообщение в очереди', async () => {
@@ -101,6 +127,16 @@ describe('createSessionTools', () => {
     assert.match(await backend.call(1, 'open_session', { prompt: 'задача', repo: '/repo/b' }), /сессии 42 в \/repo\/b/);
     assert.deepEqual(requested, [[1, '/repo/b', 'задача']]);
     assert.equal(JSON.parse(await backend.call(1, 'list_sessions', {}))[0].self, true);
+  });
+
+  it('close_session закрывает соседку сразу, а свою вкладку - после ответа', async () => {
+    const { backend, closed } = tools([peer(1, 'working'), peer(2, 'waiting'), peer(3, 'working')]);
+    assert.match(await backend.call(1, 'close_session', { id: 2 }), /сессии 2 закрыта/);
+    await assert.rejects(backend.call(1, 'close_session', { id: 3 }), /force: true/);
+    assert.match(await backend.call(1, 'close_session', { id: 1 }), /закроется/);
+    assert.deepEqual(closed, [2]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(closed, [2, 1]);
   });
 
   it('у завершённой сессии инструментов нет, вызов - ошибка', async () => {

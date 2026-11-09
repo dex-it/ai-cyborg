@@ -75,7 +75,12 @@ const handoffs = new Handoffs((request) => {
   win.webContents.send('session:handoff', request);
   return true;
 });
-const mcpServer = new McpServer(createSessionTools(sessions, handoffs), app.getVersion());
+// Вкладку убирает интерфейс тем же путём, что крестик; без окна убирать нечего, и процесс завершается здесь.
+const closeSession = (id: number): void => {
+  if (win && !win.isDestroyed()) win.webContents.send('session:close', { id });
+  else sessions.kill(id);
+};
+const mcpServer = new McpServer(createSessionTools(sessions, handoffs, closeSession), app.getVersion());
 // Сессии создаёт окно, а оно грузится дольше, чем поднимается сервер; если порт не дали, сессии работают без MCP Cyborg.
 mcpServer
   .listen()

@@ -33,7 +33,7 @@ describe('handleRpc', () => {
 
   it('tools/list отдаёт инструменты вызывающей сессии с её каталогами в схеме', async () => {
     const list = (await handleRpc(rpc('tools/list'), 1, backend, 'v')) as any;
-    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ['open_session', 'list_sessions', 'send_to_session']);
+    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ['open_session', 'list_sessions', 'send_to_session', 'close_session']);
     assert.deepEqual(list.result.tools[0].inputSchema.properties.repo.enum, DIRS);
     assert.deepEqual(((await handleRpc(rpc('tools/list'), 2, backend, 'v')) as any).result.tools, []);
   });
