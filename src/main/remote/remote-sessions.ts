@@ -65,6 +65,8 @@ interface Entry {
   roots: string[];
   gone?: boolean;
   closing?: boolean;
+  /** Запись без вкладки: завершившуюся без клиента сессию держат только ради доставки её итога. */
+  ghost?: boolean;
 }
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -83,16 +85,19 @@ function hostCleanup(value: unknown): Cleanup {
   return { removed: list(v.removed).map(hostText), kept: list(v.kept).map((k) => ({ path: field(k, 'path'), reason: field(k, 'reason') })) };
 }
 
+/** Номер вкладки для текста; у записи без вкладки - начало идентификатора сессии на хосте. */
+const tag = (e: { id: number; sid: string; ghost?: boolean }): string => (e.ghost ? e.sid.slice(0, 8) : String(e.id));
+
 const minutes = (value: number | undefined, fallback: number): number => (value === undefined ? fallback : value * 60_000);
 
 /** Текст итога сессии вызвавшей и уведомления: одна форма для report_done и итога лимита. */
-export function reportText(id: number, host: string, report: { status: string; summary: string; branch?: string; pr?: string }): string {
+export function reportText(id: number | string, host: string, report: { status: string; summary: string; branch?: string; pr?: string }): string {
   return [`Итог удалённой сессии CC${id} (${host}): ${report.status}`, report.branch ? `ветка: ${report.branch}` : '', report.pr ? `PR: ${report.pr}` : '', '', report.summary]
     .filter((line, i) => line || i === 3)
     .join('\n');
 }
 
-export function closeText(id: number, host: string, result: Cleanup): string {
+export function closeText(id: number | string, host: string, result: Cleanup): string {
   const parts = [`Сессия ${id} завершена.`];
   if (result.removed.length) parts.push(`Клоны удалены: ${result.removed.join(', ')}.`);
   if (result.kept.length) parts.push(`Уборка отказана - оставлены ${result.kept.map((k) => `${host}:${k.path} (${k.reason})`).join(', ')}.`);
@@ -244,9 +249,21 @@ export class RemoteSessions implements RemoteToolsPort {
     const dirs = item.dirs as string[];
     if (this.bySid.has(sid) || item.busy || !Array.isArray(dirs) || !sameDirs(dirs, project.repos)) return null;
     if (item.exited === true) {
-      // Завершившуюся без клиента сессию вкладкой не открывают; attach и ack забирают у демона exit и снимают запись.
-      await link.request({ type: 'attach', sid, outFrom: 0, evFrom: 'tail' }).catch(() => undefined);
-      link.send({ type: 'ack', sid });
+      // Вкладки нет, но итог (ended) и оставленные клоны (exit) доходят до человека; запись на хосте снимает ack либо сам exit.
+      const ghost: Entry = {
+        id: 0,
+        sid,
+        host: link.host,
+        origin: item.origin === 'tool' ? 'tool' : 'human',
+        keep: item.keep === true,
+        reported: item.reported === true,
+        outPos: 0,
+        evPos: 0,
+        roots: [],
+        ghost: true,
+      };
+      this.bySid.set(sid, ghost);
+      await link.request({ type: 'attach', sid, outFrom: 0, evFrom: 'tail' }).catch(() => this.bySid.delete(sid));
       return null;
     }
     if (typeof item.token !== 'string' || !TOKEN.test(item.token)) return null;
@@ -297,6 +314,7 @@ export class RemoteSessions implements RemoteToolsPort {
     const entry = this.bySid.get(sid) ?? (msg.type === 'ended' ? this.ending.get(sid)?.entry : undefined);
     if (!entry) return;
     const { sessions } = this.deps;
+    if (entry.ghost && msg.type !== 'exit' && msg.type !== 'ended') return;
     switch (msg.type) {
       case 'data':
         entry.outPos = Number(msg.at) + Buffer.byteLength(String(msg.data));
@@ -324,33 +342,35 @@ export class RemoteSessions implements RemoteToolsPort {
   private onExit(entry: Entry, msg: Msg): void {
     const reason = hostText(msg.reason) || undefined;
     this.forget(entry);
-    if (entry.origin === 'tool' && !entry.reported) {
+    if (entry.origin === 'tool' && !entry.reported && !entry.ghost) {
       this.ending.set(entry.sid, { entry, timer: this.timers.set(() => this.ending.delete(entry.sid), ENDED_GRACE_MS) });
     }
-    this.deps.mcp.disconnect(entry.id);
-    this.deps.sessions.finish(entry.id, Number(msg.code), reason);
+    if (!entry.ghost) {
+      this.deps.mcp.disconnect(entry.id);
+      this.deps.sessions.finish(entry.id, Number(msg.code), reason);
+    }
     const { kept } = hostCleanup({ kept: msg.kept });
-    if (kept.length && !entry.closing) this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, closeText(entry.id, entry.host, { removed: [], kept }));
-    if (reason && entry.origin === 'human') this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${entry.id} · ${entry.host}`, body: reason.slice(0, 200) });
+    if (kept.length && !entry.closing) this.deps.alert(`Сессия ${tag(entry)} на ${entry.host}`, closeText(tag(entry), entry.host, { removed: [], kept }));
+    if (reason && entry.origin === 'human') this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${tag(entry)} · ${entry.host}`, body: reason.slice(0, 200) });
   }
 
   private onEnded(entry: Entry, msg: Msg): void {
     const reason = hostText(msg.reason);
     const { kept } = hostCleanup(msg.cleanup);
-    const refused = kept.length ? closeText(entry.id, entry.host, { removed: [], kept }) : '';
+    const refused = kept.length ? closeText(tag(entry), entry.host, { removed: [], kept }) : '';
     this.timers.clear(this.ending.get(entry.sid)?.timer ?? null);
     this.ending.delete(entry.sid);
     this.deliver(entry, { status: 'failed', summary: refused ? `${reason}\n${refused}` : reason });
     this.link(entry.host).send({ type: 'ack', sid: entry.sid });
-    if (refused) this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, refused);
-    this.deps.closeTab(entry.id);
+    if (refused) this.deps.alert(`Сессия ${tag(entry)} на ${entry.host}`, refused);
+    if (!entry.ghost) this.deps.closeTab(entry.id);
   }
 
   /** Итог - вызвавшей spawn_agent в очередь, а если её нет либо вкладку открыл человек - уведомлением. */
   private deliver(entry: Entry, report: ReportArgs): void {
     const text = reportText(entry.id, entry.host, report);
     if (entry.spawnedBy !== undefined && this.deps.sessions.enqueue(entry.spawnedBy, text)) return;
-    this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${entry.id} · ${entry.host}`, body: `${report.status}: ${report.summary.slice(0, 200)}` });
+    this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${tag(entry)} · ${entry.host}`, body: `${report.status}: ${report.summary.slice(0, 200)}` });
   }
 
   async report(id: number, report: ReportArgs): Promise<string> {

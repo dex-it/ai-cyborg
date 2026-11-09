@@ -615,6 +615,29 @@ describe('подхват: сессия, завершившаяся на хост
   });
 });
 
+describe('подхват: итог сессии, завершившейся без клиента, доходит до человека', () => {
+  const hostSessions = (r: Rig): number => (r.daemon as unknown as { sessions: Map<string, unknown> }).sessions.size;
+
+  it('лимит сработал при закрытом Cyborg: на следующем запуске уведомление failed с причиной и путём оставленного клона, вкладки нет, запись снята после доставки', async (t) => {
+    const r2 = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r2.daemon, r2.home);
+    const first = side(t, ssh);
+    await first.remote.create(project, human, { origin: 'tool', limits: { task_timeout_min: 1 } });
+    await until(() => r2.spawned.length === 1);
+    first.remote.closeLinks();
+    r2.answers['status --porcelain'] = { stdout: ' M f\n' };
+    r2.clock.now += 120_000;
+    await until(() => r2.killed.includes('SIGTERM'));
+    await until(() => (r2.daemon as unknown as { sessions: Map<string, { meta: { ended?: unknown } }> }).sessions.size === 1);
+    const second = side(t, ssh, { instance: 'inst-2' });
+    assert.deepEqual(await second.remote.discover(project), []);
+    await until(() => second.events.some((e) => e.channel === 'remote:report' && /^failed: [\s\S]*таймаут задачи/.test(e.payload.body)));
+    await until(() => second.alerts.some((m) => /Уборка отказана/.test(m)));
+    assert.equal(second.closedTabs.length, 0);
+    await until(() => hostSessions(r2) === 0);
+  });
+});
+
 describe('RemoteSessions: файловый канал, запасной путь итога, сбой close', () => {
   const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
   const entryOf = (a: Side, id: number): { closing?: boolean } | undefined => (a.remote as unknown as { byId: Map<number, { closing?: boolean }> }).byId.get(id);
