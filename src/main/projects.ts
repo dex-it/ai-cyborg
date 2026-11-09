@@ -25,6 +25,25 @@ export interface Project {
   trackers: TrackerSettings;
   /** Jira проекта; поля нет - Jira выключена. */
   jira?: JiraSettings;
+  /** Алиасы хостов ~/.ssh/config для удалённых сессий (ADR-0020); поля нет - хостов нет. */
+  hosts?: string[];
+}
+
+export const MAX_HOSTS = 32;
+export const HOST_ALIAS = /^[^\s-][^\s\x00-\x1f\x7f]{0,254}$/;
+
+/** Хосты из файла: строки по форме, без повторов, не больше MAX_HOSTS; не массив - null. */
+export function readHosts(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const hosts = value.filter((h): h is string => typeof h === 'string' && HOST_ALIAS.test(h));
+  return [...new Set(hosts)].slice(0, MAX_HOSTS);
+}
+
+/** Хосты при сохранении: нет поля - допустимо, есть - массив по форме до MAX_HOSTS; иначе null. */
+export function validateHosts(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_HOSTS || value.some((h) => typeof h !== 'string' || !HOST_ALIAS.test(h))) return null;
+  return [...new Set(value as string[])];
 }
 
 export interface ProjectsState {
@@ -156,13 +175,15 @@ export class ProjectStore {
     }
     const state = parsed as Partial<ProjectsState>;
     let fallback: TrackerSettings | undefined;
-    const projects = (state.projects ?? []).map(({ jira: stored, ...p }) => {
+    const projects = (state.projects ?? []).map(({ jira: stored, hosts: storedHosts, ...p }) => {
       const jira = readJira(stored);
+      const hosts = readHosts(storedHosts);
       return {
         ...p,
         repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,
         trackers: readTrackers((p as Partial<Project>).trackers) ?? { ...(fallback ??= this.defaults()) },
         ...(jira ? { jira } : {}),
+        ...(hosts?.length ? { hosts } : {}),
       };
     });
     return { projects, lastProjectId: state.lastProjectId ?? null };

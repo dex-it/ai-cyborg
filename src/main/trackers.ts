@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { DEFAULT_PROMPTS, fillPrompt } from './prompts';
-import { readTrackers, validateJira, type Project, type ProjectsState, type TrackerSettings } from './projects';
+import { readTrackers, validateHosts, validateJira, type Project, type ProjectsState, type TrackerSettings } from './projects';
 
 export type { TrackerSettings } from './projects';
 
@@ -280,7 +280,10 @@ export function validateProjectsState(value: unknown): ProjectsState | null {
     if (!trackers) return null;
     const jira = validateJira((p as Partial<Project>).jira);
     if (jira === null) return null;
-    projects.push({ ...p, trackers, ...(jira ? { jira } : {}) });
+    const hosts = validateHosts((p as Partial<Project>).hosts);
+    if (hosts === null) return null;
+    const { hosts: _stored, ...rest } = p as Project;
+    projects.push({ ...rest, trackers, ...(jira ? { jira } : {}), ...(hosts?.length ? { hosts } : {}) });
   }
   return { ...state, projects };
 }
