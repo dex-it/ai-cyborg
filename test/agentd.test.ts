@@ -661,6 +661,101 @@ describe('daemon: перезапуск', () => {
     await until(() => !fs.existsSync(sessDir(r, a.sid)));
   });
 
+  const reattach = async (r: Rig, sid: string) => {
+    const c = client();
+    const conn = r.daemon.connect(c);
+    conn.receive({ type: 'hello', rid: 0, instance: 'inst-1' } as Msg);
+    conn.receive({ type: 'attach', rid: 1, sid, outFrom: 0, evFrom: 0 } as Msg);
+    await tick(100);
+    return { c, conn };
+  };
+
+  it('лимит с оставленными клонами: итог на диске переживает перезапуск демона до ack', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    r.answers['status --porcelain'] = { stdout: ' M x' };
+    const { conn, sid } = await open(r, { limits: { maxPerHost: 4, taskMs: 5000, idleMs: 3_600_000 } });
+    conn.close();
+    r.clock.now += 6000;
+    await until(() => readMeta(r, sid).state === 'done' && !!readMeta(r, sid).ended);
+    r.daemon.stop();
+    const r2 = rig(t, {}, r.home);
+    await r2.daemon.init();
+    const { c, conn: back } = await reattach(r2, sid);
+    assert.deepEqual(c.got.map((m) => m.type).filter((x) => x === 'ended' || x === 'exit' || x === 'error'), ['ended', 'exit']);
+    assert.match(String(c.of('ended')[0].reason), /таймаут задачи/);
+    assert.equal(((c.of('ended')[0].cleanup as { kept: unknown[] }).kept).length, 2);
+    back.receive({ type: 'ack', rid: 2, sid } as Msg);
+    await until(() => readMeta(r2, sid).ended === undefined);
+    assert.equal(fs.existsSync(path.join(r.home, '.cyborg', 'work', sid, 'a')), true, 'грязные клоны остаются');
+  });
+
+  it('ошибка клона при старте: итог переживает перезапуск демона до ack', async (t) => {
+    const r = rig(t);
+    r.answers['clone -- git@h:o/b.git'] = { code: 128, stderr: 'fatal: repository not found' };
+    const { sid } = await open(r);
+    await until(() => !!readMeta(r, sid).ended);
+    r.daemon.stop();
+    const r2 = rig(t, {}, r.home);
+    await r2.daemon.init();
+    const { c } = await reattach(r2, sid);
+    assert.deepEqual(c.of('error'), []);
+    assert.match(String(c.of('ended')[0].reason), /git clone b: fatal: repository not found/);
+    assert.equal(c.of('exit').length, 1);
+  });
+
+  describe('лимит у сессии без процесса (идёт клонирование)', () => {
+    const slowClone = (t: { after: (fn: () => void) => void }) => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const r: Rig = rig(t, {
+        tickMs: 10,
+        exec: async (file, args, opts) => {
+          if (args[0] === 'clone') {
+            fs.mkdirSync(args[args.length - 1], { recursive: true });
+            if (args[args.length - 1].endsWith(`${path.sep}b`)) await gate;
+          }
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      });
+      return { r, release };
+    };
+    const limits = { maxPerHost: 4, taskMs: 5000, idleMs: 3_600_000 };
+
+    it('владелец на связи: ended и exit доходят, после ack каталога сессии на хосте нет', async (t) => {
+      const { r, release } = slowClone(t);
+      const c = client();
+      const conn = r.daemon.connect(c);
+      conn.receive({ type: 'hello', rid: 0, instance: 'inst-1' } as Msg);
+      conn.receive(spawnMsg({ limits }));
+      await until(() => fs.existsSync(path.join(r.home, '.cyborg', 'work', 'aaaaaaaa-1', 'a')));
+      r.clock.now += 6000;
+      await until(() => c.of('ended').length === 1);
+      assert.match(String(c.of('ended')[0].reason), /таймаут задачи/);
+      await until(() => c.of('exit').length === 1);
+      conn.receive({ type: 'ack', rid: 2, sid: 'aaaaaaaa-1' } as Msg);
+      await until(() => !fs.existsSync(sessDir(r, 'aaaaaaaa-1')));
+      release();
+    });
+
+    it('владелец отключён: после переподключения attach отдаёт ended', async (t) => {
+      const { r, release } = slowClone(t);
+      const c = client();
+      const conn = r.daemon.connect(c);
+      conn.receive({ type: 'hello', rid: 0, instance: 'inst-1' } as Msg);
+      conn.receive(spawnMsg({ limits }));
+      await until(() => fs.existsSync(path.join(r.home, '.cyborg', 'work', 'aaaaaaaa-1', 'a')));
+      conn.close();
+      r.clock.now += 6000;
+      await until(() => !!readMeta(r, 'aaaaaaaa-1').ended);
+      const back = await reattach(r, 'aaaaaaaa-1');
+      assert.deepEqual(back.c.of('error'), []);
+      assert.match(String(back.c.of('ended')[0].reason), /таймаут задачи/);
+      back.conn.receive({ type: 'ack', rid: 2, sid: 'aaaaaaaa-1' } as Msg);
+      await until(() => !fs.existsSync(sessDir(r, 'aaaaaaaa-1')));
+      release();
+    });
+  });
+
   it('завершённая с оставленными клонами сессия при перезапуске не поднимается', async (t) => {
     const r = rig(t);
     const { c, sid } = await open(r, { keep: true });

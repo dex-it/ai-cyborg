@@ -159,7 +159,7 @@ export class Daemon {
       } catch {
         continue;
       }
-      if (meta.sid !== sid || this.sessions.has(sid) || meta.state === 'done') continue;
+      if (meta.sid !== sid || this.sessions.has(sid) || (meta.state === 'done' && !meta.ended)) continue;
       meta.round ??= 1;
       meta.roundStartedAt ??= meta.startedAt;
       meta.lastActive ??= meta.startedAt;
@@ -202,11 +202,24 @@ export class Daemon {
   private async finishClose(sess: Sess, closing: { keep: boolean; reason?: string }): Promise<void> {
     const cleanup = await this.close(sess, closing.keep, closing.reason);
     if (!closing.reason) return;
-    sess.meta.ended = { status: 'failed', reason: closing.reason, cleanup };
-    sess.gone = true;
-    sess.exited = { code: 1, reason: closing.reason, kept: cleanup.kept };
-    this.sessions.set(sess.sid, sess);
+    this.settleEnded(sess, { status: 'failed', reason: closing.reason, cleanup });
+  }
+
+  /**
+   * Итог, выставленный демоном, ждёт ack на диске. Сессия без процесса (до запуска, после перезапуска демона) выхода не даст:
+   * close снял её запись, поэтому она возвращается в карту, чтобы attach и ack нашли её, а exit уходит владельцу здесь.
+   */
+  private settleEnded(sess: Sess, ended: Ended): void {
+    sess.meta.ended = ended;
+    const idle = !sess.proc;
+    if (idle) {
+      sess.gone = true;
+      sess.exited = { code: 1, reason: ended.reason, kept: ended.cleanup.kept };
+      this.sessions.set(sess.sid, sess);
+    }
     this.saveMeta(sess);
+    if (sess.owner?.open) sess.owner.send({ type: 'ended', sid: sess.sid, ...ended });
+    if (idle) this.deliverExit(sess);
   }
 
   private makeSess(meta: SessionMeta, token: string, owner?: Conn, size?: { cols: number; rows: number }, auth: Auth = { git: [] }): Sess {
@@ -999,10 +1012,7 @@ export class Daemon {
       else if (sess.tracked.state === 'working' && now - sess.lastHookAt > idleMs) reason = `простой ${fmtDuration(idleMs)} без событий в working`;
       if (!reason) continue;
       const cleanup = await this.close(sess, false, reason);
-      const ended: Ended = { status: 'failed', reason, cleanup };
-      meta.ended = ended;
-      this.saveMeta(sess);
-      if (sess.owner?.open) sess.owner.send({ type: 'ended', sid: sess.sid, ...ended });
+      this.settleEnded(sess, { status: 'failed', reason, cleanup });
     }
   }
 

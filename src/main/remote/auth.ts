@@ -12,17 +12,26 @@ const tokenOf = async (run: CliRunner, cmd: 'gh' | 'glab', args: string[]): Prom
   return TOKEN.test(token) ? token : '';
 };
 
+/** Хост, которого не бывает: glab отвечает за него тем же, чем за любой хост без записи. */
+const NO_SUCH_HOST = 'cyborg-no-such-host.invalid';
+
 /** Токены хостингов origin проекта у gh и glab оператора, по запросу на каждый запуск; хост без токена пропускается - его клон идёт ключами хоста. */
 export async function collectGitAuth(urls: string[], run: CliRunner): Promise<GitCred[]> {
   const hosts = [...new Set(urls.map((u) => parseRemote(u)?.host).filter((h): h is string => !!h))];
   const creds: GitCred[] = [];
+  let fallback: Promise<string> | undefined;
   for (const host of hosts) {
     if (host === 'github.com') {
       const token = await tokenOf(run, 'gh', ['auth', 'token', '-h', host]);
       if (token) creds.push({ kind: 'github', host, token });
       continue;
     }
-    const gitlab = await tokenOf(run, 'glab', ['config', 'get', 'token', '-h', host]);
+    let gitlab = await tokenOf(run, 'glab', ['config', 'get', 'token', '-h', host]);
+    // Для хоста без записи glab отдаёт корневой токен конфигурации: он не входил на этот хост и не должен ему уходить.
+    if (gitlab) {
+      fallback ??= tokenOf(run, 'glab', ['config', 'get', 'token', '-h', NO_SUCH_HOST]);
+      if (gitlab === (await fallback)) gitlab = '';
+    }
     if (gitlab) {
       creds.push({ kind: 'gitlab', host, token: gitlab });
       continue;
