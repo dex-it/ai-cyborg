@@ -7,7 +7,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { lockHolderAlive } from '../src/agentd/agentd';
 import { uniqueNames } from '../src/agentd/daemon';
-import type { Msg, SpawnMsg } from '../src/agentd/protocol';
+import { SLEEP_IDLE_MS, type Msg, type SpawnMsg } from '../src/agentd/protocol';
+import { projectDirName } from '../src/main/history';
 import { client, mode, rig, tick, until, type Rig } from './daemon-rig';
 
 const spawnMsg = (over: Partial<SpawnMsg> = {}): Msg =>
@@ -378,6 +379,265 @@ describe('daemon: report и close', () => {
   });
 });
 
+const sessDir = (r: Rig, sid: string) => path.join(r.home, '.cyborg', 'sessions', sid);
+const readMeta = (r: Rig, sid: string) => JSON.parse(fs.readFileSync(path.join(sessDir(r, sid), 'meta.json'), 'utf8'));
+const patchMeta = (r: Rig, sid: string, patch: Record<string, unknown>) =>
+  fs.writeFileSync(path.join(sessDir(r, sid), 'meta.json'), JSON.stringify({ ...readMeta(r, sid), ...patch }));
+const hook = (r: Rig, sid: string, name: string) => fs.appendFileSync(path.join(sessDir(r, sid), 'events.jsonl'), JSON.stringify({ hook_event_name: name }) + '\n');
+
+/** Журнал разговора claude на хосте: без него пробуждение начинает разговор заново. */
+function talked(r: Rig, sid: string) {
+  const dir = path.join(r.home, '.claude', 'projects', projectDirName(readMeta(r, sid).cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), JSON.stringify({ type: 'ai-title', aiTitle: 'разговор' }) + '\n');
+}
+
+async function putToSleep(r: Rig, c: ReturnType<typeof client>, sid: string) {
+  talked(r, sid);
+  const seen = c.of('events').length;
+  hook(r, sid, 'SessionStart');
+  await until(() => c.of('events').length > seen);
+  r.clock.now += SLEEP_IDLE_MS + 1;
+  await until(() => c.of('slept').length === 1);
+}
+
+describe('daemon: круги работы', () => {
+  it('report_done - один на круг: сообщение после итога открывает новый круг, итог снова принимается, сессия не закрывается', async (t) => {
+    const r = rig(t);
+    const { c, conn, sid } = await open(r);
+    hook(r, sid, 'UserPromptSubmit');
+    await until(() => c.of('events').length === 1);
+    assert.equal(c.of('round').length, 0, 'первое сообщение - тот же первый круг');
+    conn.receive({ type: 'report', rid: 2, sid } as Msg);
+    await until(() => c.of('report').length === 1);
+    hook(r, sid, 'UserPromptSubmit');
+    await until(() => c.of('round').length === 1);
+    assert.equal(c.of('round')[0].round, 2);
+    conn.receive({ type: 'report', rid: 3, sid } as Msg);
+    await until(() => c.of('report').length === 2);
+    assert.equal(c.of('error').length, 0);
+    assert.deepEqual(r.killed, [], 'итог сессию не останавливает');
+    assert.equal(readMeta(r, sid).round, 2);
+    assert.equal(readMeta(r, sid).reported, true);
+  });
+
+  it('таймаут задачи считается от начала круга, а не от запуска', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { limits: { maxPerHost: 4, taskMs: 5000, idleMs: 3_600_000 } });
+    conn.receive({ type: 'report', rid: 2, sid } as Msg);
+    await until(() => c.of('report').length === 1);
+    r.clock.now += 4000;
+    hook(r, sid, 'UserPromptSubmit');
+    await until(() => c.of('round').length === 1);
+    r.clock.now += 4000;
+    await tick(100);
+    assert.equal(c.of('ended').length, 0, 'от запуска 8 с, от начала круга 4 с');
+    r.clock.now += 2000;
+    await until(() => c.of('ended').length === 1);
+    assert.match(String(c.of('ended')[0].reason), /таймаут задачи/);
+  });
+});
+
+describe('daemon: сон и пробуждение', () => {
+  it('2 ч в waiting без хуков и ввода: группа остановлена, mcp.json удалён, slept, клоны и запись остаются; ввод отодвигает сон', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { origin: 'human' });
+    hook(r, sid, 'SessionStart');
+    await until(() => c.of('events').length === 1);
+    r.clock.now += SLEEP_IDLE_MS - 1000;
+    conn.receive({ type: 'input', sid, data: 'x' } as Msg);
+    r.clock.now += 2000;
+    await tick(100);
+    assert.equal(c.of('slept').length, 0, 'ввод - активность');
+    r.clock.now += SLEEP_IDLE_MS;
+    await until(() => c.of('slept').length === 1);
+    assert.deepEqual(r.kills[0], { pid: r.procs[0].pid, signal: 'SIGTERM' });
+    assert.equal(fs.existsSync(path.join(sessDir(r, sid), 'mcp.json')), false);
+    for (const clone of readMeta(r, sid).clones) assert.ok(fs.existsSync(clone.path));
+    assert.equal(readMeta(r, sid).state, 'asleep');
+    assert.equal(c.of('exit').length, 0);
+    assert.equal(r.daemon.liveCount(), 0);
+    conn.close();
+    assert.equal(r.daemon.idle(), true, 'спящие демон не держат');
+  });
+
+  it('в working и asking сессия не засыпает', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const w = await open(r, { sid: 'aaaaaaaa-1', origin: 'human' }, 'i1');
+    const a = await open(r, { sid: 'bbbbbbbb-2', origin: 'human' }, 'i2');
+    hook(r, 'aaaaaaaa-1', 'UserPromptSubmit');
+    fs.appendFileSync(path.join(sessDir(r, 'bbbbbbbb-2'), 'events.jsonl'), JSON.stringify({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'x' }) + '\n');
+    await until(() => w.c.of('events').length === 1 && a.c.of('events').length === 1);
+    r.clock.now += 3 * SLEEP_IDLE_MS;
+    await tick(100);
+    assert.equal(w.c.of('slept').length + a.c.of('slept').length, 0);
+    assert.deepEqual(r.kills, []);
+  });
+
+  it('spawn задаёт номер разговора --session-id; wake будит спящую через --resume в том же клоне с новым токеном', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r);
+    const launch = () => fs.readFileSync(path.join(sessDir(r, sid), 'launch.sh'), 'utf8');
+    assert.ok(launch().includes(`'--session-id' '${sid}'`));
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    assert.equal(c.got.find((m) => m.rid === 9)?.round, 2);
+    assert.ok(launch().includes(`'--resume' '${sid}'`));
+    assert.equal(launch().includes('--session-id'), false);
+    assert.equal(launch().includes("'задание с"), false, 'задание первым сообщением не повторяется');
+    assert.equal(r.spawned[1].cwd, r.spawned[0].cwd);
+    assert.ok(fs.readFileSync(path.join(sessDir(r, sid), 'mcp.json'), 'utf8').includes(`Bearer ${'N'.repeat(43)}`));
+    assert.equal(readMeta(r, sid).state, 'live');
+    r.procs[1].emit('снова');
+    assert.equal(c.of('data').at(-1)?.at, 0, 'вывод пробуждённой - с начала');
+    conn.receive({ type: 'wake', rid: 10, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => c.got.some((m) => m.rid === 10));
+    assert.match(String(c.got.find((m) => m.rid === 10)?.message), /не спит/);
+  });
+
+  it('wake сессии, куда ни разу не писали, начинает разговор заново под тем же номером, а не --resume без журнала', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r);
+    await putToSleep(r, c, sid);
+    fs.rmSync(path.join(r.home, '.claude', 'projects'), { recursive: true });
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    const launch = fs.readFileSync(path.join(sessDir(r, sid), 'launch.sh'), 'utf8');
+    assert.ok(launch.includes(`'--session-id' '${sid}'`));
+    assert.equal(launch.includes('--resume'), false);
+    assert.equal(launch.includes("'задание с"), false, 'задание первым сообщением не повторяется');
+  });
+
+  it('разбуженная сессия spawn_agent - сессия человека: таймаут задачи и простой в working её не закрывают', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { origin: 'tool', limits: { maxPerHost: 4, taskMs: 3 * SLEEP_IDLE_MS, idleMs: 1000 } });
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    assert.equal(readMeta(r, sid).origin, 'human');
+    hook(r, sid, 'UserPromptSubmit');
+    await until(() => c.of('events').length >= 2);
+    r.clock.now += 4 * SLEEP_IDLE_MS;
+    await tick(100);
+    assert.equal(c.of('ended').length, 0);
+    assert.equal(c.of('exit').length, 0);
+    assert.equal(readMeta(r, sid).state, 'live');
+  });
+
+  it('поздний выход прежнего процесса после wake не трогает разбуженную сессию', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r);
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    r.procs[0].exit(137);
+    await tick(50);
+    assert.equal(c.of('exit').length, 0);
+    assert.ok(fs.existsSync(path.join(sessDir(r, sid), 'mcp.json')), 'токен разбуженной на месте');
+    r.procs[1].emit('жива');
+    await until(() => c.of('data').some((m) => String(m.data).includes('жива')));
+  });
+
+  it('list отдаёт спящую без токена с заголовком журнала claude; attach к спящей отвечает slept', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r);
+    await putToSleep(r, c, sid);
+    const journal = path.join(r.home, '.claude', 'projects', projectDirName(readMeta(r, sid).cwd));
+    fs.mkdirSync(journal, { recursive: true });
+    fs.writeFileSync(path.join(journal, `${sid}.jsonl`), JSON.stringify({ type: 'ai-title', aiTitle: 'Чиню вход' }) + '\n');
+    conn.receive({ type: 'list', rid: 4 } as Msg);
+    await until(() => c.of('list').length === 1);
+    const item = (c.of('list')[0].sessions as Record<string, unknown>[])[0];
+    assert.equal(item.asleep, true);
+    assert.equal(item.title, 'Чиню вход');
+    assert.equal(item.branch, 'feat/x');
+    assert.equal('token' in item, false);
+    conn.receive({ type: 'attach', rid: 5, sid, outFrom: 0, evFrom: 'tail' } as Msg);
+    await until(() => c.of('slept').length === 2);
+  });
+
+  it('close спящей убирает чистые клоны и снимает запись; hello и shutdown спящих не считают', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r);
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'hello', rid: 6, instance: 'inst-1' } as Msg);
+    await until(() => c.of('hello').length === 2);
+    assert.equal(c.of('hello')[1].sessions, 0);
+    conn.receive({ type: 'close', rid: 7, sid, keep: false } as Msg);
+    await until(() => c.of('close').length === 1);
+    assert.equal((c.of('close')[0].removed as string[]).length, 2);
+    assert.equal(fs.existsSync(sessDir(r, sid)), false);
+    conn.receive({ type: 'list', rid: 8 } as Msg);
+    await until(() => c.of('list').length === 1);
+    assert.deepEqual(c.of('list')[0].sessions, []);
+  });
+});
+
+describe('daemon: перезапуск', () => {
+  it('живая по записи сессия становится спящей, остатки её группы снимаются, mcp.json удаляется', async (t) => {
+    const r = rig(t);
+    const { sid } = await open(r);
+    const pgid = r.procs[0].pid as number;
+    r.daemon.stop();
+    const r2 = rig(t, { groupOwned: (pid, marker) => pid === pgid && marker === path.join(sessDir(r, sid), 'launch.sh') }, r.home);
+    await r2.daemon.init();
+    assert.deepEqual(r2.kills[0], { pid: pgid, signal: 'SIGTERM' });
+    assert.equal(readMeta(r2, sid).state, 'asleep');
+    assert.equal(fs.existsSync(path.join(sessDir(r2, sid), 'mcp.json')), false);
+    const c = client();
+    const conn = r2.daemon.connect(c);
+    conn.receive({ type: 'list', rid: 1 } as Msg);
+    await until(() => c.of('list').length === 1);
+    assert.equal((c.of('list')[0].sessions as { asleep?: boolean }[])[0].asleep, true);
+  });
+
+  it('чужая группа с тем же pgid не трогается', async (t) => {
+    const r = rig(t);
+    const { sid } = await open(r);
+    r.daemon.stop();
+    const r2 = rig(t, { groupOwned: () => false }, r.home);
+    await r2.daemon.init();
+    assert.deepEqual(r2.kills, []);
+    assert.equal(readMeta(r2, sid).state, 'asleep');
+  });
+
+  it('прерванная уборка по лимиту доделывается и её итог доставляется; не дошедшая до запуска сессия убирается', async (t) => {
+    const r = rig(t);
+    const a = await open(r, { sid: 'aaaaaaaa-1' }, 'i1');
+    await open(r, { sid: 'bbbbbbbb-2' }, 'i2');
+    r.daemon.stop();
+    patchMeta(r, 'aaaaaaaa-1', { closing: { keep: false, reason: 'превышен таймаут задачи 4 ч' } });
+    patchMeta(r, 'bbbbbbbb-2', { launched: false });
+    const r2 = rig(t, {}, r.home);
+    await r2.daemon.init();
+    const work = path.join(r.home, '.cyborg', 'work');
+    assert.equal(fs.existsSync(path.join(work, 'bbbbbbbb-2')), false);
+    assert.equal(fs.existsSync(sessDir(r, 'bbbbbbbb-2')), false);
+    assert.equal(fs.existsSync(path.join(work, 'aaaaaaaa-1', 'a')), false);
+    const c = client();
+    const conn = r2.daemon.connect(c);
+    conn.receive({ type: 'hello', rid: 0, instance: 'i1' } as Msg);
+    conn.receive({ type: 'attach', rid: 1, sid: a.sid, outFrom: 0, evFrom: 0 } as Msg);
+    await until(() => c.of('exit').length === 1);
+    assert.match(String(c.of('ended')[0].reason), /таймаут задачи/);
+    conn.receive({ type: 'ack', rid: 2, sid: a.sid } as Msg);
+    await until(() => !fs.existsSync(sessDir(r, a.sid)));
+  });
+
+  it('завершённая с оставленными клонами сессия при перезапуске не поднимается', async (t) => {
+    const r = rig(t);
+    const { c, sid } = await open(r, { keep: true });
+    r.procs[0].exit(0);
+    await until(() => c.of('exit').length === 1);
+    assert.equal(readMeta(r, sid).state, 'done');
+    r.daemon.stop();
+    const r2 = rig(t, {}, r.home);
+    await r2.daemon.init();
+    assert.equal(r2.daemon.idle(), true);
+  });
+});
+
 describe('daemon: прокси MCP без Cyborg', () => {
   const post = (port: number, body: string): Promise<{ status: number; body: string }> =>
     new Promise((resolve) => {
@@ -454,4 +714,164 @@ describe('замок демона', () => {
 
 describe('uniqueNames', () => {
   it('повтор имени получает суффикс', () => assert.deepEqual(uniqueNames(['a', 'b', 'a', 'a']), ['a', 'b', 'a-2', 'a-3']));
+});
+
+describe('daemon: доступы git и Claude', () => {
+  const auth = {
+    git: [
+      { kind: 'gitlab', host: 'gl.example.com', token: 'glpat-SECRET1' },
+      { kind: 'github', host: 'github.com', token: 'gho_SECRET2' },
+    ],
+    primary: 'gl.example.com',
+    claude: 'sk-ant-oat01-SECRET3',
+  } as SpawnMsg['auth'];
+  const secrets = ['SECRET1', 'SECRET2', 'SECRET3'];
+
+  it('клон и агент получают токены окружением, на диск хоста они не пишутся; после сна пробуждение без доступов их не несёт', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { auth });
+    for (const e of r.execs.filter((x) => x.args[0] === 'clone' || x.args[0] === 'ls-remote')) {
+      assert.equal(e.env?.CYBORG_GIT_TOKEN_0, 'glpat-SECRET1', e.args.join(' '));
+      assert.equal(e.env?.GIT_CONFIG_KEY_0, 'url.https://gl.example.com/.insteadOf');
+    }
+    const env = r.spawned[0].env;
+    assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, 'sk-ant-oat01-SECRET3');
+    assert.equal(env.GH_TOKEN, 'gho_SECRET2');
+    assert.equal(env.GITLAB_TOKEN, 'glpat-SECRET1');
+    assert.equal(env.GITLAB_HOST, 'https://gl.example.com');
+    const onDisk = (): string => fs.readdirSync(sessDir(r, sid)).map((f) => fs.readFileSync(path.join(sessDir(r, sid), f), 'utf8')).join('\n');
+    for (const s of secrets) assert.equal(onDisk().includes(s), false, s);
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    for (const s of secrets) assert.equal(JSON.stringify(r.spawned[1].env).includes(s), false, s);
+    for (const s of secrets) assert.equal(onDisk().includes(s), false, s);
+  });
+
+  it('пробуждение несёт свои доступы, env и серверы MCP пользователя; сон снимает mcp.json с ними', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const web = { type: 'http', url: 'https://mcp.example.com', headers: { Authorization: 'Bearer SECRET4' } };
+    const { c, conn, sid } = await open(r, { env: { FOO: 'one' }, mcp: { web } });
+    const mcpFile = path.join(sessDir(r, sid), 'mcp.json');
+    assert.ok(JSON.parse(fs.readFileSync(mcpFile, 'utf8')).mcpServers.web);
+    await putToSleep(r, c, sid);
+    assert.equal(fs.existsSync(mcpFile), false);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30, auth, env: { FOO: 'two' }, mcp: { web } } as Msg);
+    await until(() => r.spawned.length === 2);
+    assert.equal(r.spawned[1].env.CLAUDE_CODE_OAUTH_TOKEN, 'sk-ant-oat01-SECRET3');
+    assert.equal(r.spawned[1].env.GITLAB_TOKEN, 'glpat-SECRET1');
+    assert.equal(r.spawned[1].env.FOO, 'two');
+    assert.ok(JSON.parse(fs.readFileSync(mcpFile, 'utf8')).mcpServers.web);
+  });
+
+  it('доступы, не прошедшие проверку, отброшены без отказа запуска', async (t) => {
+    const r = rig(t);
+    await open(r, { auth: { git: [{ kind: 'gitlab', host: 'gl.example.com', token: 'a\nb' }], claude: 'x y' } as SpawnMsg['auth'] });
+    assert.equal(r.spawned.length, 1);
+    assert.equal('CYBORG_GIT_TOKEN_0' in r.spawned[0].env, false);
+    assert.notEqual(r.spawned[0].env.CLAUDE_CODE_OAUTH_TOKEN, 'x y');
+  });
+});
+
+describe('daemon: место на хосте', () => {
+  const ask = async (conn: { receive(m: Msg): void }, c: ReturnType<typeof client>, msg: Record<string, unknown>) => {
+    const rid = 100 + c.got.length;
+    conn.receive({ ...msg, rid } as Msg);
+    await until(() => c.got.some((m) => m.rid === rid));
+    return c.got.find((m) => m.rid === rid) as Msg;
+  };
+
+  async function scene(t: { after: (fn: () => void) => void }) {
+    const r = rig(t);
+    const live = await open(r, { sid: 'aaaaaaaa-1' }, 'i1');
+    const done = await open(r, { sid: 'bbbbbbbb-2' }, 'i2');
+    r.answers['status --porcelain'] = { stdout: ' M f.ts\n' };
+    done.conn.receive({ type: 'close', rid: 7, sid: 'bbbbbbbb-2', keep: false } as Msg);
+    await until(() => done.c.of('close').length === 1);
+    fs.mkdirSync(path.join(r.home, '.cyborg', 'work', 'cccccccc-3', 'x'), { recursive: true });
+    r.answers['du -sk'] = { stdout: '123\t/x\n' };
+    return { r, live };
+  }
+
+  it('disk: работающая без проверки клонов, завершённая с оставленными клонами и сирота; размер по du; hello несёт место', async (t) => {
+    const { r, live } = await scene(t);
+    const hello = live.c.got.find((m) => m.type === 'hello') as Msg;
+    assert.ok(Number((hello.disk as { total: number }).total) > 0);
+    r.execs.length = 0;
+    const res = await ask(live.conn, live.c, { type: 'disk' });
+    const by = Object.fromEntries((res.sessions as { sid: string }[]).map((s) => [s.sid, s])) as unknown as Record<string, { state: string; bytes: number; dirty: { reason: string }[]; branch: string }>;
+    assert.deepEqual(Object.keys(by).sort(), ['aaaaaaaa-1', 'bbbbbbbb-2', 'cccccccc-3']);
+    assert.equal(by['aaaaaaaa-1'].state, 'live');
+    assert.deepEqual(by['aaaaaaaa-1'].dirty, []);
+    assert.equal(by['bbbbbbbb-2'].state, 'done');
+    assert.equal(by['bbbbbbbb-2'].branch, 'feat/x');
+    assert.deepEqual(by['bbbbbbbb-2'].dirty.map((d) => d.reason), ['изменения в рабочем дереве', 'изменения в рабочем дереве']);
+    assert.equal(by['cccccccc-3'].state, 'orphan');
+    assert.equal(by['bbbbbbbb-2'].bytes, 123 * 1024);
+    const live1 = path.join(r.home, '.cyborg', 'work', 'aaaaaaaa-1');
+    assert.equal(r.execs.some((e) => e.file === 'git' && e.cwd?.startsWith(live1)), false, 'клоны работающей сессии не проверяются');
+    assert.ok(Number(res.total) > 0);
+  });
+
+  it('purge: работающая - отказ, грязные без force остаются, с force и у сироты удаляются вместе с записью', async (t) => {
+    const { r, live } = await scene(t);
+    const work = path.join(r.home, '.cyborg', 'work');
+    const first = (await ask(live.conn, live.c, { type: 'purge', sids: ['aaaaaaaa-1', 'bbbbbbbb-2', 'cccccccc-3'], force: false })).results as { kept: unknown[]; error?: string }[];
+    assert.match(String(first[0].error), /работает/);
+    assert.equal(first[1].kept.length, 2);
+    assert.ok(fs.existsSync(path.join(work, 'bbbbbbbb-2', 'a')));
+    assert.equal(first[2].kept.length, 1, 'сирота тоже проверяется');
+    const second = (await ask(live.conn, live.c, { type: 'purge', sids: ['bbbbbbbb-2', 'cccccccc-3'], force: true })).results as { removed: string[] }[];
+    assert.equal(second[0].removed.length, 2);
+    assert.equal(fs.existsSync(path.join(work, 'bbbbbbbb-2')), false);
+    assert.equal(fs.existsSync(sessDir(r, 'bbbbbbbb-2')), false);
+    assert.equal(fs.existsSync(path.join(work, 'cccccccc-3')), false);
+    assert.ok(fs.existsSync(path.join(work, 'aaaaaaaa-1', 'a')));
+  });
+
+  it('purge спящей: запись снята, list её больше не отдаёт', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { origin: 'human' });
+    await putToSleep(r, c, sid);
+    const res = (await ask(conn, c, { type: 'purge', sids: [sid], force: false })).results as { removed: string[] }[];
+    assert.equal(res[0].removed.length, 2);
+    assert.equal(fs.existsSync(sessDir(r, sid)), false);
+    const list = await ask(conn, c, { type: 'list' });
+    assert.deepEqual(list.sessions, []);
+  });
+});
+
+describe('daemon: поиск в клонах', () => {
+  const gitIn = (cwd: string, ...args: string[]) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+  };
+
+  it('текст и изменения ищутся git в клоне, файлы по имени отдаются списком; корень вне клонов и негодный запрос отвергаются', async (t) => {
+    const r = rig(t);
+    const { c, conn, sid } = await open(r);
+    const clone = path.join(r.home, '.cyborg', 'work', sid, 'a');
+    gitIn(clone, 'init', '-q');
+    fs.writeFileSync(path.join(clone, 'f.ts'), 'const alpha = 1;\n');
+    gitIn(clone, 'add', '.');
+    gitIn(clone, 'commit', '-qm', 'x');
+    fs.writeFileSync(path.join(clone, 'f.ts'), 'const alpha = 2;\n');
+    fs.writeFileSync(path.join(clone, 'new.ts'), 'alpha new\n');
+    let rid = 300;
+    const ask = async (msg: { type: string } & Record<string, unknown>) => {
+      const id = rid++;
+      conn.receive({ ...msg, rid: id, sid } as Msg);
+      await until(() => c.got.some((m) => m.rid === id), 10_000);
+      return c.got.find((m) => m.rid === id) as Msg;
+    };
+    const options = { regex: false, caseSensitive: false, wholeWord: false };
+    const text = (await ask({ type: 'search', mode: 'text', request: { root: clone, query: 'alpha', options } })).value as { hits: { rel: string; line: number }[] };
+    assert.deepEqual(text.hits.map((h) => `${h.rel}:${h.line}`).sort(), ['f.ts:1', 'new.ts:1']);
+    const changes = (await ask({ type: 'search', mode: 'changes', request: { root: clone, query: 'alpha', options } })).value as { hits: { rel: string; sign: string }[] };
+    assert.deepEqual(changes.hits.map((h) => `${h.sign}${h.rel}`).sort(), ['+f.ts', '+new.ts', '-f.ts']);
+    assert.deepEqual(((await ask({ type: 'fs', op: 'files', path: clone })).value as string[]).sort(), ['f.ts', 'new.ts']);
+    assert.match(String((await ask({ type: 'search', mode: 'text', request: { root: '/etc', query: 'root', options } })).error), /вне каталогов/);
+    assert.match(String((await ask({ type: 'search', mode: 'text', request: { root: clone, query: 'a\nb', options } })).error), /Некорректные/);
+    assert.match(String((await ask({ type: 'search', mode: 'exec', request: { root: clone, query: 'a', options } })).error), /Некорректные/);
+  });
 });

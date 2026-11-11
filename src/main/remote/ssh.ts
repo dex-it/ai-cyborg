@@ -48,6 +48,8 @@ export interface SshTransport {
 }
 
 export const RUN_LIMIT_MS = 30_000;
+/** Сколько канал ждёт выхода ssh после EOF: открытые соединения туннеля держат клиент, тогда его снимает SIGTERM. */
+export const CLOSE_GRACE_MS = 5_000;
 
 const sshEnv = (): NodeJS.ProcessEnv => ({ ...process.env, SSH_ASKPASS_REQUIRE: 'never' });
 
@@ -99,7 +101,13 @@ export const systemSsh: SshTransport = {
         proc.on('error', (e) => cb(255, e.message));
         proc.on('close', (code) => cb(code, stderr));
       },
-      close: () => void proc.kill('SIGTERM'),
+      close: () => {
+        // По SIGTERM клиент OpenSSH выходит, не дочитав stdin: ack, записанный перед закрытием, терялся бы.
+        proc.stdin.end();
+        const timer = setTimeout(() => proc.kill('SIGTERM'), CLOSE_GRACE_MS);
+        timer.unref();
+        proc.once('close', () => clearTimeout(timer));
+      },
     };
   },
 };

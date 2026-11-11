@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { LOGIN_PATH } from './preflight';
 
 export interface AgentdBundle {
   /** Первые 16 hex sha256 файла: изменился файл - на хосте новый каталог. */
@@ -16,10 +17,7 @@ export function bundleOf(text: string): AgentdBundle {
 /** connect.sh: PATH логин-оболочки, затем мост stdio - сокет демона; демон поднимается из моста. */
 export const CONNECT_SH = `#!/bin/sh
 d=$(dirname "$0")
-P=$("\${SHELL:-/bin/sh}" -lc env </dev/null 2>/dev/null | sed -n 's/^PATH=//p')
-[ -n "$P" ] && PATH=$P
-export PATH
-exec node "$d/agentd.js" connect
+${LOGIN_PATH}exec node "$d/agentd.js" connect
 `;
 
 const delimiterFor = (...texts: string[]): string => {
@@ -35,10 +33,7 @@ export function installScript(bundle: AgentdBundle): string {
   const dir = `"$HOME/.cyborg/agentd/${bundle.version}"`;
   const stage = `"$HOME/.cyborg/agentd/.${bundle.version}.tmp"`;
   return `set -e
-P=$("\${SHELL:-/bin/sh}" -lc env </dev/null 2>/dev/null | sed -n 's/^PATH=//p')
-[ -n "$P" ] && PATH=$P
-export PATH
-umask 077
+${LOGIN_PATH}umask 077
 mkdir -p "$HOME/.cyborg/run" "$HOME/.cyborg/sessions" "$HOME/.cyborg/work" "$HOME/.cyborg/agentd"
 chmod 700 "$HOME/.cyborg" "$HOME/.cyborg/run" "$HOME/.cyborg/sessions" "$HOME/.cyborg/work" "$HOME/.cyborg/agentd"
 rm -rf ${stage}

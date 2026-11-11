@@ -7,8 +7,8 @@ import { describe, it } from 'node:test';
 import { claudeArgs, REMOTE_SYSTEM_PROMPT, SESSION_PROMPT } from '../src/main/claude-args';
 import { gitOriginUrl } from '../src/main/git';
 import { McpServer, type McpBackend } from '../src/main/mcp';
-import { bundleOf, installScript } from '../src/main/remote/install';
-import { PREFLIGHT_SCRIPT } from '../src/main/remote/preflight';
+import { bundleOf, CONNECT_SH, installScript } from '../src/main/remote/install';
+import { LOGIN_PATH, PREFLIGHT_SCRIPT } from '../src/main/remote/preflight';
 import type { SessionInfo } from '../src/main/sessions';
 import { createSessionTools, describePeers, sessionTools, validateCloseAgent, validateReport, validateSpawn, type RemoteToolsPort } from '../src/main/session-tools';
 
@@ -237,6 +237,39 @@ describe('установка агента и проверка хоста: скр
     const bundle = bundleOf('const x = `\nCYBORG_EOF\n`;\n');
     assert.equal(sh(installScript(bundle), home).status, 0);
     assert.equal(fs.readFileSync(path.join(home, '.cyborg', 'agentd', bundle.version, 'agentd.js'), 'utf8'), bundle.source + '\n');
+  });
+
+  describe('PATH логин-оболочки', () => {
+    const pathUnder = (shell: string, home: string) =>
+      spawnSync('sh', ['-s'], { input: `${LOGIN_PATH}echo "path=$PATH"\n`, env: { ...process.env, HOME: home, SHELL: shell }, encoding: 'utf8' }).stdout;
+    const withProfile = (t: { after: (fn: () => void) => void }): string => {
+      const home = tmpHome(t);
+      fs.writeFileSync(path.join(home, '.profile'), 'echo "/etc/motd: шум профиля"\nPATH=/opt/prof/bin:$PATH\nexport PATH\n');
+      return home;
+    };
+
+    it('проверка хоста, установка и connect.sh берут PATH одним и тем же способом', () => {
+      assert.ok(PREFLIGHT_SCRIPT.startsWith(LOGIN_PATH));
+      assert.ok(CONNECT_SH.includes(LOGIN_PATH));
+      assert.ok(installScript(bundleOf('x')).includes(LOGIN_PATH));
+    });
+
+    for (const shell of ['/bin/bash', '/bin/dash'].filter((s) => fs.existsSync(s))) {
+      it(`${path.basename(shell)}: PATH из профиля, строки шума с / перед ним не мешают`, (t) => {
+        assert.match(pathUnder(shell, withProfile(t)), /^path=\/opt\/prof\/bin:/m);
+      });
+    }
+
+    it('оболочка, которая принимает только -l и команды из stdin (как tcsh), печатает шум до PATH', (t) => {
+      const home = tmpHome(t);
+      const shell = path.join(home, 'tcsh-like');
+      fs.writeFileSync(shell, '#!/bin/sh\n[ "$#" = 1 ] && [ "$1" = -l ] || exit 1\necho "/etc/motd: привет"\necho "Last login: вчера"\nPATH=/opt/fake/bin:$PATH\nexport PATH\nexec /bin/sh\n', { mode: 0o755 });
+      assert.match(pathUnder(shell, home), /^path=\/opt\/fake\/bin:/m);
+    });
+
+    it('оболочки нет - остаётся PATH ssh', (t) => {
+      assert.match(pathUnder('/nonexistent/shell', tmpHome(t)), new RegExp(`^path=${process.env.PATH!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+    });
   });
 
   it('проверка хоста печатает home и установленные версии', (t) => {

@@ -9,7 +9,9 @@ import type { JiraDetailsResult, JiraListResult, JiraProjectsResult, JiraStatus,
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsProblem, ProjectsState } from './projects';
 import type { TaskDetailsResult } from './task-details';
-import type { RemoteInfo } from './remote/remote-sessions';
+import type { ClaudeTokenStatus } from './remote/claude-token';
+import type { HostDisk, PurgeResult } from '../shared/host-disk';
+import type { RemoteHistory, RemoteInfo } from './remote/remote-sessions';
 import type { TaskRef, TasksResult, TrackersStatus } from './trackers';
 
 export interface WorkspaceInfo {
@@ -45,12 +47,28 @@ const api = {
   createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', cwd, addDirs, start),
   /** Удалённая сессия: либо {projectId, host, repo, branch, prompt?}, либо {projectId, handoff, repo} по передаче от сессии. */
-  createRemoteSession: (request: { projectId: string; host?: string; repo: string; branch?: string; prompt?: string; handoff?: string }): Promise<RemoteInfo> =>
+  createRemoteSession: (request: { projectId: string; host?: string; repo: string; branch?: string; handoff?: string }): Promise<RemoteInfo> =>
     ipcRenderer.invoke('remote:create', request),
   remoteDiscover: (projectId: string): Promise<RemoteInfo[]> => ipcRenderer.invoke('remote:discover', projectId),
   /** Чтение клонов удалённой сессии: записи и смены ветки у канала нет. */
-  remoteFs: (id: number, op: 'list' | 'read' | 'root' | 'branch' | 'status' | 'head', path: string): Promise<unknown> => ipcRenderer.invoke('remote:fs', id, op, path),
+  remoteFs: (id: number, op: 'list' | 'read' | 'root' | 'branch' | 'status' | 'head' | 'files', path: string): Promise<unknown> => ipcRenderer.invoke('remote:fs', id, op, path),
+  /** Поиск по клонам удалённой сессии на хосте. */
+  remoteSearch: (id: number, mode: 'text' | 'changes', request: SearchRequest): Promise<SearchReply> => ipcRenderer.invoke('remote:search', id, mode, request),
   listHistory: (projectId: string): Promise<HistoryEntry[]> => ipcRenderer.invoke('history:list', projectId),
+  listRemoteHistory: (projectId: string): Promise<RemoteHistory> => ipcRenderer.invoke('history:remote', projectId),
+  /** Спящая удалённая сессия из «Истории»: claude --resume на хосте. */
+  remoteWake: (projectId: string, host: string, sid: string): Promise<RemoteInfo> => ipcRenderer.invoke('remote:wake', projectId, host, sid),
+  /** Удаление спящей: клоны убираются; непустой ответ - отказ уборки для окна. */
+  remoteRemoveAsleep: (projectId: string, host: string, sid: string): Promise<string> => ipcRenderer.invoke('remote:remove-asleep', projectId, host, sid),
+  /** Место на хосте и сессии, которые его занимают. */
+  remoteDisk: (projectId: string, host: string): Promise<HostDisk> => ipcRenderer.invoke('remote:disk', projectId, host),
+  /** force - удалить и клоны с незапушенной работой. */
+  remotePurge: (projectId: string, host: string, sids: string[], force: boolean): Promise<PurgeResult[]> =>
+    ipcRenderer.invoke('remote:purge', projectId, host, sids, force),
+  /** Токен claude setup-token удалённых агентов: значение в интерфейс не возвращается. */
+  claudeTokenStatus: (): Promise<ClaudeTokenStatus> => ipcRenderer.invoke('remote:claude-token:status'),
+  setClaudeToken: (value: string): Promise<ClaudeTokenStatus> => ipcRenderer.invoke('remote:claude-token:set', value),
+  clearClaudeToken: (): Promise<ClaudeTokenStatus> => ipcRenderer.invoke('remote:claude-token:clear'),
   deleteHistory: (projectId: string, repo: string, id: string): Promise<void> =>
     ipcRenderer.invoke('history:delete', projectId, repo, id),
   resumeSession: (cwd: string, addDirs: string[], id: string): Promise<number> =>

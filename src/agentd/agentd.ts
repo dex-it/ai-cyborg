@@ -53,7 +53,17 @@ function quit(): void {
   process.exit(0);
 }
 
-function serve(): void {
+/** Лидер группы жив и запущен с marker: по нему узнаётся launch.sh своей сессии. */
+export function groupOwned(pgid: number, marker: string): boolean {
+  if (!alive(pgid)) return false;
+  try {
+    return fs.readFileSync(`/proc/${pgid}/cmdline`, 'utf8').includes(marker);
+  } catch {
+    return false;
+  }
+}
+
+async function serve(): Promise<void> {
   fs.mkdirSync(run, { recursive: true, mode: 0o700 });
   if (!takeLock()) return;
   fs.rmSync(sock, { force: true });
@@ -73,37 +83,33 @@ function serve(): void {
     },
     exec: (file, args, opts) =>
       new Promise((resolve) => {
-        execFile(file, args, { cwd: opts?.cwd, env: { ...process.env, ...opts?.env }, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+        execFile(file, args, { cwd: opts?.cwd, env: { ...process.env, ...opts?.env }, maxBuffer: 16 * 1024 * 1024, timeout: opts?.timeoutMs ?? 0 }, (error, stdout, stderr) => {
           const code = error ? (typeof (error as { code?: unknown }).code === 'number' ? ((error as { code: number }).code) : 1) : 0;
           resolve({ code, stdout: String(stdout), stderr: String(stderr || (error ? error.message : '')) });
         });
       }),
     onShutdown: () => quit(),
-    killGroup: (proc, signal) => {
+    claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || undefined,
+    sleepMs: Number(process.env.CYBORG_SLEEP_MS) || undefined,
+    groupOwned,
+    killGroup: (pgid, signal) => {
       try {
-        if (proc.pid) process.kill(-proc.pid, signal);
+        process.kill(-pgid, signal);
       } catch {
         // группа уже завершена
       }
     },
   });
+  await daemon.init();
   const server = net.createServer((socket) => {
     const conn = daemon.connect({ send: (msg) => void socket.write(JSON.stringify(msg) + '\n') });
-    let buf = '';
-    socket.setEncoding('utf8');
-    socket.on('data', (chunk: string) => {
-      buf += chunk;
-      let nl: number;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        try {
-          conn.receive(JSON.parse(line) as Msg);
-        } catch {
-          // строка не JSON: пропускается
-        }
+    socket.on('data', lineReader((line) => {
+      try {
+        conn.receive(JSON.parse(line) as Msg);
+      } catch {
+        // строка не JSON: пропускается
       }
-    });
+    }));
     socket.on('close', () => conn.close());
     socket.on('error', () => socket.destroy());
   });
@@ -114,6 +120,23 @@ function serve(): void {
     else if (Date.now() - idleSince > IDLE_EXIT_MS) quit();
   }, 30_000);
   process.on('SIGTERM', quit);
+}
+
+/** Строки из потока: зеркало настройки идёт одной строкой в десятки МиБ, поэтому куски копятся без склейки на каждом. */
+export function lineReader(onLine: (line: string) => void): (chunk: Buffer) => void {
+  let parts: Buffer[] = [];
+  return (chunk) => {
+    let start = 0;
+    let nl: number;
+    while ((nl = chunk.indexOf(10, start)) >= 0) {
+      parts.push(chunk.subarray(start, nl));
+      const line = Buffer.concat(parts).toString('utf8');
+      parts = [];
+      start = nl + 1;
+      onLine(line);
+    }
+    if (start < chunk.length) parts.push(chunk.subarray(start));
+  };
 }
 
 function dial(): Promise<net.Socket | null> {
@@ -144,5 +167,5 @@ async function connect(): Promise<void> {
   process.stdin.on('end', () => socket.end());
 }
 
-if (process.argv[2] === 'serve') serve();
+if (process.argv[2] === 'serve') void serve();
 else if (process.argv[2] === 'connect') void connect();

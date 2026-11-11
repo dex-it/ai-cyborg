@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { PROTO, type Msg } from '../../agentd/protocol';
+import type { DiskSpace } from '../../shared/host-disk';
 import { installScript, type AgentdBundle } from './install';
-import { parsePreflight, PREFLIGHT_SCRIPT } from './preflight';
+import { parsePreflight, PREFLIGHT_SCRIPT, type HostTools } from './preflight';
 import { classifySshError, type SshChannel, type SshTransport } from './ssh';
 
 export type LinkState = 'connecting' | 'online' | 'offline';
@@ -18,7 +19,7 @@ export interface Timers {
   clear(handle: unknown): void;
 }
 
-export const realTimers: Timers ={ set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) };
+export const realTimers: Timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) };
 
 export interface HostLinkDeps {
   host: string;
@@ -33,6 +34,8 @@ export interface HostLinkDeps {
   onState: (state: { online: boolean; reason?: string }) => void;
   /** После переподключения (не первого подключения): забрать сессии с отметок. */
   onReconnect: () => void;
+  /** Задан токен Claude: вход claude на хосте не требуется. */
+  claudeToken?: () => boolean;
   timers?: Timers;
 }
 
@@ -40,6 +43,11 @@ export interface HostLinkDeps {
 export class HostLink {
   state: LinkState = 'offline';
   home = '';
+  tools: HostTools = { gh: false, glab: false };
+  /** Хэш зеркала настройки Claude, лежащего на хосте; null - зеркала нет. */
+  config: string | null = null;
+  /** Место на диске ~/.cyborg хоста по ответу на hello. */
+  disk: DiskSpace | null = null;
   private channel: SshChannel | null = null;
   private connecting: Promise<void> | null = null;
   private readonly pending = new Map<number, { resolve: (m: Msg) => void; reject: (e: Error) => void; timer: unknown }>();
@@ -87,15 +95,19 @@ export class HostLink {
     const { host, ssh, bundle } = this.deps;
     const pre = await ssh.run(host, PREFLIGHT_SCRIPT);
     if (pre.code !== 0) throw new Error(classifySshError(pre.stderr));
-    const checked = parsePreflight(pre.stdout);
+    const checked = parsePreflight(pre.stdout, this.deps.claudeToken?.() ?? false);
     if ('missing' in checked) throw new Error(checked.missing.join('; '));
     this.home = checked.home;
+    this.tools = checked.tools;
     if (!checked.installed.includes(bundle.version)) {
       const done = await ssh.run(host, installScript(bundle));
       if (done.code !== 0) throw new Error(`установка агента на хосте: ${classifySshError(done.stderr)}`);
     }
     for (let attempt = 0; attempt < RESTART_ATTEMPTS; attempt++) {
       const hello = await this.open();
+      this.config = typeof hello.config === 'string' ? hello.config : null;
+      const disk = hello.disk as DiskSpace | null | undefined;
+      this.disk = disk && Number.isFinite(disk.free) && Number.isFinite(disk.total) ? { free: disk.free, total: disk.total } : null;
       const sessions = Number(hello.sessions ?? 0);
       const compatible = hello.proto === PROTO;
       if (hello.version === bundle.version && compatible) return;

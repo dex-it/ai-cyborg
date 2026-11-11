@@ -34,8 +34,10 @@
           </button>
           <button id="tasks-toggle" class="panel-toggle" title="Задачи из трекеров" hidden>Задачи</button>
           <button id="mrs-toggle" class="panel-toggle" title="MR и PR репозиториев проекта" hidden>MR/PR</button>
-          <button id="new-remote-session" title="Сессия Claude Code на сервере по SSH" hidden>Удалённая…</button>
-          <button id="new-session" title="Новая сессия Claude Code"><span class="plus" aria-hidden="true">+</span> Новая сессия</button>
+          <div class="split-button">
+            <button id="new-session" title="Новая сессия Claude Code"><span class="plus" aria-hidden="true">+</span> Новая сессия</button>
+            <button id="new-session-more" title="Где запустить: локально или на хосте по SSH" aria-haspopup="menu" aria-label="Где запустить сессию" hidden>▾</button>
+          </div>
         </nav>
         <div id="sessions">
           <div id="empty"></div>
@@ -99,31 +101,53 @@
       </form>
     </dialog>
 
-    <dialog id="remote-dialog" aria-labelledby="remote-dialog-title">
+    <dialog id="claude-token-dialog" aria-labelledby="claude-token-dialog-title">
       <form method="dialog">
-        <h2 id="remote-dialog-title">Удалённая сессия</h2>
+        <h2 id="claude-token-dialog-title">Вход Claude на хостах</h2>
+        <p class="hint">
+          Удалённые агенты входят в Claude этим токеном, и <code>claude auth login</code> на хосте не нужен. Токен выдаёт
+          <code>claude setup-token</code> на этой машине. Cyborg передаёт его агенту в окружении процесса при запуске и пробуждении
+          сессии; на диск хоста токен не пишется.
+        </p>
+        <p id="claude-token-status" class="hint"></p>
+        <label class="field">
+          <span>Новый токен</span>
+          <input id="claude-token-value" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <div id="claude-token-error" class="dialog-error" role="alert" hidden></div>
+        <footer>
+          <button type="button" id="claude-token-clear">Удалить токен</button>
+          <span class="spacer"></span>
+          <button type="button" id="claude-token-cancel">Закрыть</button>
+          <button type="button" id="claude-token-save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="host-disk-dialog" aria-labelledby="host-disk-dialog-title">
+      <form method="dialog">
+        <h2 id="host-disk-dialog-title">Место на хостах</h2>
+        <p id="host-disk-warning" class="dialog-error" hidden></p>
         <label class="field">
           <span>Хост</span>
-          <select id="remote-host"></select>
+          <select id="host-disk-host"></select>
         </label>
-        <label class="field">
-          <span>Репозиторий</span>
-          <select id="remote-repo"></select>
-        </label>
-        <label class="field">
-          <span>Ветка</span>
-          <input id="remote-branch" required autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Задание</span>
-          <textarea id="remote-prompt" rows="5" placeholder="Что сделать; пусто - сессия ждёт задания в терминале"></textarea>
-        </label>
-        <p class="hint">Все репозитории проекта клонируются на хост из их origin; ветка берётся с origin либо создаётся от его HEAD.</p>
-        <div id="remote-error" class="dialog-error" role="alert" hidden></div>
+        <p id="host-disk-summary" class="hint"></p>
+        <div class="host-disk-list">
+          <table id="host-disk-table">
+            <thead>
+              <tr><th></th><th>Сессия</th><th>Состояние</th><th>Ветка</th><th>Размер</th><th>Активность</th><th>Незапушенная работа</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="hint">Работающие сессии закрываются крестиком вкладки. Клоны с незапушенной работой удаляются только после второго подтверждения.</p>
+        <div id="host-disk-error" class="dialog-error" role="alert" hidden></div>
         <footer>
+          <button type="button" id="host-disk-refresh">Обновить</button>
           <span class="spacer"></span>
-          <button type="button" id="remote-cancel">Отмена</button>
-          <button type="button" id="remote-create" class="primary">Создать</button>
+          <button type="button" id="host-disk-close">Закрыть</button>
+          <button type="button" id="host-disk-purge" class="primary">Удалить отмеченные</button>
         </footer>
       </form>
     </dialog>

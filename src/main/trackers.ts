@@ -329,7 +329,7 @@ export class TrackerSettingsStore {
 
 // ---------- запуск gh и glab ----------
 
-/** gh и glab берут токен из своей конфигурации; Cyborg его не читает и не передаёт. cwd вне репозиториев: glab не выводит хост из текущего. */
+/** gh и glab берут токен из своей конфигурации; читает его только сбор доступов удалённого агента (remote/auth.ts, ADR-0020). cwd вне репозиториев: glab не выводит хост из текущего. */
 export function createCliRunner(cwd: string, limits = CLI_LIMITS): CliRunner & JiraRunner {
   const env = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' };
   return (cmd, args) =>

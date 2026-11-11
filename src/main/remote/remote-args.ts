@@ -2,6 +2,7 @@ import { branchNameProblem } from '../branch-name';
 import type { Project } from '../projects';
 import { cleanMessage } from '../clean-text';
 import { promptProblem } from '../session-tools';
+import { MAX_HITS, type LineHit, type MatchRange, type SearchReply } from '../../shared/search-pattern';
 
 export interface RemoteCreateArgs {
   host: string;
@@ -27,11 +28,38 @@ export function validateRemoteCreate(value: unknown, project: Project | undefine
   return clean ? { ...out, prompt: clean } : out;
 }
 
-export const REMOTE_FS_OPS = ['list', 'read', 'root', 'branch', 'status', 'head'] as const;
+/** Запуск человеком из интерфейса: задание он пишет в терминал сам, поле prompt не принимается (D-32). */
+export function validateHumanRemoteCreate(value: unknown, project: Project | undefined): RemoteCreateArgs | string {
+  if (typeof value !== 'object' || value === null) return validateRemoteCreate(value, project);
+  const { host, repo, branch } = value as Record<string, unknown>;
+  return validateRemoteCreate({ host, repo, branch }, project);
+}
+
+export const REMOTE_FS_OPS = ['list', 'read', 'root', 'branch', 'status', 'head', 'files'] as const;
 export type RemoteFsOp = (typeof REMOTE_FS_OPS)[number];
 
 /** Аргументы remote:fs из интерфейса: номер вкладки и операция из читающего списка; иначе null. Правка файлов и смена ветки в список не входят. */
 export function validateRemoteFs(id: unknown, op: unknown): { id: number; op: RemoteFsOp } | null {
   if (typeof id !== 'number' || !REMOTE_FS_OPS.includes(op as RemoteFsOp)) return null;
   return { id, op: op as RemoteFsOp };
+}
+
+/** Ответ поиска с хоста: форма проверяется, пути только относительные, число попаданий и длина строк ограничены. */
+export function readSearchReply(value: unknown): SearchReply {
+  const v = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  const hits = (Array.isArray(v.hits) ? v.hits.slice(0, MAX_HITS) : []).flatMap((item): LineHit[] => {
+    const h = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>;
+    const { rel, text, line, sign } = h;
+    if (typeof rel !== 'string' || !rel || rel.startsWith('/') || rel.split('/').includes('..') || typeof text !== 'string') return [];
+    if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) return [];
+    const r = h.range as MatchRange | null;
+    const range = r && Number.isInteger(r.start) && Number.isInteger(r.end) && r.start >= 0 && r.end >= r.start ? { start: r.start, end: r.end } : null;
+    return [{ rel: rel.slice(0, 4096), line, text: text.slice(0, 1000), range, ...(sign === '+' || sign === '-' ? { sign } : {}) }];
+  });
+  return {
+    hits,
+    truncated: v.truncated === true,
+    ...(v.cancelled === true ? { cancelled: true as const } : {}),
+    ...(typeof v.error === 'string' ? { error: v.error.slice(0, 500) } : {}),
+  };
 }

@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 186; с автотестом - 168, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 190; с автотестом - 172, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -184,18 +184,22 @@ date: 2026-10-26
 | FR-16004 | Канал fs:write перезаписывает только существующий Markdown внутри разрешённых каталогов | 16-markdown-view | автотест | `test/allowed-paths.test.ts`, `test/write-file.test.ts`, `test/static-guards.test.ts` |
 | FR-16005 | Файл изменён на диске после начала правки - вопрос, без согласия не перезаписан | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/write-file.test.ts` |
 | FR-16006 | Несохранённая правка не теряется молча | 16-markdown-view | smoke | `scripts/smoke.mjs` |
-| FR-17001 | Хосты проекта и диалог «Удалённая сессия» | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts` |
-| NFR-17001 | Хост и его данные защищены: токен в файле 0600, чтение клонов в границе, без оболочки и без пароля | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts`, `test/agentd.test.ts`, `test/remote-tools.test.ts`, `src/main/sessions.test.ts`, `test/remote-link.test.ts` |
+| FR-17001 | Хосты проекта и меню запуска на хосте | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts` |
+| NFR-17001 | Хост и его данные защищены: токены в памяти и окружении, mcp.json 0600, чтение клонов в границе, без оболочки и без пароля | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts`, `test/agentd.test.ts`, `test/remote-tools.test.ts`, `src/main/sessions.test.ts`, `test/remote-link.test.ts`, `test/remote-config.test.ts`, `test/remote-auth.test.ts`, `test/static-guards.test.ts` |
 | FR-17002 | Проверка хоста и установка агента | 17-ssh-remote-agents | автотест | `test/remote-args.test.ts`, `test/remote-link.test.ts`, `test/remote-tools.test.ts` |
-| NFR-17002 | Совместимость хоста и версий агента | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/remote-link.test.ts` |
+| NFR-17002 | Совместимость хоста и версий агента | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/remote-link.test.ts`, `test/agentd.test.ts` |
 | FR-17003 | Запуск: клоны репозиториев проекта, ветка, claude в script | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/remote-tools.test.ts` |
 | FR-17004 | Терминал, ввод, хуки и уведомления удалённой сессии | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
-| FR-17005 | Обрыв связи, переподключение, выход Cyborg и подхват | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
-| FR-17006 | Дерево, статус, ветка и просмотр файлов клонов без правки | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/static-guards.test.ts` |
+| FR-17005 | Обрыв связи, переподключение, выход Cyborg и подхват | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/remote-args.test.ts`, `test/notify-args.test.ts`, `test/static-guards.test.ts` |
+| FR-17006 | Дерево, статус, ветка, просмотр и поиск файлов клонов без правки | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/remote-args.test.ts`, `test/static-guards.test.ts` |
 | FR-17007 | MCP-сервер Cyborg виден удалённой сессии обратным туннелем под токеном | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-tools.test.ts`, `test/remote-link.test.ts` |
 | FR-17008 | spawn_agent порождает на хосте агента с заданием | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/remote-link.test.ts` |
-| FR-17009 | report_done фиксирует итог агента явным вызовом | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts` |
+| FR-17009 | report_done фиксирует итог круга работы явным вызовом и сессию не закрывает | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts` |
 | FR-17010 | close_agent и закрытие вкладки убирают клоны, не теряя работу | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-tools.test.ts`, `test/remote-link.test.ts` |
 | FR-17011 | Лимиты хоста | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
 | FR-17012 | Крестик вкладки и закрытие окна для удалённой сессии | 17-ssh-remote-agents | автотест | `test/remote-link.test.ts` |
 | FR-17013 | Локальные сессии и соседство не меняются | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `src/main/sessions.test.ts` |
+| FR-17014 | Сон, пробуждение из «Истории» и перезапуск демона | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
+| FR-17015 | Место на хосте | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/host-disk.test.ts`, `test/menu.test.ts` |
+| FR-17016 | Доступы git и Claude у агента на хосте | 17-ssh-remote-agents | автотест | `test/remote-auth.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/menu.test.ts` |
+| FR-17017 | Зеркало настройки Claude, доверие к клонам, память и MCP пользователя | 17-ssh-remote-agents | автотест | `test/remote-config.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts` |

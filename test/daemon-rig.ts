@@ -18,6 +18,8 @@ export interface FakeProc extends PtyProc {
   written: string[];
 }
 
+let nextPid = 4242;
+
 export function fakeProc(): FakeProc {
   let data: (c: Buffer) => void = () => {};
   const exits: ((code: number) => void)[] = [];
@@ -30,7 +32,7 @@ export function fakeProc(): FakeProc {
     onExit: (cb) => void exits.push(cb),
     emit: (t) => data(Buffer.from(t)),
     exit: (code) => exits.forEach((cb) => cb(code)),
-    pid: 4242,
+    pid: nextPid++,
   };
 }
 
@@ -39,16 +41,18 @@ export interface Rig {
   home: string;
   spawned: { file: string; args: string[]; cwd: string; env: Record<string, string> }[];
   procs: FakeProc[];
-  execs: { file: string; args: string[]; cwd?: string }[];
+  execs: { file: string; args: string[]; cwd?: string; env?: Record<string, string> }[];
   killed: string[];
+  /** Сигналы группам по pgid, по порядку. */
+  kills: { pid: number; signal: string }[];
   clock: { now: number };
   /** Ответы git по первой совпавшей подстроке команды. */
   answers: Record<string, Partial<ExecResult>>;
 }
 
-export function rig(t: { after: (fn: () => void) => void }, extra: Partial<DaemonDeps> = {}): Rig {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-ad-'));
-  const r: Rig = { home, spawned: [], procs: [], execs: [], killed: [], clock: { now: 1_000_000 }, answers: {}, daemon: undefined as unknown as Daemon };
+/** Стенд; home - каталог прежнего стенда: новый демон на том же диске, как после перезапуска. */
+export function rig(t: { after: (fn: () => void) => void }, extra: Partial<DaemonDeps> = {}, home = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-ad-'))): Rig {
+  const r: Rig = { home, spawned: [], procs: [], execs: [], killed: [], kills: [], clock: { now: 1_000_000 }, answers: {}, daemon: undefined as unknown as Daemon };
   r.daemon = new Daemon({
     home,
     version: 'v1',
@@ -60,15 +64,16 @@ export function rig(t: { after: (fn: () => void) => void }, extra: Partial<Daemo
       return p;
     },
     exec: async (file, args, opts) => {
-      r.execs.push({ file, args, cwd: opts?.cwd });
+      r.execs.push({ file, args, cwd: opts?.cwd, env: opts?.env });
       const line = `${file} ${args.join(' ')}`;
       if (args[0] === 'clone') fs.mkdirSync(args[args.length - 1], { recursive: true });
       const hit = Object.keys(r.answers).find((k) => line.includes(k));
       return { code: 0, stdout: '', stderr: '', ...(hit ? r.answers[hit] : {}) };
     },
-    killGroup: (proc, signal) => {
+    killGroup: (pid, signal) => {
       r.killed.push(signal);
-      if (signal === 'SIGTERM') (proc as FakeProc).exit(143);
+      r.kills.push({ pid, signal });
+      if (signal === 'SIGTERM') r.procs.find((p) => p.pid === pid)?.exit(143);
     },
     killGraceMs: 20,
     ...extra,

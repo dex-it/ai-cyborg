@@ -4,14 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { Daemon } from '../src/agentd/daemon';
-import type { Msg } from '../src/agentd/protocol';
+import { SLEEP_IDLE_MS, type Msg } from '../src/agentd/protocol';
 import { bundleOf, installScript } from '../src/main/remote/install';
 import { PREFLIGHT_SCRIPT } from '../src/main/remote/preflight';
-import { RemoteSessions } from '../src/main/remote/remote-sessions';
+import { RemoteSessions, type RemoteDeps } from '../src/main/remote/remote-sessions';
 import { RECONNECT_MS, type Timers } from '../src/main/remote/host-link';
 import type { SshChannel, SshResult, SshTransport } from '../src/main/remote/ssh';
 import type { Project } from '../src/main/projects';
 import { SessionManager } from '../src/main/sessions';
+import { projectDirName } from '../src/main/history';
 import { rig, until, type Rig } from './daemon-rig';
 
 const BUNDLE = bundleOf('// agentd stub\n');
@@ -31,10 +32,15 @@ class FakeSsh implements SshTransport {
     `home=${home}\nuname=Linux\nnode=v20.1.0\ngit=/usr/bin/git\nclaude=/usr/bin/claude\nscript=/usr/bin/script\nauth={"loggedIn":true}\nagentd=${this.installed.join(' ')}\n`;
   channels: Chan[] = [];
   blocked = false;
+  /** Хосты, ssh к которым не отвечает: preflight висит, как при недоступном сервере до ConnectTimeout. */
+  hang = new Set<string>();
+  /** Не null - close копится здесь и доходит до демона, когда тест вызовет отложенное: долгая уборка на хосте. */
+  held: (() => void)[] | null = null;
   constructor(public daemon: Daemon, private readonly home: string) {}
 
   async run(alias: string, script: string): Promise<SshResult> {
     this.runs.push({ alias, script });
+    if (this.hang.has(alias)) return new Promise(() => undefined);
     if (this.failure) return this.failure;
     if (script === PREFLIGHT_SCRIPT) return { code: 0, stdout: this.preflight(this.home), stderr: '' };
     this.installed.push(BUNDLE.version);
@@ -57,7 +63,8 @@ class FakeSsh implements SshTransport {
       write: (line) => {
         const msg = JSON.parse(line) as Msg;
         this.seen.push(msg);
-        if (!this.blocked) conn.receive(msg);
+        if (this.held && msg.type === 'close') this.held.push(() => conn.receive(msg));
+        else if (!this.blocked) conn.receive(msg);
       },
       onLine: (cb) => void lines.push(cb),
       onExit: (cb) => void exits.push(cb),
@@ -97,7 +104,7 @@ interface Side {
   mcp: { issued: number[]; accepted: [string, number][]; disconnected: number[] };
 }
 
-function side(t: { after: (fn: () => void) => void }, ssh: FakeSsh, extra: { originUrl?: (d: string) => Promise<string | null>; timers?: Timers; instance?: string } = {}): Side {
+function side(t: { after: (fn: () => void) => void }, ssh: FakeSsh, extra: { originUrl?: (d: string) => Promise<string | null>; timers?: Timers; instance?: string; deps?: Partial<RemoteDeps> } = {}): Side {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-rl-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
   const events: Side['events'] = [];
@@ -122,7 +129,7 @@ function side(t: { after: (fn: () => void) => void }, ssh: FakeSsh, extra: { ori
     alert: (title, text) => void alerts.push(`${title}: ${text}`),
     instance: extra.instance ?? 'inst-1',
     timers: extra.timers,
-    closeDelayMs: 20,
+    ...extra.deps,
   });
   t.after(() => remote.closeLinks());
   return { sessions, remote, events, alerts, closedTabs, mcp };
@@ -366,7 +373,9 @@ describe('HostLink: обрыв связи и подхват', () => {
     const info = await first.remote.create(project, human, { origin: 'human' });
     await until(() => r.spawned.length === 1);
     const sid = sidOf(ssh);
+    assert.deepEqual(info.size, { cols: 120, rows: 40 });
     r.procs[0].emit('экран сессии');
+    first.sessions.resize(info.id, 100, 30);
     hook(r, sid, { hook_event_name: 'SessionStart' }, { hook_event_name: 'Notification', notification_type: 'permission_prompt' }, { hook_event_name: 'UserPromptSubmit' }, { hook_event_name: 'PostToolUse', cwd: '/h/w/b' });
     await new Promise((res) => setTimeout(res, 100));
     first.sessions.killAll();
@@ -376,6 +385,7 @@ describe('HostLink: обрыв связи и подхват', () => {
     const found = await second.remote.discover(project);
     assert.equal(found.length, 1);
     assert.deepEqual(second.mcp.accepted, [[TOKEN(info.id), found[0].id]]);
+    assert.deepEqual(found[0].size, { cols: 100, rows: 30 }, 'вкладка подхваченной сессии берёт размер pty до догона вывода');
     await until(() => second.events.some((e) => String(e.payload.data ?? '').includes('экран сессии')));
     await until(() => second.sessions.peers(found[0].id)?.[0].state === 'working');
     assert.equal(second.sessions.peers(found[0].id)?.[0].cwd, '/h/w/b');
@@ -434,22 +444,33 @@ describe('report_done, close_agent и лимиты', () => {
   const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
   const outboxOf = (a: Side, id: number): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(id)?.outbox ?? [];
 
-  it('итог вкладки spawn_agent уходит в очередь вызвавшей, вкладка без keep закрывается по правилам close_agent', async (t) => {
-    const { r, ssh } = world(t);
+  const states = (a: Side): unknown[] => a.events.filter((e) => e.channel === 'remote:state').map((e) => e.payload);
+
+  it('итог вкладки spawn_agent уходит в очередь вызвавшей, вкладка остаётся; второй итог - только после нового круга', async (t) => {
+    const r = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r.daemon, r.home);
     const a = side(t, ssh);
     const caller = callerOf(a);
     const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
     await until(() => r.spawned.length === 1);
     const text = await a.remote.report(info.id, { status: 'ok', summary: 'готово', branch: 'feat/x', pr: 'https://x/pr/1' });
-    assert.match(text, /Итог принят/);
-    const peers = a.sessions.peers(caller);
-    assert.equal(peers?.find((p) => p.id === caller)?.queued, 1);
+    assert.match(text, /Итог принят\. Сессия остаётся открытой/);
+    assert.equal(outboxOf(a, caller).length, 1);
+    assert.deepEqual(states(a), [{ id: info.id, reported: true }]);
     await assert.rejects(a.remote.report(info.id, { status: 'ok', summary: 'ещё' }), /уже отправлен/);
-    await until(() => a.closedTabs.includes(info.id));
-    assert.ok(r.killed.includes('SIGTERM'));
+    await new Promise((res) => setTimeout(res, 100));
+    assert.deepEqual(a.closedTabs, []);
+    assert.deepEqual(r.killed, []);
+    assert.ok(a.remote.isRemote(info.id));
+    hook(r, sidOf(ssh), { hook_event_name: 'UserPromptSubmit' });
+    await until(() => states(a).length === 2);
+    assert.deepEqual(states(a)[1], { id: info.id, reported: false });
+    assert.match(await a.remote.report(info.id, { status: 'ok', summary: 'второй круг' }), /Итог принят/);
+    assert.equal(outboxOf(a, caller).length, 2);
+    assert.match(outboxOf(a, caller)[1], /второй круг/);
   });
 
-  it('итог вкладки человека и вкладка с keep - уведомление, автозакрытия нет', async (t) => {
+  it('итог вкладки человека - уведомление, сессия не останавливается', async (t) => {
     const { r, ssh } = world(t);
     const a = side(t, ssh);
     const info = await a.remote.create(project, human, { origin: 'human' });
@@ -460,11 +481,26 @@ describe('report_done, close_agent и лимиты', () => {
     assert.match(note?.payload.body, /^blocked: нужен человек/);
     await new Promise((res) => setTimeout(res, 100));
     assert.deepEqual(r.killed, []);
-    const keep = await a.remote.create(project, human, { origin: 'tool', keep: true });
-    await until(() => r.spawned.length === 2);
-    await a.remote.report(keep.id, { status: 'ok', summary: 'x' });
-    await new Promise((res) => setTimeout(res, 100));
-    assert.deepEqual(r.killed, []);
+    assert.deepEqual(a.closedTabs, []);
+  });
+
+  it('подхват: «итог сдан» приходит с list, а после обрыва - с ответа attach', async (t) => {
+    const r = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r.daemon, r.home);
+    const first = side(t, ssh);
+    const info = await first.remote.create(project, human, { origin: 'tool' });
+    await until(() => r.spawned.length === 1);
+    await first.remote.report(info.id, { status: 'ok', summary: 'x' });
+    first.remote.closeLinks();
+    const clock = fakeTimers();
+    const second = side(t, ssh, { timers: clock.timers });
+    const [found] = await second.remote.discover(project);
+    assert.equal(found.reported, true);
+    hook(r, sidOf(ssh), { hook_event_name: 'UserPromptSubmit' });
+    await until(() => (r.daemon as unknown as { sessions: Map<string, { meta: { reported: boolean } }> }).sessions.get(sidOf(ssh))?.meta.reported === false);
+    ssh.channels[ssh.channels.length - 1].cut();
+    clock.fire(RECONNECT_MS[0]);
+    await until(() => states(second).some((p) => (p as { reported: boolean }).reported === false));
   });
 
   it('report_done без связи - ошибка, повтор не засчитан', async (t) => {
@@ -522,17 +558,6 @@ describe('report_done, close_agent и лимиты', () => {
     assert.ok(a.closedTabs.includes(info.id));
   });
 
-  it('автозакрытие после report_done с грязным клоном: путь на хосте приходит вызвавшей следом за итогом', async (t) => {
-    const { r, ssh } = world(t);
-    const a = side(t, ssh);
-    const caller = callerOf(a);
-    const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
-    await until(() => r.spawned.length === 1);
-    r.answers['status --porcelain'] = { stdout: ' M f\n' };
-    await a.remote.report(info.id, { status: 'ok', summary: 'готово' });
-    await until(() => outboxOf(a, caller).length === 2);
-    assert.match(outboxOf(a, caller)[1], /Уборка отказана - оставлены dev1:\S+\/work\/\S+\/a \(изменения в рабочем дереве\)/);
-  });
 
   it('текст хоста в итоге лимита очищен от управляющих символов и обрезан; отказ уборки - в итоге с путём', async (t) => {
     const { r, ssh } = world(t);
@@ -617,6 +642,8 @@ describe('подхват: сессия, завершившаяся на хост
 
 describe('подхват: итог сессии, завершившейся без клиента, доходит до человека', () => {
   const hostSessions = (r: Rig): number => (r.daemon as unknown as { sessions: Map<string, unknown> }).sessions.size;
+  // Итог записан, когда уборка дошла до конца: подхват раньше застал бы сессию ещё живой.
+  const ghostEnded = (r: Rig): boolean => [...(r.daemon as unknown as { sessions: Map<string, { meta: { ended?: unknown } }> }).sessions.values()].some((s) => s.meta.ended);
 
   it('лимит сработал при закрытом Cyborg: на следующем запуске уведомление failed с причиной и путём оставленного клона, вкладки нет, запись снята после доставки', async (t) => {
     const r2 = rig(t, { tickMs: 10, version: BUNDLE.version });
@@ -628,7 +655,7 @@ describe('подхват: итог сессии, завершившейся бе
     r2.answers['status --porcelain'] = { stdout: ' M f\n' };
     r2.clock.now += 120_000;
     await until(() => r2.killed.includes('SIGTERM'));
-    await until(() => (r2.daemon as unknown as { sessions: Map<string, { meta: { ended?: unknown } }> }).sessions.size === 1);
+    await until(() => ghostEnded(r2));
     const second = side(t, ssh, { instance: 'inst-2' });
     assert.deepEqual(await second.remote.discover(project), []);
     await until(() => second.events.some((e) => e.channel === 'remote:report' && /^failed: [\s\S]*таймаут задачи/.test(e.payload.body)));
@@ -650,7 +677,7 @@ describe('подхват: итог сессии, завершившейся бе
     first.remote.closeLinks();
     r2.clock.now += 120_000;
     await until(() => r2.killed.includes('SIGTERM'));
-    await until(() => (r2.daemon as unknown as { sessions: Map<string, { meta: { ended?: unknown } }> }).sessions.size === 2);
+    await until(() => ghostEnded(r2));
     const second = side(t, ssh, { instance: 'inst-2' });
     const found = await second.remote.discover(project);
     assert.equal(found.length, 1);
@@ -715,18 +742,275 @@ describe('RemoteSessions: файловый канал, запасной путь
     assert.match(await a.remote.close(info.id, false), /завершена/);
   });
 
-  it('автозакрытие после report_done без ответа хоста: окно с причиной, вкладка не закрыта, closing сброшен', async (t) => {
+  it('уборка дольше 30 с: вызвавшая close_agent получает отказ по времени, а поздний итог уборки с путём - в очередь, вкладка закрыта', async (t) => {
     const { r, ssh } = world(t);
     const clock = fakeTimers();
     const a = side(t, ssh, { timers: clock.timers });
-    const info = await a.remote.create(project, human, { origin: 'tool' });
+    const caller = callerOf(a);
+    const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
     await until(() => r.spawned.length === 1);
-    await a.remote.report(info.id, { status: 'ok', summary: 'готово' });
-    ssh.blocked = true;
+    r.answers['status --porcelain'] = { stdout: ' M f\n' };
+    ssh.held = [];
+    const closing = a.remote.close(info.id, false);
     await until(() => clock.queue.some((x) => x.alive && x.ms === 30_000));
     clock.fire(30_000);
-    await until(() => a.alerts.some((m) => /не ответил/.test(m)));
-    assert.equal(entryOf(a, info.id)?.closing, false);
+    await assert.rejects(closing, /не ответил за 30 с: если уборка закончится позже, её итог придёт отдельно/);
     assert.deepEqual(a.closedTabs, []);
+    ssh.held.forEach((release) => release());
+    const outbox = (): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(caller)?.outbox ?? [];
+    await until(() => outbox().some((m) => /Уборка отказана - оставлены dev1:\S+\/work\/\S+\/a \(изменения в рабочем дереве\)/.test(m)));
+    assert.deepEqual(a.closedTabs, [info.id]);
+    assert.equal(a.alerts.filter((m) => /Уборка отказана/.test(m)).length, 1);
+  });
+
+});
+
+describe('сон, «История» и пробуждение', () => {
+  const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
+  const outboxOf = (a: Side, id: number): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(id)?.outbox ?? [];
+  const evPosOf = (a: Side, id: number): number => (a.remote as unknown as { byId: Map<number, { evPos: number }> }).byId.get(id)?.evPos ?? 0;
+
+  /** Сессия засыпает: хук приводит её в waiting, часы демона уходят за порог простоя. */
+  async function asleep(t: { after: (fn: () => void) => void }, origin: 'tool' | 'human', deps: Partial<RemoteDeps> = {}) {
+    const r = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r.daemon, r.home);
+    const a = side(t, ssh, { deps });
+    const caller = callerOf(a);
+    const info = await a.remote.create(project, human, origin === 'tool' ? { origin, spawnedBy: caller } : { origin });
+    await until(() => r.spawned.length === 1);
+    const sid = sidOf(ssh);
+    const cwd = JSON.parse(fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', sid, 'meta.json'), 'utf8')).cwd;
+    const journal = path.join(r.home, '.claude', 'projects', projectDirName(cwd));
+    fs.mkdirSync(journal, { recursive: true });
+    fs.writeFileSync(path.join(journal, `${sid}.jsonl`), JSON.stringify({ type: 'ai-title', aiTitle: 'разговор' }) + '\n');
+    hook(r, sid, { hook_event_name: 'SessionStart' });
+    await until(() => evPosOf(a, info.id) > 0);
+    r.clock.now += SLEEP_IDLE_MS + 1;
+    await until(() => a.closedTabs.includes(info.id));
+    return { r, ssh, a, caller, info, sid };
+  }
+
+  it('сон: вкладка закрыта, токен снят, вызвавшая узнаёт, что продолжить можно из «Истории»; спящая не в счёт предела хоста', async (t) => {
+    const { r, a, caller, info } = await asleep(t, 'tool');
+    assert.ok(r.killed.includes('SIGTERM'));
+    assert.equal(a.remote.isRemote(info.id), false);
+    assert.ok(a.mcp.disconnected.includes(info.id));
+    assert.match(outboxOf(a, caller)[0], /CC\d+ \(dev1\) уснула[\s\S]*«Истории»/);
+    assert.ok(a.events.some((e) => e.channel === 'session:exit' && e.payload.id === info.id));
+    await a.remote.prepare('dev1', '/loc/a', { max_agents_per_host: 1 });
+  });
+
+  it('сон вкладки человека - уведомление рабочего стола', async (t) => {
+    const { a, info } = await asleep(t, 'human');
+    const note = a.events.find((e) => e.channel === 'remote:report' && e.payload.id === info.id);
+    assert.match(note?.payload.body, /уснула[\s\S]*«Истории»/);
+  });
+
+  it('«История» отдаёт спящую с хостом; wake поднимает вкладку с --resume в тех же клонах, вывод доходит, строка уходит из «Истории»', async (t) => {
+    const { r, ssh, a, sid } = await asleep(t, 'tool');
+    const list = (await a.remote.history(project)).entries;
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, sid);
+    assert.equal(list[0].host, 'dev1');
+    assert.equal(list[0].repo, '/loc/a');
+    const woke = await a.remote.wake(project, 'dev1', sid);
+    await until(() => r.spawned.length === 2);
+    const launch = fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', sid, 'launch.sh'), 'utf8');
+    assert.ok(launch.includes(`'--resume' '${sid}'`));
+    assert.equal(r.spawned[1].cwd, r.spawned[0].cwd);
+    assert.equal(woke.roots.length, 2);
+    assert.equal(woke.reported, false);
+    assert.ok(a.remote.isRemote(woke.id));
+    const wakeMsg = ssh.seen.find((m) => m.type === 'wake');
+    assert.equal(wakeMsg?.token, TOKEN(woke.id));
+    r.procs[1].emit('снова здесь');
+    await until(() => a.events.some((e) => e.channel === 'session:data' && e.payload.id === woke.id && String(e.payload.data).includes('снова здесь')));
+    assert.deepEqual((await a.remote.history(project)).entries, []);
+  });
+
+  it('второе пробуждение той же сессии, пока идёт первое, отклоняется и не отнимает у вкладки вывод', async (t) => {
+    const { r, a, sid } = await asleep(t, 'human');
+    const [one, two] = await Promise.allSettled([a.remote.wake(project, 'dev1', sid), a.remote.wake(project, 'dev1', sid)]);
+    assert.equal(one.status, 'fulfilled');
+    assert.equal(two.status, 'rejected');
+    assert.match(String((two as PromiseRejectedResult).reason), /уже просыпается/);
+    const woke = (one as PromiseFulfilledResult<{ id: number }>).value;
+    await until(() => r.spawned.length === 2);
+    r.procs[1].emit('после двойного щелчка');
+    await until(() => a.events.some((e) => e.channel === 'session:data' && e.payload.id === woke.id && String(e.payload.data).includes('после двойного щелчка')));
+    await assert.rejects(a.remote.wake(project, 'dev1', sid), /открыта/);
+  });
+
+  it('разбуженную сессию spawn_agent ведёт человек: на хосте она без вызвавшей и под таймерами задачи не стоит', async (t) => {
+    const { r, a, sid } = await asleep(t, 'tool');
+    await a.remote.wake(project, 'dev1', sid);
+    await until(() => r.spawned.length === 2);
+    const meta = JSON.parse(fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', sid, 'meta.json'), 'utf8'));
+    assert.equal(meta.origin, 'human');
+    assert.equal(meta.spawnedBy, undefined);
+  });
+
+  it('«История» не ждёт молчащий хост: спящие отвечающего хоста отдаются, молчащий назван', async (t) => {
+    const { ssh, sid } = await asleep(t, 'human');
+    const b = side(t, ssh, { deps: { historyTimeoutMs: 100 } });
+    ssh.hang.add('slow');
+    const started = Date.now();
+    const got = await b.remote.history({ ...project, hosts: ['dev1', 'slow'] });
+    assert.ok(Date.now() - started < 2000);
+    assert.deepEqual(got.entries.map((e) => [e.host, e.id]), [['dev1', sid]]);
+    assert.deepEqual(got.unreachable.map((u) => u.host), ['slow']);
+    assert.match(got.unreachable[0].reason, /не ответил/);
+  });
+
+  it('wake собирает доступы заново: токен, сменившийся во время сна, доходит до агента', async (t) => {
+    let token = 'glpat-ONE';
+    const { r, ssh, a, sid } = await asleep(t, 'human', { gitAuth: async () => [{ kind: 'gitlab', host: 'h', token }] });
+    token = 'glpat-TWO';
+    const woke = await a.remote.wake(project, 'dev1', sid);
+    await until(() => r.spawned.length === 2);
+    assert.equal((ssh.seen.find((m) => m.type === 'wake') as any).auth.git[0].token, 'glpat-TWO');
+    assert.equal(r.spawned[1].env.GITLAB_TOKEN, 'glpat-TWO');
+    assert.deepEqual(woke.notes, ['на хосте нет glab: агент не откроет MR']);
+  });
+
+  it('удаление спящей: клоны убраны, грязный клон - текст отказа; запись снята, wake больше не находит; чужой хост - отказ', async (t) => {
+    const { r, a, sid } = await asleep(t, 'human');
+    r.answers['status --porcelain'] = { stdout: ' M f\n' };
+    assert.match(await a.remote.removeAsleep(project, 'dev1', sid), /Уборка отказана - оставлены dev1:\S+\/work\/\S+\/a \(изменения в рабочем дереве\)/);
+    assert.deepEqual((await a.remote.history(project)).entries, []);
+    await assert.rejects(a.remote.wake(project, 'dev1', sid), /не найдена/);
+    await assert.rejects(a.remote.wake(project, 'other', sid), /Некорректное/);
+    await assert.rejects(a.remote.removeAsleep(project, 'dev1', '../x'), /Некорректное/);
+  });
+});
+
+describe('доступы git и Claude', () => {
+  const CLAUDE = 'sk-ant-oat01-' + 'c'.repeat(30);
+
+  it('spawn несёт токены хостингов origin, хост рабочего репозитория и токен Claude; агент получает их окружением', async (t) => {
+    const { r, ssh } = world(t);
+    const asked: string[][] = [];
+    const a = side(t, ssh, { deps: { gitAuth: async (urls) => (asked.push(urls), [{ kind: 'gitlab', host: 'h', token: 'glpat-ONE' }]), claudeToken: () => CLAUDE } });
+    ssh.preflight = ((base) => (home: string) => base(home) + 'glab=/usr/bin/glab\n')(ssh.preflight);
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    assert.deepEqual(asked, [['git@h:o/a.git', 'git@h:o/b.git']]);
+    assert.deepEqual((ssh.seen.find((m) => m.type === 'spawn') as any).auth, { git: [{ kind: 'gitlab', host: 'h', token: 'glpat-ONE' }], primary: 'h', claude: CLAUDE });
+    assert.deepEqual(info.notes, []);
+    await until(() => r.spawned.length === 1);
+    assert.equal(r.spawned[0].env.GITLAB_TOKEN, 'glpat-ONE');
+    assert.equal(r.spawned[0].env.CLAUDE_CODE_OAUTH_TOKEN, CLAUDE);
+  });
+
+  it('хост без токена и сбой сбора не мешают запуску: заметка называет хост, клон идёт ключами хоста', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh, { deps: { gitAuth: async () => Promise.reject(new Error('gh упал')) } });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    assert.deepEqual((ssh.seen.find((m) => m.type === 'spawn') as any).auth, { git: [], primary: 'h' });
+    assert.deepEqual(info.notes, ['для h нет токена gh или glab на этой машине: клон и push идут ключами хоста']);
+    await until(() => r.spawned.length === 1);
+  });
+
+  it('claude на хосте без входа: без токена - отказ с подсказкой, с токеном - запуск', async (t) => {
+    const { ssh } = world(t);
+    ssh.preflight = ((base) => (home: string) => base(home).replace('{"loggedIn":true}', '{"loggedIn":false}'))(ssh.preflight);
+    await assert.rejects(side(t, ssh).remote.create(project, human, { origin: 'human' }), /не залогинен[\s\S]*Вход Claude на хостах/);
+    const info = await side(t, ssh, { deps: { claudeToken: () => CLAUDE } }).remote.create(project, human, { origin: 'human' });
+    assert.equal(info.host, 'dev1');
+  });
+});
+
+describe('зеркало настройки Claude', () => {
+  const b64 = (s: string) => Buffer.from(s).toString('base64');
+  const mirror = (hash: string) => ({
+    hash,
+    files: [{ rel: 'CLAUDE.md', mode: 0o644, b64: b64('# правила') }],
+    marketplaces: [{ name: 'm', source: 'org/m' }],
+    plugins: [],
+    env: { FOO: 'bar' },
+    mcp: { web: { type: 'http', url: 'https://mcp.example.com' } },
+    skipped: ['плагин b@loc: маркетплейс loc лежит на этой машине, на хост не переносится'],
+  });
+
+  it('уходит на хост при смене хэша и один раз; маркетплейсы получают свой git-доступ; spawn несёт env, MCP и память', async (t) => {
+    const { r, ssh } = world(t);
+    let current = mirror('a'.repeat(64));
+    const asked: string[][] = [];
+    const a = side(t, ssh, {
+      deps: {
+        mirror: async () => current,
+        memory: async (repo) => [{ rel: 'MEMORY.md', mode: 0o644, b64: b64(repo) }],
+        gitAuth: async (urls) => (asked.push(urls), []),
+      },
+    });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    assert.deepEqual(ssh.seen.filter((m) => m.type === 'config').map((m) => m.hash), ['a'.repeat(64)]);
+    assert.deepEqual(asked[0], ['https://github.com/org/m.git'], 'доступ маркетплейсам собирается отдельно от доступа сессии');
+    assert.deepEqual((ssh.seen.find((m) => m.type === 'config') as any).auth, { git: [] });
+    const spawn = ssh.seen.find((m) => m.type === 'spawn') as any;
+    assert.deepEqual([spawn.env, Object.keys(spawn.mcp), spawn.memory[0].rel], [{ FOO: 'bar' }, ['web'], 'MEMORY.md']);
+    assert.ok(info.notes?.includes(current.skipped[0]));
+    assert.equal(fs.readFileSync(path.join(r.home, '.claude', 'CLAUDE.md'), 'utf8'), '# правила');
+    await a.remote.create(project, { ...human, branch: 'feat/y' }, { origin: 'human' });
+    assert.equal(ssh.seen.filter((m) => m.type === 'config').length, 1, 'тот же хэш не шлётся повторно');
+    current = mirror('b'.repeat(64));
+    await a.remote.create(project, { ...human, branch: 'feat/z' }, { origin: 'human' });
+    assert.equal(ssh.seen.filter((m) => m.type === 'config').length, 2);
+  });
+
+  it('отказ хоста принять зеркало не мешает запуску: заметка называет причину', async (t) => {
+    const { ssh } = world(t);
+    const a = side(t, ssh, { deps: { mirror: async () => ({ ...mirror('нехэш'), skipped: [] }) } });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    assert.deepEqual(info.notes, ['для h нет токена gh или glab на этой машине: клон и push идут ключами хоста', 'настройка Claude на хост не передана: некорректная настройка Claude']);
+    assert.ok(ssh.seen.some((m) => m.type === 'spawn'));
+  });
+});
+
+describe('место на хосте', () => {
+  it('мало места по hello: одно предупреждение на хост, переподключение его не повторяет', async (t) => {
+    const { r, ssh } = world(t);
+    const connect = r.daemon.connect.bind(r.daemon);
+    r.daemon.connect = (c) => connect({ send: (m) => c.send(m.type === 'hello' ? { ...m, disk: { free: 1024 ** 3, total: 100 * 1024 ** 3 } } : m) });
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    await a.remote.create(project, human, { origin: 'human' });
+    const low = () => a.events.filter((e) => e.channel === 'remote:disk-low');
+    assert.deepEqual(low().map((e) => e.payload), [{ host: 'dev1', free: 1024 ** 3, total: 100 * 1024 ** 3 }]);
+    ssh.channels[0].cut();
+    clock.fire(RECONNECT_MS[0]);
+    await until(() => a.events.filter((e) => e.channel === 'remote:link' && e.payload.online).length === 2);
+    assert.equal(low().length, 1);
+  });
+
+  it('места достаточно - предупреждения нет; disk и purge доходят до демона, чужой хост отвергается', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh);
+    await a.remote.create(project, human, { origin: 'human' });
+    assert.equal(a.events.some((e) => e.channel === 'remote:disk-low'), false);
+    r.answers['du -sk'] = { stdout: '2048\t/x\n' };
+    const disk = await a.remote.disk(project, 'dev1');
+    assert.equal(disk.host, 'dev1');
+    assert.deepEqual(disk.sessions.map((s) => [s.state, s.bytes]), [['live', 2048 * 1024]]);
+    const results = await a.remote.purge(project, 'dev1', [disk.sessions[0].sid], true);
+    assert.match(String(results[0].error), /работает/);
+    await assert.rejects(a.remote.disk(project, 'чужой'), /не из проекта/);
+    await assert.rejects(a.remote.purge(project, 'dev1', ['../x'], true), /Некорректное/);
+  });
+});
+
+describe('поиск у удалённой вкладки', () => {
+  it('идёт на хост по корню вкладки; корень вне её клонов отвергается до хоста', async (t) => {
+    const { ssh } = world(t);
+    const a = side(t, ssh);
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    const root = info.roots[0];
+    fs.writeFileSync(path.join(root, 'f.ts'), 'needle\n');
+    const options = { regex: false, caseSensitive: true, wholeWord: false };
+    const reply = await a.remote.search(info.id, 'text', { root, query: 'needle', options });
+    assert.deepEqual(reply.hits.map((h) => [h.rel, h.line, h.range]), [['f.ts', 1, { start: 0, end: 6 }]]);
+    const sent = ssh.seen.length;
+    await assert.rejects(a.remote.search(info.id, 'text', { root: '/loc/a', query: 'x', options }), /вне каталогов/);
+    await assert.rejects(a.remote.search(info.id, 'changes', { root: `${root}-x`, query: 'x', options }), /вне каталогов/);
+    assert.equal(ssh.seen.length, sent);
   });
 });

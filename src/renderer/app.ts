@@ -39,6 +39,9 @@ import { applyMonacoFontSize, applyMonacoTheme, FileViewer, type Viewer } from '
 import { MarkdownViewer } from './md-viewer';
 import { isMarkdown } from './md-links';
 import { localFs, remoteFs, type FsPort } from './fs-port';
+import type { ClaudeTokenStatus } from '../main/remote/claude-token';
+import { diskRows, diskSummary, purgePlan, purgeReport } from './host-disk';
+import { formatBytes, type HostDisk } from '../shared/host-disk';
 import type { RemoteInfo } from '../main/remote/remote-sessions';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
 import { WaitNotifier } from './notify';
@@ -81,7 +84,7 @@ interface Session {
   /** Полоса кнопок-команд этой сессии (фича 12). */
   command: CommandTarget;
   /** Удалённая сессия: дерево и просмотр читают клоны на хосте, правки и смены ветки нет. */
-  remote?: { host: string; roots: string[]; online: boolean; fs: FsPort };
+  remote?: { host: string; roots: string[]; online: boolean; reported: boolean; fs: FsPort };
 }
 
 const api = window.cyborg;
@@ -98,7 +101,7 @@ const treeMeta = byId('tree-meta');
 const treeBack = byId<HTMLButtonElement>('tree-back');
 const sessionList = byId('session-list');
 const newSessionButton = byId<HTMLButtonElement>('new-session');
-const newRemoteButton = byId<HTMLButtonElement>('new-remote-session');
+const startMenuButton = byId<HTMLButtonElement>('new-session-more');
 newSessionButton.title = `Новая сессия Claude Code (${newSessionShortcut})`;
 const sessionsEl = byId('sessions');
 const empty = byId('empty');
@@ -157,8 +160,8 @@ function selectProject(next: Project | null, save = true): void {
   api.projectSelected(!!next);
   for (const s of sessions) s.stripTab.hidden = s.project !== next;
   newSessionButton.disabled = !next?.repos.length;
-  newRemoteButton.hidden = !next?.hosts?.length;
-  newRemoteButton.disabled = !next?.repos.length;
+  startMenuButton.hidden = !next?.hosts?.length;
+  startMenuButton.disabled = !next?.repos.length;
   const session = next ? (lastSessionOf.get(next.id) ?? sessions.find((s) => s.project === next)) : undefined;
   if (session) activateSession(session, panel.isOpen);
   else showNoSession();
@@ -425,8 +428,16 @@ const sessionTitle = (s: Session): string =>
       : s.jira
         ? `CC${s.id} · ${s.jira.key} ${s.jira.summary}`
         : s.remote
-          ? `CC${s.id} · ${s.remote.host}${s.remote.online ? '' : ' · нет связи'}`
+          ? `CC${s.id} · ${s.remote.host}${remoteNote(s.remote)}`
           : `CC${s.id} · ${rootLabel(s)}`;
+
+const remoteNote = (r: NonNullable<Session['remote']>): string => `${r.reported ? ' · итог сдан' : ''}${r.online ? '' : ' · нет связи'}`;
+
+/** Подпись вкладки и шапки дерева: у удалённой - значок и плашка хоста, чтобы её не спутать с локальной (D-33). */
+function fillLabel(target: HTMLElement, s: Session, label: string): void {
+  if (!s.remote) return void (target.textContent = label);
+  target.replaceChildren(el('span', 'remote-mark', '⇄'), `CC${s.id} `, el('span', 'host-chip', s.remote.host), remoteNote(s.remote));
+}
 
 /** Из сессии по MR или задаче - обратно к её строке в списке панели; кнопка видна, пока у проекта есть источники. */
 function updateBackButton(s: Session | null): void {
@@ -445,14 +456,16 @@ treeBack.addEventListener('click', () => {
 function updateSessionLabels(s: Session): void {
   const label = sessionTitle(s);
   const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
-  (s.stripTab.querySelector('.label') as HTMLElement).textContent = label;
+  fillLabel(s.stripTab.querySelector('.label') as HTMLElement, s, label);
   s.stripTab.title = tooltip ? `${tooltip}\n${s.cwd}` : s.cwd;
   s.stripTab.classList.toggle('exited', s.exited);
   s.stripTab.classList.toggle('remote', !!s.remote);
   s.stripTab.classList.toggle('offline', !!s.remote && !s.remote.online && !s.exited);
   if (s === active) {
-    treeTitle.textContent = label;
-    treeTitle.title = tooltip;
+    const title = el('span', 'title-text');
+    fillLabel(title, s, label);
+    treeTitle.replaceChildren(title);
+    treeTitle.title = tooltip || label;
     // Шапка обрезает путь слева через direction: rtl; LRM не даёт ведущему «/» уехать в конец.
     treeMeta.textContent = `‎${s.exited ? `завершена · ${s.cwd}` : s.cwd}`;
     updateBackButton(s);
@@ -622,6 +635,11 @@ function showInner(s: Session, file: FileTab | null): void {
 
 async function renderTree(s: Session, onlyIfChanged: boolean): Promise<void> {
   if (s !== active) return;
+  // Завершившуюся удалённую сессию главный процесс уже забыл: опрос хоста давал бы только ошибки «Сессия не удалённая».
+  if (s.remote && s.exited) {
+    treeTickets.take(false);
+    return void treeEl.replaceChildren(el('div', 'menu-title', `Сессия на ${s.remote.host} завершена: её файлы больше недоступны`));
+  }
   const ticket = treeTickets.take(onlyIfChanged);
   const fragment = await s.tree.render(onlyIfChanged);
   if (!fragment || !treeTickets.valid(ticket) || s !== active) return;
@@ -768,6 +786,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   container.append(innerTabs, innerPanes);
   sessionsEl.append(container);
   term.open(host);
+  for (const note of remote?.notes ?? []) term.write(`\x1b[2mCyborg: ${note}\x1b[0m\r\n`);
 
   const stripTab = makeTab('session', '', () => closeSession(session, false));
   stripTab.draggable = true;
@@ -783,7 +802,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     cwd: remote ? remote.cwd : repo,
     root,
     exited: false,
-    remote: remote && { host: remote.host, roots: remote.roots, online: true, fs: remoteFs(id) },
+    remote: remote && { host: remote.host, roots: remote.roots, online: true, reported: remote.reported === true, fs: remoteFs(id) },
     task: start && 'task' in start ? start.task : undefined,
     mr: start && 'mr' in start ? start.mr : undefined,
     jira: start && 'jira' in start ? start.jira : undefined,
@@ -819,6 +838,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   sessions.push(session);
   taskSessions.add(session);
   updateSessionLabels(session);
+  if (remote?.size) term.resize(remote.size.cols, remote.size.rows);
   for (const chunk of pendingData.get(id) ?? []) term.write(chunk);
   pendingData.delete(id);
   // Невидимая сессия не получает fit до активации: pty стартует 120x40, а xterm скрыт и остаётся 80x24, поэтому размеры выравниваются сразу.
@@ -1045,6 +1065,13 @@ api.on<{ host: string; online: boolean }>('remote:link', ({ host, online }) => {
   }
 });
 
+api.on<{ id: number; reported: boolean }>('remote:state', ({ id, reported }) => {
+  const session = findSession(id);
+  if (!session?.remote) return;
+  session.remote.reported = reported;
+  updateSessionLabels(session);
+});
+
 api.on<{ id: number; title: string; body: string }>('remote:report', ({ id, title, body }) => {
   const session = findSession(id);
   notifier.waiting(id, `${title}${session ? ` · ${session.project.name}` : ''}`, body, !!session && session === active && document.hasFocus());
@@ -1059,6 +1086,7 @@ api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
   notifier.dismiss(id);
   session.term.write(`\r\n\x1b[2m[сессия завершена, код ${exitCode}]\x1b[0m\r\n`);
   updateSessionLabels(session);
+  if (session.remote) void renderTree(session, false);
 });
 
 // Правки вне хуков (руками, другим процессом) подхватываются опросом git status.
@@ -1095,22 +1123,28 @@ function openRepoMenu(anchor: HTMLElement, label: string, focus: 'first' | 'none
 }
 
 function showRepoMenu(repos: string[], anchor: HTMLElement, title: string, onPick: (repo: string) => void): void {
-  repoMenu.replaceChildren(
-    el('div', 'menu-title', title),
-    ...repos.map((repo) => {
-      const item = asMenuItem(el('div', 'menu-item'));
-      item.append(el('span', 'repo-name', basename(repo)), el('span', 'repo-path', repo));
-      item.addEventListener('click', () => {
-        closeRepoMenu(true);
-        onPick(repo);
-      });
-      return item;
-    }),
-  );
+  showPickMenu(anchor, title, [el('div', 'menu-title', title), ...repos.map((repo) => pickItem(basename(repo), repo, () => onPick(repo)))]);
+}
+
+function pickItem(name: string, detail: string | undefined, onPick: () => void): HTMLElement {
+  const item = asMenuItem(el('div', 'menu-item'));
+  item.append(el('span', 'repo-name', name));
+  if (detail) item.append(el('span', 'repo-path', detail));
+  item.addEventListener('click', (event) => {
+    // Выбор может открыть следующее меню: клик, дошедший до document, закрыл бы его сразу.
+    event.stopPropagation();
+    closeRepoMenu(true);
+    onPick();
+  });
+  return item;
+}
+
+function showPickMenu(anchor: HTMLElement, label: string, children: HTMLElement[]): void {
+  repoMenu.replaceChildren(...children);
   const rect = anchor.getBoundingClientRect();
   repoMenu.style.left = '';
   repoMenu.style.right = `${window.innerWidth - rect.right}px`;
-  openRepoMenu(anchor, title, 'first');
+  openRepoMenu(anchor, label, 'first');
 }
 
 async function showBranchMenu(root: TreeRoot, anchor: HTMLElement): Promise<void> {
@@ -1181,13 +1215,20 @@ function requestSession(anchor: HTMLElement = newSessionButton): void {
 
 // ---------- прошлые сессии ----------
 
-function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
+function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = ''): void {
   historyEl.classList.remove('selecting');
+  const noteEl = note ? [el('div', 'history-note', note)] : [];
   if (typeof entries === 'string') {
-    historyEl.replaceChildren(el('div', 'menu-title', entries));
+    historyEl.replaceChildren(el('div', 'menu-title', entries), ...noteEl);
     return;
   }
-  const keyOf = (entry: HistoryEntry): string => `${entry.repo}\n${entry.id}`;
+  const keyOf = (entry: HistoryEntry): string => `${entry.host ?? ''}\n${entry.repo}\n${entry.id}`;
+  // Спящая удалённая сессия убирается с клонами на хосте; отказ уборки (незапушенная работа) - окном.
+  const removeEntry = async (entry: HistoryEntry): Promise<void> => {
+    if (!entry.host) return api.deleteHistory(owner.id, entry.repo, entry.id);
+    const refused = await api.remoteRemoveAsleep(owner.id, entry.host, entry.id);
+    if (refused) alert(refused);
+  };
   const rows = new Map<string, { entry: HistoryEntry; item: HTMLElement; check: HTMLInputElement }>();
   let selected = new Set<string>();
   let anchor: string | null = null;
@@ -1225,17 +1266,18 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
   };
   const afterDelete = (): void => {
     sync();
-    if (!rows.size) renderHistory(owner, 'Прошлых сессий нет');
+    if (!rows.size) renderHistory(owner, 'Прошлых сессий нет', note);
     else rove(historyEl, '.history-item');
   };
   const deleteSelected = async (): Promise<void> => {
     const targets = [...rows].filter(([key]) => selected.has(key));
-    if (!targets.length || !confirm(`Удалить ${sessionsCount(targets.length)}? Журналы будут стёрты, продолжить эти сессии станет нельзя.`)) return;
+    const remote = targets.some(([, { entry }]) => entry.host) ? ' Клоны спящих удалённых сессий на хостах будут удалены, кроме клонов с незапушенной работой.' : '';
+    if (!targets.length || !confirm(`Удалить ${sessionsCount(targets.length)}? Журналы будут стёрты, продолжить эти сессии станет нельзя.${remote}`)) return;
     removeSelected.disabled = true;
     const failed: string[] = [];
     for (const [key, { entry }] of targets) {
       try {
-        await api.deleteHistory(owner.id, entry.repo, entry.id);
+        await removeEntry(entry);
         dropRow(key);
       } catch (err) {
         failed.push(`«${entry.title}»: ${String(err)}`);
@@ -1254,7 +1296,7 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
   for (const entry of entries) {
     const key = keyOf(entry);
     const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
-    item.title = `Продолжить: ${entry.title}\nВыделить: ${shortcut(mac, 'щелчок')}, диапазон: Shift+щелчок`;
+    item.title = `${entry.host ? `Разбудить на ${entry.host}` : 'Продолжить'}: ${entry.title}\nВыделить: ${shortcut(mac, 'щелчок')}, диапазон: Shift+щелчок`;
     const check = document.createElement('input');
     check.type = 'checkbox';
     check.className = 'history-check';
@@ -1270,9 +1312,11 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
     remove.tabIndex = -1;
     remove.addEventListener('click', (event) => {
       event.stopPropagation();
-      if (!confirm(`Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`)) return;
-      api
-        .deleteHistory(owner.id, entry.repo, entry.id)
+      const what = entry.host
+        ? `Удалить спящую сессию «${entry.title}» на ${entry.host}? Её клоны будут удалены, кроме клонов с незапушенной работой; продолжить её станет нельзя.`
+        : `Удалить сессию «${entry.title}»? Её журнал будет стёрт, продолжить её станет нельзя.`;
+      if (!confirm(what)) return;
+      removeEntry(entry)
         .then(() => {
           dropRow(key);
           afterDelete();
@@ -1282,13 +1326,14 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
     item.append(
       check,
       el('span', 'history-title', entry.title),
-      el('span', 'repo-path', `${basename(entry.repo)} · ${ago(entry.updated, Date.now())}`),
+      el('span', 'repo-path', `${basename(entry.repo)}${entry.host ? ` · ${entry.host} · спит` : ''} · ${ago(entry.updated, Date.now())}`),
       remove,
     );
     item.addEventListener('click', (event) => {
       // Пока что-то выделено, щелчок продолжает выделять: продолжить сессию случайно посреди отбора нельзя.
       if (event.shiftKey) pick(key, 'range');
       else if (commandKey(event) || selected.size) pick(key, 'toggle');
+      else if (entry.host) void wakeSession(owner, entry.host, entry.id, item);
       else void createSessionView(owner, entry.repo, undefined, entry.id).catch((err) => alert(String(err)));
     });
     item.addEventListener('keydown', (event) => {
@@ -1304,9 +1349,31 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string): void {
     });
     rows.set(key, { entry, item, check });
   }
-  historyEl.replaceChildren(bar, ...[...rows.values()].map((row) => row.item));
+  historyEl.replaceChildren(bar, ...noteEl, ...[...rows.values()].map((row) => row.item));
   sync();
   rove(historyEl, '.history-item');
+}
+
+const waking = new Set<string>();
+
+/** Разбуженная сессия получает вкладку как подхваченная; из «Истории» её строка уходит при следующей загрузке. */
+async function wakeSession(owner: Project, host: string, sid: string, item: HTMLElement): Promise<void> {
+  // Пробуждение идёт секунды (зеркало, доступы, ssh): повторный щелчок по той же строке ничего не начинает.
+  if (waking.has(sid)) return;
+  waking.add(sid);
+  item.classList.add('waking');
+  item.setAttribute('aria-busy', 'true');
+  try {
+    const info = await api.remoteWake(owner.id, host, sid);
+    await createSessionView(owner, info.dirs[0], undefined, undefined, info);
+  } catch (err) {
+    alert(`Сессия на ${host} не проснулась: ${ipcErrorText(err)}`);
+  } finally {
+    waking.delete(sid);
+    item.classList.remove('waking');
+    item.removeAttribute('aria-busy');
+    void loadHistory();
+  }
 }
 
 async function loadHistory(): Promise<void> {
@@ -1316,9 +1383,17 @@ async function loadHistory(): Promise<void> {
     return;
   }
   if (!historyEl.childElementCount) renderHistory(owner, 'Загрузка…');
-  const entries = await api.listHistory(owner.id).catch((err) => String(err));
+  const local = await api.listHistory(owner.id).catch((err) => String(err));
   if (project !== owner) return;
-  renderHistory(owner, typeof entries === 'string' || entries.length ? entries : 'Прошлых сессий нет');
+  const show = (entries: HistoryEntry[] | string, note = ''): void =>
+    renderHistory(owner, typeof entries === 'string' || entries.length ? entries : 'Прошлых сессий нет', note);
+  if (!owner.hosts?.length || typeof local === 'string') return show(local);
+  // «Прошлых сессий нет» до ответа хостов было бы неправдой: их спящие ещё могут прийти.
+  show(local.length ? local : 'Загрузка…', 'Спящие сессии на хостах загружаются…');
+  const remote = await api.listRemoteHistory(owner.id).catch((err) => ({ entries: [], unreachable: [{ host: 'хосты', reason: ipcErrorText(err) }] }));
+  if (project !== owner) return;
+  const note = remote.unreachable.map(({ host, reason }) => `${host}: нет связи (${reason}), спящие сессии не показаны`).join('\n');
+  show([...local, ...remote.entries].sort((a, b) => b.updated - a.updated), note);
 }
 
 function showSideView(history: boolean): void {
@@ -1432,62 +1507,213 @@ const statusHub = new StatusHub({
 
 // ---------- удалённая сессия ----------
 
-const remoteDialog = byId<HTMLDialogElement>('remote-dialog');
-const remoteHost = byId<HTMLSelectElement>('remote-host');
-const remoteRepo = byId<HTMLSelectElement>('remote-repo');
-const remoteBranch = byId<HTMLInputElement>('remote-branch');
-const remotePrompt = byId<HTMLTextAreaElement>('remote-prompt');
-const remoteError = byId('remote-error');
-const remoteCreate = byId<HTMLButtonElement>('remote-create');
+let remoteStarts = 0;
 
-function showRemoteError(text: string): void {
-  remoteError.textContent = text;
-  remoteError.hidden = !text;
+function markRemoteStart(delta: number): void {
+  remoteStarts += delta;
+  startMenuButton.textContent = remoteStarts ? '⇄…' : '▾';
+  startMenuButton.title = remoteStarts ? 'Запуск на хосте…' : 'Где запустить: локально или на хосте по SSH';
 }
 
-async function fillRemoteBranch(): Promise<void> {
-  const branch = await api.gitBranch(remoteRepo.value);
-  if (branch) remoteBranch.value = branch;
-}
-
-function openRemoteDialog(): void {
+/** Стрелка у «Новой сессии»: локально - в репозитории, на хосте - затем меню репозитория; ветка - текущая локальная, задание человек пишет в терминал сам (D-32, D-33). */
+function showStartMenu(anchor: HTMLElement): void {
   const owner = project;
-  if (!owner?.hosts?.length || remoteDialog.open) return;
-  remoteHost.replaceChildren(...owner.hosts.map((h) => new Option(h, h)));
-  remoteRepo.replaceChildren(...owner.repos.map((r) => new Option(`${basename(r)} · ${r}`, r)));
-  const own = active?.project === owner ? active.repo : owner.repos[0];
-  remoteRepo.value = own;
-  remoteBranch.value = '';
-  remotePrompt.value = '';
-  showRemoteError('');
-  remoteCreate.disabled = false;
-  void fillRemoteBranch();
-  remoteDialog.showModal();
+  if (!owner?.repos.length) return;
+  const onHost = (host: string): void => {
+    if (owner.repos.length === 1) return void startRemote(owner, host, owner.repos[0]);
+    showRepoMenu(owner.repos, anchor, `Репозиторий на ${host}`, (repo) => void startRemote(owner, host, repo));
+  };
+  showPickMenu(anchor, 'Где запустить Claude Code', [
+    el('div', 'menu-title', 'Локально'),
+    ...owner.repos.map((repo) => pickItem(basename(repo), repo, () => void newSession(repo))),
+    el('div', 'menu-title', 'На хосте'),
+    ...(owner.hosts ?? []).map((host) => pickItem(`⇄ ${host}`, undefined, () => onHost(host))),
+  ]);
 }
 
-remoteRepo.addEventListener('change', () => void fillRemoteBranch());
-byId('remote-cancel').addEventListener('click', () => remoteDialog.close());
-remoteCreate.addEventListener('click', async () => {
-  const owner = project;
-  if (!owner) return;
-  remoteCreate.disabled = true;
-  showRemoteError('Подключение к хосту и запуск сессии…');
+async function startRemote(owner: Project, host: string, repo: string): Promise<void> {
+  const branch = await api.gitBranch(repo);
+  if (!branch) return void alert(`Удалённая сессия на ${host}: у ${repo} нет текущей ветки, клонировать на хост нечего.`);
+  markRemoteStart(1);
   try {
-    const info = await api.createRemoteSession({
-      projectId: owner.id,
-      host: remoteHost.value,
-      repo: remoteRepo.value,
-      branch: remoteBranch.value.trim(),
-      prompt: remotePrompt.value.trim() || undefined,
-    });
-    remoteDialog.close();
+    const info = await api.createRemoteSession({ projectId: owner.id, host, repo, branch });
     await createSessionView(owner, info.dirs[0], undefined, undefined, info);
   } catch (error) {
-    showRemoteError(ipcErrorText(error));
-    remoteCreate.disabled = false;
+    const text = `Удалённая сессия на ${host}: ${ipcErrorText(error)}`;
+    if (!text.includes('Вход Claude на хостах')) alert(text);
+    else if (confirm(`${text}\n\nОткрыть «Вход Claude на хостах»?`)) void openClaudeTokenDialog();
+  } finally {
+    markRemoteStart(-1);
+  }
+}
+
+startMenuButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  if (repoMenu.hidden) showStartMenu(startMenuButton);
+  else closeRepoMenu(true);
+});
+
+// ---------- вход Claude на хостах ----------
+
+const claudeTokenDialog = byId<HTMLDialogElement>('claude-token-dialog');
+const claudeTokenValue = byId<HTMLInputElement>('claude-token-value');
+const claudeTokenStatus = byId('claude-token-status');
+const claudeTokenError = byId('claude-token-error');
+const claudeTokenClear = byId<HTMLButtonElement>('claude-token-clear');
+
+function showClaudeTokenStatus(status: ClaudeTokenStatus): void {
+  claudeTokenStatus.textContent = !status.set
+    ? 'Токен не задан: агент работает, только если на хосте выполнен claude auth login.'
+    : status.stored === 'disk'
+      ? 'Токен задан и хранится на этой машине зашифрованным средствами системы.'
+      : 'Токен задан только до выхода из Cyborg: шифрование системы недоступно (нет связки ключей), и на диск он не пишется.';
+  claudeTokenClear.disabled = !status.set;
+}
+
+function showClaudeTokenError(text: string): void {
+  claudeTokenError.textContent = text;
+  claudeTokenError.hidden = !text;
+}
+
+async function openClaudeTokenDialog(): Promise<void> {
+  if (claudeTokenDialog.open) return;
+  claudeTokenValue.value = '';
+  showClaudeTokenError('');
+  showClaudeTokenStatus(await api.claudeTokenStatus());
+  claudeTokenDialog.showModal();
+}
+
+byId('claude-token-cancel').addEventListener('click', () => claudeTokenDialog.close());
+byId('claude-token-save').addEventListener('click', async () => {
+  try {
+    const status = await api.setClaudeToken(claudeTokenValue.value);
+    claudeTokenValue.value = '';
+    showClaudeTokenError('');
+    showClaudeTokenStatus(status);
+    if (status.stored === 'disk') claudeTokenDialog.close();
+  } catch (error) {
+    showClaudeTokenError(ipcErrorText(error));
   }
 });
-newRemoteButton.addEventListener('click', openRemoteDialog);
+claudeTokenClear.addEventListener('click', async () => {
+  try {
+    showClaudeTokenStatus(await api.clearClaudeToken());
+    showClaudeTokenError('');
+  } catch (error) {
+    showClaudeTokenError(ipcErrorText(error));
+  }
+});
+api.on<void>('menu:claude-token', () => void openClaudeTokenDialog());
+
+// ---------- место на хостах ----------
+
+const hostDiskDialog = byId<HTMLDialogElement>('host-disk-dialog');
+const hostDiskHost = byId<HTMLSelectElement>('host-disk-host');
+const hostDiskWarning = byId('host-disk-warning');
+const hostDiskSummary = byId('host-disk-summary');
+const hostDiskBody = byId('host-disk-table').querySelector('tbody') as HTMLTableSectionElement;
+const hostDiskError = byId('host-disk-error');
+const hostDiskPurge = byId<HTMLButtonElement>('host-disk-purge');
+const hostDiskRefresh = byId<HTMLButtonElement>('host-disk-refresh');
+let hostDiskOwner: Project | null = null;
+let hostDisk: HostDisk | null = null;
+const hostDiskChecked = new Set<string>();
+
+function showHostDiskError(text: string): void {
+  hostDiskError.textContent = text;
+  hostDiskError.hidden = !text;
+}
+
+function renderHostDisk(): void {
+  const rows = hostDisk ? diskRows(hostDisk, Date.now()) : [];
+  hostDiskBody.replaceChildren(
+    ...rows.map((row) => {
+      const tr = el('tr');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.disabled = !row.selectable;
+      box.checked = hostDiskChecked.has(row.sid);
+      box.addEventListener('change', () => {
+        if (box.checked) hostDiskChecked.add(row.sid);
+        else hostDiskChecked.delete(row.sid);
+        hostDiskPurge.disabled = !hostDiskChecked.size;
+      });
+      const check = el('td');
+      check.append(box);
+      tr.append(check, ...[row.title, row.state, row.branch, row.size, row.active, row.dirty].map((text) => el('td', '', text)));
+      return tr;
+    }),
+  );
+  if (hostDisk && !rows.length) {
+    const empty = el('td', 'hint', 'Сессий на хосте нет.') as HTMLTableCellElement;
+    empty.colSpan = 7;
+    const tr = el('tr');
+    tr.append(empty);
+    hostDiskBody.append(tr);
+  }
+  hostDiskPurge.disabled = !hostDiskChecked.size;
+}
+
+async function loadHostDisk(): Promise<void> {
+  const owner = hostDiskOwner;
+  const host = hostDiskHost.value;
+  if (!owner || !host) return;
+  hostDisk = null;
+  hostDiskChecked.clear();
+  showHostDiskError('');
+  hostDiskSummary.textContent = `Считается место на ${host}…`;
+  hostDiskRefresh.disabled = true;
+  renderHostDisk();
+  try {
+    const disk = await api.remoteDisk(owner.id, host);
+    if (hostDiskHost.value !== host || hostDiskOwner !== owner) return;
+    hostDisk = disk;
+    hostDiskSummary.textContent = diskSummary(disk);
+  } catch (error) {
+    hostDiskSummary.textContent = '';
+    showHostDiskError(ipcErrorText(error));
+  } finally {
+    hostDiskRefresh.disabled = false;
+    renderHostDisk();
+  }
+}
+
+function openHostDiskDialog(owner: Project | null, host?: string, warning = ''): void {
+  if (!owner?.hosts?.length || hostDiskDialog.open) return;
+  hostDiskOwner = owner;
+  hostDiskHost.replaceChildren(...owner.hosts.map((h) => new Option(h, h)));
+  if (host) hostDiskHost.value = host;
+  hostDiskWarning.textContent = warning;
+  hostDiskWarning.hidden = !warning;
+  hostDiskDialog.showModal();
+  void loadHostDisk();
+}
+
+hostDiskHost.addEventListener('change', () => void loadHostDisk());
+hostDiskRefresh.addEventListener('click', () => void loadHostDisk());
+byId('host-disk-close').addEventListener('click', () => hostDiskDialog.close());
+hostDiskPurge.addEventListener('click', async () => {
+  const owner = hostDiskOwner;
+  if (!owner || !hostDisk) return;
+  const plan = purgePlan(hostDisk, hostDiskChecked);
+  if (!plan.sids.length) return;
+  if (!confirm(`Удалить отмеченные сессии (${plan.sids.length}) на ${hostDisk.host} вместе с клонами? Разговор спящей сессии тоже пропадёт.`)) return;
+  const force = plan.dirty.length > 0 && confirm(`В этих клонах есть незапушенная работа:\n\n${plan.dirty.join('\n')}\n\nУдалить и их? «Отмена» - оставить их на хосте.`);
+  hostDiskPurge.disabled = true;
+  try {
+    const report = purgeReport(await api.remotePurge(owner.id, hostDisk.host, plan.sids, force));
+    await loadHostDisk();
+    showHostDiskError(report);
+  } catch (error) {
+    showHostDiskError(ipcErrorText(error));
+    hostDiskPurge.disabled = false;
+  }
+});
+api.on<void>('menu:host-disk', () => openHostDiskDialog(project));
+api.on<{ host: string; free: number; total: number }>('remote:disk-low', ({ host, free }) => {
+  const owner = project?.hosts?.includes(host) ? project : (state.projects.find((p) => p.hosts?.includes(host)) ?? null);
+  openHostDiskDialog(owner, host, `На ${host} мало места: свободно ${formatBytes(free)}. Удалите ненужные сессии.`);
+});
 
 // Сессии, пережившие выход Cyborg, возвращаются вкладками: хосты проекта опрашиваются при открытии воркспейса.
 async function discoverRemote(owner: Project): Promise<void> {
@@ -1610,16 +1836,13 @@ const commandEditor = initCommandEditor({ mac, problems: () => commandBars.confi
 api.on<void>('menu:commands', () => void commandEditor.open());
 const promptEditor = initPromptEditor();
 api.on<void>('menu:prompts', () => void promptEditor.open());
-// Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта.
-// Пути клонов удалённой вкладки лежат на хосте, а попадание поиска открывается тем же просмотром файла: у удалённой вкладки поиск недоступен.
+// Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта; у удалённой вкладки - на хосте.
 const searchDialog = new SearchDialog({
   roots: () => (active ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),
   open: openAnywhere,
+  fs: () => active?.remote?.fs ?? localFs,
 });
-api.on<SearchMode>('menu:search', (mode) => {
-  if (active?.remote) return void alert('Поиск недоступен у удалённой вкладки: файлы лежат на хосте. Выберите локальную сессию проекта.');
-  searchDialog.open(mode);
-});
+api.on<SearchMode>('menu:search', (mode) => searchDialog.open(mode));
 // Расширения читаются по репозиториям проекта и по рабочему каталогу активной сессии.
 const extensionsDialog = new ExtensionsDialog({
   context: () => ({ repos: project?.repos ?? [], session: active && !active.remote ? { root: active.root, repo: active.repo } : null }),

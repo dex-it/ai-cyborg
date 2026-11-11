@@ -8,7 +8,7 @@ export const ISOLATION_PROMPT =
 export const SESSION_PROMPT = `${ISOLATION_PROMPT}\n\n${SUGGEST_PROMPT}`;
 
 /** Удалённая сессия работает в своих клонах: изоляции нет, зато итог сдаётся веткой, PR и вызовом report_done. */
-export const REMOTE_SYSTEM_PROMPT = `${SUGGEST_PROMPT}\n\nТы работаешь на сервере разработчика в собственных клонах репозиториев. Закончив, запушь ветку и открой PR, затем вызови инструмент report_done: status (ok, failed или blocked), summary - итог одним сообщением, branch и pr, если есть. Незапушенная работа при уборке клона не удаляется.`;
+export const REMOTE_SYSTEM_PROMPT = `${SUGGEST_PROMPT}\n\nТы работаешь на сервере разработчика в собственных клонах репозиториев. Закончив, запушь ветку и открой PR, затем вызови инструмент report_done: status (ok, failed или blocked), summary - итог одним сообщением, branch и pr, если есть. После итога сессия остаётся открытой: новое сообщение - новый круг работы со своим report_done. Незапушенная работа при уборке клона не удаляется.`;
 
 /**
  * Позиционные аргументы claude после --settings. Промпт стоит до --add-dir: тот вариадический
