@@ -763,6 +763,43 @@ describe('RemoteSessions: файловый канал, запасной путь
     assert.equal(a.alerts.filter((m) => /Уборка отказана/.test(m)).length, 1);
   });
 
+  it('поздний итог уборки у вкладки человека: отказ с путём - уведомлением, очередь никому не уходит', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const other = callerOf(a);
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    r.answers['status --porcelain'] = { stdout: ' M f\n' };
+    ssh.held = [];
+    const closing = a.remote.close(info.id, false);
+    await until(() => clock.queue.some((x) => x.alive && x.ms === 30_000));
+    clock.fire(30_000);
+    await assert.rejects(closing, /не ответил/);
+    ssh.held.forEach((release) => release());
+    await until(() => a.closedTabs.includes(info.id));
+    assert.equal(a.alerts.filter((m) => /Уборка отказана - оставлены dev1:\S+\/work\/\S+\/a/.test(m)).length, 1);
+    assert.deepEqual((a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(other)?.outbox ?? [], []);
+  });
+
+  it('поздний успешный итог уборки: вкладка закрыта, ни уведомления, ни сообщения вызвавшей', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const caller = callerOf(a);
+    const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
+    await until(() => r.spawned.length === 1);
+    ssh.held = [];
+    const closing = a.remote.close(info.id, false);
+    await until(() => clock.queue.some((x) => x.alive && x.ms === 30_000));
+    clock.fire(30_000);
+    await assert.rejects(closing, /не ответил/);
+    ssh.held.forEach((release) => release());
+    await until(() => a.closedTabs.includes(info.id));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(a.alerts.filter((m) => /Уборка отказана/.test(m)).length, 0);
+    assert.deepEqual((a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(caller)?.outbox ?? [], []);
+  });
 });
 
 describe('сон, «История» и пробуждение', () => {
@@ -860,6 +897,18 @@ describe('сон, «История» и пробуждение', () => {
     assert.deepEqual(got.entries.map((e) => [e.host, e.id]), [['dev1', sid]]);
     assert.deepEqual(got.unreachable.map((u) => u.host), ['slow']);
     assert.match(got.unreachable[0].reason, /не ответил/);
+  });
+
+  it('«История»: хост, к которому не подключиться, назван и показан в интерфейсе оффлайн с причиной', async (t) => {
+    const { ssh } = await asleep(t, 'human');
+    const b = side(t, ssh);
+    ssh.failure = { code: 255, stdout: '', stderr: 'Permission denied (publickey)' };
+    const got = await b.remote.history({ ...project, hosts: ['dev1'] });
+    assert.deepEqual(got.entries, []);
+    assert.equal(got.unreachable[0].host, 'dev1');
+    const ev = b.events.find((e) => e.channel === 'remote:link' && e.payload.host === 'dev1' && e.payload.online === false);
+    assert.ok(ev, 'вкладкам хоста показана потеря связи');
+    assert.match(String(ev.payload.reason), /\S/);
   });
 
   it('wake собирает доступы заново: токен, сменившийся во время сна, доходит до агента', async (t) => {

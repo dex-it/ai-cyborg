@@ -509,6 +509,42 @@ describe('daemon: сон и пробуждение', () => {
     assert.equal(launch.includes("'задание с"), false, 'задание первым сообщением не повторяется');
   });
 
+  it('wake проверяет предел хоста по умолчанию, а не limits прежнего spawn_agent', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { origin: 'tool', limits: { maxPerHost: 16, taskMs: 4 * 3600_000, idleMs: 30 * 60_000 } });
+    await putToSleep(r, c, sid);
+    for (let i = 0; i < 4; i++) await open(r, { sid: `bbbbbbbb-${i}`, origin: 'human' }, `inst-${i + 2}`);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => c.got.some((m) => m.rid === 9));
+    assert.match(String(c.got.find((m) => m.rid === 9)?.message), /предел 4/);
+    assert.equal(readMeta(r, sid).state, 'asleep');
+  });
+
+  it('wake спящей с узким пределом spawn_agent проходит, пока на хосте меньше умолчания', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { origin: 'tool', limits: { maxPerHost: 1, taskMs: 4 * 3600_000, idleMs: 30 * 60_000 } });
+    await putToSleep(r, c, sid);
+    await open(r, { sid: 'bbbbbbbb-1', origin: 'human' }, 'inst-2');
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 3);
+    assert.equal(readMeta(r, sid).state, 'live');
+  });
+
+  it('wake отказывает, если клон рабочего репозитория удалён или токена сессии нет; сессия остаётся спящей', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r);
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, cols: 100, rows: 30 } as Msg);
+    await until(() => c.got.some((m) => m.rid === 9));
+    assert.match(String(c.got.find((m) => m.rid === 9)?.message), /нет токена сессии/);
+    fs.rmSync(readMeta(r, sid).cwd, { recursive: true, force: true });
+    conn.receive({ type: 'wake', rid: 10, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => c.got.some((m) => m.rid === 10));
+    assert.match(String(c.got.find((m) => m.rid === 10)?.message), /клон рабочего репозитория сессии удалён/);
+    assert.equal(readMeta(r, sid).state, 'asleep');
+    assert.equal(r.spawned.length, 1);
+  });
+
   it('разбуженная сессия spawn_agent - сессия человека: таймаут задачи и простой в working её не закрывают', async (t) => {
     const r = rig(t, { tickMs: 10 });
     const { c, conn, sid } = await open(r, { origin: 'tool', limits: { maxPerHost: 4, taskMs: 3 * SLEEP_IDLE_MS, idleMs: 1000 } });

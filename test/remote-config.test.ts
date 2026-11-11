@@ -279,6 +279,66 @@ describe('daemon: зеркало настройки Claude', () => {
     assert.equal(second.c.of('hello')[0].config, HASH('d'));
   });
 
+  it('отказ установки плагина переживает демона: запуск после пересоздания повторяет установку и печатает заметку, а чистый итог больше не повторяется', async (t) => {
+    const r = rig(t);
+    let failing = true;
+    const claudeCalls: string[] = [];
+    const wire = (rr: Rig) => {
+      const exec = rr.daemon['deps'].exec;
+      rr.daemon['deps'].exec = async (file, args, opts) => {
+        if (file !== 'claude') return exec(file, args, opts);
+        claudeCalls.push(args.join(' '));
+        if (args[1] === 'install') return failing ? { code: 1, stdout: '', stderr: 'сеть' } : { code: 0, stdout: '', stderr: '' };
+        return { code: 0, stdout: '[]', stderr: '' };
+      };
+    };
+    wire(r);
+    const first = connect(r);
+    await until(() => first.c.of('hello').length === 1);
+    first.conn.receive({ type: 'config', rid: 2, hash: HASH('e'), files: [], marketplaces: [{ name: 'm', source: 'o/m' }], plugins: ['p@m'] } as Msg);
+    await until(() => first.c.of('config').length === 1);
+    first.conn.receive(spawnMsg());
+    await until(() => r.spawned.length === 1);
+    assert.match(output(first.c), /плагин p@m не поставлен: сеть/);
+    r.daemon.stop();
+
+    const again = rig(t, {}, r.home);
+    wire(again);
+    claudeCalls.length = 0;
+    const second = connect(again);
+    await until(() => second.c.of('hello').length === 1);
+    assert.equal(second.c.of('hello')[0].config, HASH('e'), 'зеркало на месте, Cyborg настройку заново не шлёт');
+    second.conn.receive(spawnMsg({ sid: 'bbbbbbbb-2' }));
+    await until(() => again.spawned.length === 1);
+    assert.ok(claudeCalls.includes('plugin install p@m'), 'установка недостающего плагина повторена без нового config');
+    assert.match(output(second.c), /плагин p@m не поставлен: сеть/);
+
+    failing = false;
+    claudeCalls.length = 0;
+    second.conn.receive(spawnMsg({ sid: 'cccccccc-3' }));
+    await until(() => again.spawned.length === 2);
+    assert.ok(claudeCalls.includes('plugin install p@m'));
+    claudeCalls.length = 0;
+    second.conn.receive(spawnMsg({ sid: 'dddddddd-4' }));
+    await until(() => again.spawned.length === 3);
+    assert.deepEqual(claudeCalls, [], 'после чистого итога установка не повторяется');
+  });
+
+  it('плагины: отказ marketplace add, marketplace list и plugin list - заметками', async () => {
+    const run = (fail: string) => {
+      const exec: SetupExec = async (file, args) => {
+        const line = `${file} ${args.join(' ')}`;
+        if (line.includes(fail)) return { code: 1, stdout: '', stderr: `нет: ${fail}` };
+        if (line.endsWith('marketplace list --json') || line.endsWith('plugin list --json')) return { code: 0, stdout: '[]', stderr: '' };
+        return { code: 0, stdout: '', stderr: '' };
+      };
+      return installPlugins(exec, { marketplaces: [{ name: 'm', source: 'o/m' }], plugins: ['p@m'] }, {});
+    };
+    assert.deepEqual(await run('marketplace add'), ['маркетплейс m не добавлен: нет: marketplace add']);
+    assert.deepEqual(await run('marketplace list'), ['плагины Claude не поставлены: claude plugin marketplace list - нет: marketplace list']);
+    assert.deepEqual(await run('plugin list'), ['плагины Claude не поставлены: claude plugin list - нет: plugin list']);
+  });
+
   it('серверы MCP и env пользователя - в mcp.json 0600 и окружении агента, mcp.json удаляется с выходом; клон доверен, память записана', async (t) => {
     const r = rig(t);
     const { c, conn } = connect(r);

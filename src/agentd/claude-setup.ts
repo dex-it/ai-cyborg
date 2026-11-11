@@ -57,6 +57,32 @@ export function configHash(root: string): string | null {
   return readManifest(root)?.hash ?? null;
 }
 
+/** Установка плагинов зеркала: что ставить и чем кончилась прошлая попытка; хранится на диске, чтобы отказ переживал демона. */
+export interface PluginState {
+  marketplaces: MarketplaceSpec[];
+  plugins: string[];
+  done: boolean;
+  notes: string[];
+}
+
+const pluginsFile = (root: string): string => path.join(root, 'plugins.json');
+
+export function readPluginState(root: string): PluginState | null {
+  try {
+    const v = JSON.parse(fs.readFileSync(pluginsFile(root), 'utf8')) as PluginState;
+    return Array.isArray(v.marketplaces) && Array.isArray(v.plugins) && Array.isArray(v.notes) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writePluginState(root: string, state: PluginState): void {
+  writeAtomic(pluginsFile(root), JSON.stringify(state), 0o600);
+}
+
+/** Установка не доведена до чистого итога: новому запуску её повторять. */
+export const pluginsPending = (state: PluginState | null): boolean => !!state && (!state.done || state.notes.length > 0);
+
 const exists = (file: string): boolean => {
   try {
     fs.lstatSync(file);

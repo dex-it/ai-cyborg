@@ -11,7 +11,7 @@ import { SearchRunner } from '../main/search-run.ts';
 import type { SearchReply } from '../shared/search-pattern.ts';
 import { projectDirName, readJournalFacts } from '../main/history.ts';
 import { agentAuthEnv, gitAuthEnv, readAuth } from './git-auth.ts';
-import { applyFiles, claudeHome, configHash, hostMcp, installPlugins, readEnv, trustClone, writeMemory, type ClaudeHome } from './claude-setup.ts';
+import { applyFiles, claudeHome, configHash, hostMcp, installPlugins, pluginsPending, readEnv, readPluginState, trustClone, writeMemory, writePluginState, type ClaudeHome } from './claude-setup.ts';
 import { hookSettings, track, type SessionEvent, type Tracked } from '../main/session-state.ts';
 import {
   DEFAULT_LIMITS,
@@ -124,7 +124,6 @@ export class Daemon {
   /** Установка плагинов зеркала: запуск claude её ждёт, чтобы агент стартовал с настройкой оператора. */
   private setup: Promise<void> = Promise.resolve();
   private setupRuns = 0;
-  private setupNotes: string[] = [];
   private stopped = false;
 
   constructor(private readonly deps: DaemonDeps) {
@@ -487,13 +486,31 @@ export class Daemon {
   /** Зеркало настройки Claude: файлы пишутся до ответа, плагины ставятся в фоне, запуск агента их ждёт. */
   private configure(msg: ConfigMsg & Msg, reply: (m: Record<string, unknown>) => void): void {
     applyFiles(this.root, this.claude, msg);
+    const marketplaces = Array.isArray(msg.marketplaces) ? msg.marketplaces : [];
+    const plugins = Array.isArray(msg.plugins) ? msg.plugins : [];
+    try {
+      writePluginState(this.root, { marketplaces, plugins, done: false, notes: [] });
+    } catch {
+      /* без записи установка идёт по этому config, но не повторится после перезапуска */
+    }
     reply({});
-    const plugins = { marketplaces: msg.marketplaces, plugins: msg.plugins };
-    const env = { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes', ...agentAuthEnv(readAuth(msg.auth)) };
+    this.installPlugins(readAuth(msg.auth));
+  }
+
+  /** Установка по сохранённому составу; итог - на диск: отказ не теряется с демоном и повторяется при следующем запуске. */
+  private installPlugins(auth: Auth): void {
+    const state = readPluginState(this.root);
+    if (!state) return;
+    const env = { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes', ...agentAuthEnv(auth) };
     this.setupRuns++;
     this.setup = this.setup
       .then(async () => {
-        this.setupNotes = await installPlugins(this.deps.exec, plugins, env).catch((e: Error) => [`плагины Claude не поставлены: ${e.message}`]);
+        const notes = await installPlugins(this.deps.exec, state, env).catch((e: Error) => [`плагины Claude не поставлены: ${e.message}`]);
+        try {
+          writePluginState(this.root, { ...state, done: true, notes });
+        } catch {
+          /* итог остаётся «не доведено»: следующий запуск повторит */
+        }
       })
       .finally(() => void this.setupRuns--);
   }
@@ -532,7 +549,7 @@ export class Daemon {
   private async wake(conn: Conn, sess: Sess, msg: Msg, reply: (m: Record<string, unknown>) => void, fail: (m: string) => void): Promise<void> {
     await sess.sleeping;
     if (sess.meta.state !== 'asleep' || sess.closing) return fail('сессия не спит');
-    const max = Number((msg.limits as { maxPerHost?: unknown } | undefined)?.maxPerHost) || sess.meta.limits.maxPerHost;
+    const max = DEFAULT_LIMITS.maxPerHost;
     if (this.liveCount() >= max) return fail(`на хосте уже ${this.liveCount()} удалённых сессий (предел ${max})`);
     if (!fs.existsSync(sess.meta.cwd)) return fail('клон рабочего репозитория сессии удалён');
     if (typeof msg.token !== 'string' || !msg.token) return fail('нет токена сессии');
@@ -579,11 +596,12 @@ export class Daemon {
       fs.writeFileSync(file(name), content, { mode });
       fs.chmodSync(file(name), mode);
     };
+    if (this.setupRuns === 0 && pluginsPending(readPluginState(this.root))) this.installPlugins(sess.auth);
     if (this.setupRuns > 0) {
       this.progress(sess, 'ставятся плагины Claude…');
       await Promise.race([this.setup, new Promise((resolve) => setTimeout(resolve, SETUP_WAIT_MS).unref())]);
     }
-    for (const note of this.setupNotes) this.progress(sess, note);
+    for (const note of readPluginState(this.root)?.notes ?? []) this.progress(sess, note);
     const port = await this.listenProxy(sess);
     if (this.stopped || sess.closing || !this.sessions.has(sess.sid)) {
       this.teardownIo(sess);
