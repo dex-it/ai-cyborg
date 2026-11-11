@@ -34,8 +34,9 @@ class FakeSsh implements SshTransport {
   blocked = false;
   /** Хосты, ssh к которым не отвечает: preflight висит, как при недоступном сервере до ConnectTimeout. */
   hang = new Set<string>();
-  /** Не null - close копится здесь и доходит до демона, когда тест вызовет отложенное: долгая уборка на хосте. */
+  /** Не null - запросы типов hold копятся здесь и доходят до демона, когда тест вызовет отложенное: долгая уборка или занятый канал. */
   held: (() => void)[] | null = null;
+  hold = new Set(['close']);
   constructor(public daemon: Daemon, private readonly home: string) {}
 
   async run(alias: string, script: string): Promise<SshResult> {
@@ -63,7 +64,7 @@ class FakeSsh implements SshTransport {
       write: (line) => {
         const msg = JSON.parse(line) as Msg;
         this.seen.push(msg);
-        if (this.held && msg.type === 'close') this.held.push(() => conn.receive(msg));
+        if (this.held && this.hold.has(msg.type)) this.held.push(() => conn.receive(msg));
         else if (!this.blocked) conn.receive(msg);
       },
       onLine: (cb) => void lines.push(cb),
@@ -754,7 +755,7 @@ describe('RemoteSessions: файловый канал, запасной путь
     const closing = a.remote.close(info.id, false);
     await until(() => clock.queue.some((x) => x.alive && x.ms === 30_000));
     clock.fire(30_000);
-    await assert.rejects(closing, /не ответил за 30 с: если уборка закончится позже, её итог придёт отдельно/);
+    await assert.rejects(closing, /не ответил за 30 с: если уборка оставит клоны, отказ с путём придёт отдельно/);
     assert.deepEqual(a.closedTabs, []);
     ssh.held.forEach((release) => release());
     const outbox = (): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(caller)?.outbox ?? [];
@@ -780,6 +781,25 @@ describe('RemoteSessions: файловый канал, запасной путь
     await until(() => a.closedTabs.includes(info.id));
     assert.equal(a.alerts.filter((m) => /Уборка отказана - оставлены dev1:\S+\/work\/\S+\/a/.test(m)).length, 1);
     assert.deepEqual((a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(other)?.outbox ?? [], []);
+  });
+
+  it('поздний отказ уборки уходит и сессии, вызвавшей close_agent над вкладкой человека', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const caller = callerOf(a);
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    r.answers['status --porcelain'] = { stdout: ' M f\n' };
+    ssh.held = [];
+    const closing = a.remote.close(info.id, false, caller);
+    await until(() => clock.queue.some((x) => x.alive && x.ms === 30_000));
+    clock.fire(30_000);
+    await assert.rejects(closing, /не ответил/);
+    ssh.held.forEach((release) => release());
+    const outbox = (): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(caller)?.outbox ?? [];
+    await until(() => outbox().some((m) => /Уборка отказана - оставлены dev1:\S+\/work\/\S+\/a/.test(m)));
+    assert.equal(outbox().length, 1);
   });
 
   it('поздний успешный итог уборки: вкладка закрыта, ни уведомления, ни сообщения вызвавшей', async (t) => {
@@ -897,6 +917,22 @@ describe('сон, «История» и пробуждение', () => {
     assert.deepEqual(got.entries.map((e) => [e.host, e.id]), [['dev1', sid]]);
     assert.deepEqual(got.unreachable.map((u) => u.host), ['slow']);
     assert.match(got.unreachable[0].reason, /не ответил/);
+  });
+
+  it('«История»: живой канал, не ответивший на list, вкладки хоста «нет связи» не помечает', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    ssh.hold = new Set(['list']);
+    ssh.held = [];
+    const got = a.remote.history(project);
+    await until(() => clock.queue.some((x) => x.alive && x.ms === 15_000));
+    clock.fire(15_000);
+    assert.deepEqual((await got).unreachable.map((u) => u.host), ['dev1']);
+    assert.equal(a.events.some((e) => e.channel === 'remote:link' && e.payload.online === false), false);
+    ssh.held.forEach((release) => release());
   });
 
   it('«История»: хост, к которому не подключиться, назван и показан в интерфейсе оффлайн с причиной', async (t) => {

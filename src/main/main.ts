@@ -30,7 +30,7 @@ import { ProjectStore } from './projects';
 import { SessionManager, sameDirs } from './sessions';
 import { McpServer } from './mcp';
 import { createSessionTools, Handoffs, type RemoteToolsPort, type SessionsPort } from './session-tools';
-import { collectGitAuth } from './remote/auth';
+import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
 import { ClaudeTokenStore } from './remote/claude-token';
 import { buildMirror, readMemory } from './remote/claude-config';
 import { bundleOf } from './remote/install';
@@ -92,7 +92,7 @@ const closeSession = (id: number): void => {
 const remoteTools: RemoteToolsPort = {
   prepare: (host, repo, limits) => remote.prepare(host, repo, limits),
   report: (id, report) => remote.report(id, report),
-  close: (id, keep) => remote.close(id, keep),
+  close: (id, keep, caller) => remote.close(id, keep, caller),
 };
 const hostsOf = (dirs: string[]): string[] => projects.load().projects.find((p) => sameDirs(p.repos, dirs))?.hosts ?? [];
 const sessionsPort: SessionsPort = {
@@ -120,7 +120,7 @@ const remote = new RemoteSessions({
   },
   closeTab: closeSession,
   alert: (title, text) => void dialog.showMessageBox({ type: 'warning', message: title, detail: text }),
-  gitAuth: (urls) => collectGitAuth(urls, createCliRunner(app.getPath('userData'))),
+  gitAuth: (urls) => collectGitAuth(urls, createCliRunner(app.getPath('userData'), undefined, HOST_AGNOSTIC_TOKEN_ENV)),
   claudeToken: () => claudeToken.get(),
   mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
   memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),

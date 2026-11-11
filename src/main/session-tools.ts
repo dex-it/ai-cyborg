@@ -422,7 +422,7 @@ export interface SessionsPort {
 export interface RemoteToolsPort {
   prepare(host: string, repo: string, limits?: Limits): Promise<void>;
   report(id: number, report: ReportArgs): Promise<string>;
-  close(id: number, keep: boolean): Promise<string>;
+  close(id: number, keep: boolean, caller?: number): Promise<string>;
 }
 
 export function createSessionTools(
@@ -462,7 +462,7 @@ export function createSessionTools(
         if (typeof valid === 'string') throw new Error(valid);
         if (valid.id !== caller) {
           const target = peers.find((p) => p.id === valid.id);
-          if (target?.host && remote) return remote.close(valid.id, false);
+          if (target?.host && remote) return remote.close(valid.id, false, caller);
           close(valid.id);
           return `Вкладка сессии ${valid.id} закрыта.`;
         }
@@ -477,7 +477,7 @@ export function createSessionTools(
       if (name === CLOSE_AGENT_TOOL && remote) {
         const valid = validateCloseAgent(value, peers);
         if (typeof valid === 'string') throw new Error(valid);
-        return remote.close(valid.id, valid.keep);
+        return remote.close(valid.id, valid.keep, caller);
       }
       if (name === SPAWN_AGENT_TOOL && remote) {
         const valid = validateSpawn(value, dirs, sessions.hostsOf?.(dirs) ?? []);

@@ -34,7 +34,7 @@ export function safeRel(rel: unknown): rel is string {
 }
 
 function writeAtomic(file: string, data: Buffer | string, mode: number): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.cyborg-tmp-${process.pid}`;
   fs.writeFileSync(tmp, data, { mode });
   fs.chmodSync(tmp, mode);
@@ -101,7 +101,8 @@ export function applyFiles(root: string, ch: ClaudeHome, msg: ConfigMsg): void {
     if (!safeRel(f?.rel) || !FILE_REL.test(f.rel) || typeof f.b64 !== 'string') continue;
     const target = path.join(ch.configDir, f.rel);
     if (!prev.has(f.rel) && exists(target) && !exists(target + ORIG)) fs.renameSync(target, target + ORIG);
-    writeAtomic(target, Buffer.from(f.b64, 'base64'), f.mode === 0o755 ? 0o755 : 0o644);
+    // В settings.json и хуках бывают секреты окружения: на общем хосте зеркало читает только владелец.
+    writeAtomic(target, Buffer.from(f.b64, 'base64'), f.mode === 0o755 ? 0o700 : 0o600);
     next.push(f.rel);
   }
   const kept = new Set(next);

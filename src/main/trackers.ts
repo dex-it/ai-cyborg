@@ -330,8 +330,9 @@ export class TrackerSettingsStore {
 // ---------- запуск gh и glab ----------
 
 /** gh и glab берут токен из своей конфигурации; читает его только сбор доступов удалённого агента (remote/auth.ts, ADR-0020). cwd вне репозиториев: glab не выводит хост из текущего. */
-export function createCliRunner(cwd: string, limits = CLI_LIMITS): CliRunner & JiraRunner {
-  const env = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' };
+export function createCliRunner(cwd: string, limits = CLI_LIMITS, dropEnv: readonly string[] = []): CliRunner & JiraRunner {
+  const env: NodeJS.ProcessEnv = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' };
+  for (const name of dropEnv) delete env[name];
   return (cmd, args) =>
     new Promise((resolve) => {
       execFile(cmd, args, { cwd, env, timeout: limits.timeoutMs, maxBuffer: limits.maxBuffer }, (error, stdout, stderr) => {

@@ -131,7 +131,9 @@ describe('зеркало настройки Claude: приём на хосте',
     ], HASH('a')));
     assert.equal(fs.readFileSync(path.join(ch.configDir, 'settings.json'), 'utf8'), '{"m":1}');
     assert.equal(fs.readFileSync(path.join(ch.configDir, 'settings.json.cyborg-orig'), 'utf8'), '{"own":1}');
-    assert.equal(fs.statSync(path.join(ch.configDir, 'hooks', 'a.sh')).mode & 0o777, 0o755);
+    assert.equal(fs.statSync(path.join(ch.configDir, 'hooks', 'a.sh')).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(ch.configDir, 'settings.json')).mode & 0o777, 0o600, 'зеркало читает только владелец');
+    assert.equal(fs.statSync(path.join(ch.configDir, 'hooks')).mode & 0o777, 0o700);
     assert.equal(fs.existsSync(path.join(home, 'evil')), false);
     assert.equal(fs.existsSync(path.join(ch.configDir, 'projects')), false);
     assert.equal(configHash(root), HASH('a'));

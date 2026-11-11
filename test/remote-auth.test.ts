@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { agentAuthEnv, gitAuthEnv, readAuth } from '../src/agentd/git-auth';
-import { collectGitAuth } from '../src/main/remote/auth';
+import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from '../src/main/remote/auth';
 import { ClaudeTokenStore, type TokenCrypt } from '../src/main/remote/claude-token';
-import type { CliRunner } from '../src/main/trackers';
+import { createCliRunner, type CliRunner } from '../src/main/trackers';
 
 const tmp = (t: { after: (fn: () => void) => void }): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-auth-'));
@@ -152,5 +152,19 @@ describe('ClaudeTokenStore', () => {
     assert.throws(() => store.set('короткий'), /claude setup-token/);
     assert.throws(() => store.set(`${TOKEN} ${TOKEN}`), /claude setup-token/);
     assert.equal(store.get(), TOKEN);
+  });
+});
+
+describe('runner сбора доступов', () => {
+  it('gh и glab не видят переменных токена, не привязанных к хосту: токен оператора не уходит хосту origin или маркетплейса', async (t) => {
+    const names = [...HOST_AGNOSTIC_TOKEN_ENV, 'GH_TOKEN'];
+    const saved = names.map((n) => [n, process.env[n]] as const);
+    t.after(() => saved.forEach(([n, v]) => (v === undefined ? delete process.env[n] : (process.env[n] = v))));
+    names.forEach((n) => (process.env[n] = `v-${n}`));
+    // Вместо gh - node: проверяется окружение, которое runner отдаёт любой команде.
+    const run = createCliRunner(os.tmpdir(), undefined, HOST_AGNOSTIC_TOKEN_ENV) as unknown as (cmd: string, args: string[]) => Promise<{ stdout: string }>;
+    const res = await run(process.execPath, ['-e', `process.stdout.write(JSON.stringify(${JSON.stringify(names)}.map((n) => process.env[n] ?? null)))`]);
+    assert.deepEqual(JSON.parse(res.stdout), [...HOST_AGNOSTIC_TOKEN_ENV.map(() => null), 'v-GH_TOKEN']);
+    assert.equal(process.env.GITLAB_TOKEN, 'v-GITLAB_TOKEN', 'окружение самого Cyborg не тронуто');
   });
 });

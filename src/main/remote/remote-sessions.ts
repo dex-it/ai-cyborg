@@ -314,7 +314,7 @@ export class RemoteSessions implements RemoteToolsPort {
     return {
       write: (data) => void link().send({ type: 'input', sid: entry.sid, data }),
       resize: (cols, rows) => void link().send({ type: 'resize', sid: entry.sid, cols, rows }),
-      kill: () => void this.close(entry.id, false, false).catch((e: Error) => this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, e.message)),
+      kill: () => void this.close(entry.id, false, undefined, false).catch((e: Error) => this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, e.message)),
     };
   }
 
@@ -429,8 +429,8 @@ export class RemoteSessions implements RemoteToolsPort {
 
   private async asleepOn(project: Project, host: string): Promise<HistoryEntry[]> {
     const found: HistoryEntry[] = [];
+    const link = this.link(host);
     try {
-      const link = this.link(host);
       await link.ensure();
       const list = await link.request({ type: 'list' });
       for (const item of list.sessions as Record<string, unknown>[]) {
@@ -441,7 +441,8 @@ export class RemoteSessions implements RemoteToolsPort {
       }
       return found;
     } catch (error) {
-      this.deps.emit('remote:link', { host, online: false, reason: (error as Error).message });
+      // Живой канал, не ответивший на list (занят зеркалом), связи не терял: метку вкладок ведёт только состояние канала.
+      if (link.state !== 'online') this.deps.emit('remote:link', { host, online: false, reason: (error as Error).message });
       throw error;
     } finally {
       this.closeIfIdle(host);
@@ -662,14 +663,14 @@ export class RemoteSessions implements RemoteToolsPort {
     return 'Итог принят. Сессия остаётся открытой: следующее сообщение начнёт новый круг работы, и report_done снова станет доступен.';
   }
 
-  /** Завершение по правилам close_agent; tab - снять вкладку (инструмент), а не крестик, который её уже снял. */
-  async close(id: number, keep: boolean, tab = true): Promise<string> {
+  /** Завершение по правилам close_agent; tab - снять вкладку (инструмент), а не крестик, который её уже снял; caller - сессия, вызвавшая инструмент. */
+  async close(id: number, keep: boolean, caller?: number, tab = true): Promise<string> {
     const entry = this.byId.get(id);
     if (!entry) throw new Error(`сессия ${id} не найдена`);
-    return (await this.shut(entry, keep, tab)).text;
+    return (await this.shut(entry, keep, tab, caller)).text;
   }
 
-  private async shut(entry: Entry, keep: boolean, tab: boolean): Promise<{ text: string; kept: boolean }> {
+  private async shut(entry: Entry, keep: boolean, tab: boolean, caller?: number): Promise<{ text: string; kept: boolean }> {
     const link = this.link(entry.host);
     if (link.state !== 'online') throw new Error(`нет связи с ${entry.host}`);
     entry.closing = true;
@@ -677,7 +678,7 @@ export class RemoteSessions implements RemoteToolsPort {
     const reply = link.request({ type: 'close', sid: entry.sid, keep }, CLOSE_LATE_MS);
     let timer: unknown = null;
     const slow = new Promise<never>((_resolve, reject) => {
-      timer = this.timers.set(() => reject(new SlowClose(`хост ${entry.host} не ответил за ${CLOSE_WAIT_MS / 1000} с: если уборка закончится позже, её итог придёт отдельно`)), CLOSE_WAIT_MS);
+      timer = this.timers.set(() => reject(new SlowClose(`хост ${entry.host} не ответил за ${CLOSE_WAIT_MS / 1000} с: если уборка оставит клоны, отказ с путём придёт отдельно`)), CLOSE_WAIT_MS);
     });
     try {
       const done = this.settle(entry, keep, tab, await Promise.race([reply, slow]));
@@ -688,7 +689,8 @@ export class RemoteSessions implements RemoteToolsPort {
         reply.then(
           (msg) => {
             const late = this.settle(entry, keep, tab, msg);
-            if (late?.kept && entry.spawnedBy !== undefined) this.deps.sessions.enqueue(entry.spawnedBy, late.text);
+            if (!late?.kept) return;
+            for (const to of new Set([caller, entry.spawnedBy])) if (to !== undefined) this.deps.sessions.enqueue(to, late.text);
           },
           () => undefined,
         );
