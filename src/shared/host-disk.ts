@@ -15,6 +15,8 @@ export interface DiskSession {
   bytes: number | null;
   /** Клоны, которые удаляются только вторым подтверждением, с причиной. */
   dirty: { path: string; reason: string }[];
+  /** false - замер не уложился в отведённое время: размер и клоны не проверены. */
+  measured: boolean;
 }
 
 export interface DiskSpace {
@@ -79,6 +81,7 @@ export function readHostDisk(host: string, value: unknown): HostDisk {
         lastActive: num(s.lastActive),
         bytes: typeof s.bytes === 'number' ? num(s.bytes) : null,
         dirty: pairs(s.dirty),
+        measured: s.measured !== false,
       },
     ];
   });

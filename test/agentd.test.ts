@@ -353,6 +353,7 @@ describe('daemon: report и close', () => {
     ['незапушенные коммиты', 'rev-list', { stdout: '2\n' }, 'незапушенные коммиты'],
     ['изменения в рабочем дереве', 'status --porcelain', { stdout: ' M f.ts\n' }, 'изменения в рабочем дереве'],
     ['stash', 'stash list', { stdout: 'stash@{0}: WIP\n' }, 'stash'],
+    ['git с ошибкой', 'status --porcelain', { code: 128 }, 'клон не проверен: git завершился с ошибкой или не ответил'],
   ] as const) {
     it(`close: клон с причиной «${name}» остаётся, ответ называет путь`, async (t) => {
       const r = rig(t);
@@ -912,8 +913,8 @@ describe('daemon: место на хосте', () => {
     return c.got.find((m) => m.rid === rid) as Msg;
   };
 
-  async function scene(t: { after: (fn: () => void) => void }) {
-    const r = rig(t);
+  async function scene(t: { after: (fn: () => void) => void }, extra: Parameters<typeof rig>[1] = {}) {
+    const r = rig(t, extra);
     const live = await open(r, { sid: 'aaaaaaaa-1' }, 'i1');
     const done = await open(r, { sid: 'bbbbbbbb-2' }, 'i2');
     r.answers['status --porcelain'] = { stdout: ' M f.ts\n' };
@@ -942,6 +943,35 @@ describe('daemon: место на хосте', () => {
     const live1 = path.join(r.home, '.cyborg', 'work', 'aaaaaaaa-1');
     assert.equal(r.execs.some((e) => e.file === 'git' && e.cwd?.startsWith(live1)), false, 'клоны работающей сессии не проверяются');
     assert.ok(Number(res.total) > 0);
+  });
+
+  it('disk: замер дольше бюджета не держит ответ - замеренные с размером, незамеренная помечена', async (t) => {
+    const { r, live } = await scene(t, { diskBudgetMs: 300 });
+    let release = (): void => {};
+    r.hold['work/bbbbbbbb-2'] = new Promise((resolve) => (release = resolve));
+    t.after(() => release());
+    const res = await ask(live.conn, live.c, { type: 'disk' });
+    const by = Object.fromEntries((res.sessions as { sid: string }[]).map((s) => [s.sid, s])) as unknown as Record<string, { measured: boolean; bytes: number | null; dirty: unknown[] }>;
+    assert.deepEqual(by['bbbbbbbb-2'], { ...by['bbbbbbbb-2'], measured: false, bytes: null, dirty: [] });
+    assert.equal(by['aaaaaaaa-1'].measured, true);
+    assert.equal(by['cccccccc-3'].bytes, 123 * 1024);
+  });
+
+  it('disk: одновременно замеряются не больше четырёх сессий', async (t) => {
+    const r = rig(t);
+    const live = await open(r, { sid: 'aaaaaaaa-1' });
+    for (let i = 0; i < 10; i++) fs.mkdirSync(path.join(r.home, '.cyborg', 'work', `dddddddd-${i}`, 'x'), { recursive: true });
+    let release = (): void => {};
+    r.hold['du -sk'] = new Promise((resolve) => (release = resolve));
+    t.after(() => release());
+    live.conn.receive({ type: 'disk', rid: 900 } as Msg);
+    await until(() => r.inflight.now === 4);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(r.inflight.peak, 4);
+    release();
+    await until(() => live.c.got.some((m) => m.rid === 900));
+    const res = live.c.got.find((m) => m.rid === 900) as Msg;
+    assert.equal((res.sessions as { measured: boolean }[]).filter((s) => s.measured).length, 11);
   });
 
   it('purge: работающая - отказ, грязные без force остаются, с force и у сироты удаляются вместе с записью', async (t) => {

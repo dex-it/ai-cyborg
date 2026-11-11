@@ -59,6 +59,7 @@ export interface DaemonDeps {
   tickMs?: number;
   killGraceMs?: number;
   sleepMs?: number;
+  diskBudgetMs?: number;
   /** Демон выходит по команде shutdown, когда сессий нет. */
   onShutdown?: () => void;
 }
@@ -394,7 +395,7 @@ export class Daemon {
   /** Место на хосте: каталоги work/ с диска, в том числе завершённые с оставленными клонами - демон их в памяти не держит. */
   private async disk(): Promise<Record<string, unknown>> {
     const work = path.join(this.root, 'work');
-    const sessions: Record<string, unknown>[] = [];
+    const items: { sid: string; live: boolean; meta: SessionMeta | null; row: Record<string, unknown> }[] = [];
     let names: string[] = [];
     try {
       names = fs.readdirSync(work).sort();
@@ -406,13 +407,6 @@ export class Daemon {
       const sess = this.sessions.get(sid);
       const meta = sess?.meta ?? this.readMetaFile(sid);
       const state = sess ? (sess.meta.state === 'asleep' ? 'asleep' : 'live') : meta ? 'done' : 'orphan';
-      const dirty: { path: string; reason: string }[] = [];
-      if (state !== 'live') {
-        for (const c of this.clonesOf(sid, meta)) {
-          const reason = await this.dirtyReason(c.path);
-          if (reason) dirty.push({ path: c.path, reason });
-        }
-      }
       let lastActive = meta?.lastActive ?? 0;
       if (!lastActive) {
         // Каталог мог уйти между readdir и stat (уборка закрытой сессии): строка не нужна, ответ не должен падать.
@@ -420,9 +414,32 @@ export class Daemon {
         if (!st) continue;
         lastActive = st.mtimeMs;
       }
-      sessions.push({ sid, state, title: meta ? this.title(meta) : '', branch: meta?.branch ?? '', dirs: meta?.dirs ?? [], lastActive, bytes: await this.du(path.join(work, sid)), dirty });
+      const row = { sid, state, title: meta ? this.title(meta) : '', branch: meta?.branch ?? '', dirs: meta?.dirs ?? [], lastActive, bytes: null, dirty: [], measured: false };
+      items.push({ sid, live: state === 'live', meta, row });
     }
-    return { ...(this.space() ?? { free: 0, total: 0 }), sessions };
+    let open = true;
+    const measure = async (item: (typeof items)[number]): Promise<void> => {
+      const dirty: { path: string; reason: string }[] = [];
+      if (!item.live) {
+        for (const c of this.clonesOf(item.sid, item.meta)) {
+          if (!open) return;
+          const reason = await this.dirtyReason(c.path);
+          if (reason) dirty.push({ path: c.path, reason });
+        }
+      }
+      const bytes = open ? await this.du(path.join(work, item.sid)) : null;
+      if (open) Object.assign(item.row, { bytes, dirty, measured: true });
+    };
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (open && next < items.length) await measure(items[next++]);
+    };
+    let timer: NodeJS.Timeout | undefined;
+    const budget = new Promise<void>((resolve) => (timer = setTimeout(resolve, this.deps.diskBudgetMs ?? DISK_BUDGET_MS)));
+    await Promise.race([Promise.all(Array.from({ length: Math.min(DISK_POOL, items.length) }, worker)), budget]);
+    open = false;
+    clearTimeout(timer);
+    return { ...(this.space() ?? { free: 0, total: 0 }), sessions: items.map((i) => i.row) };
   }
 
   /** Удаление отмеченного: работающие не трогаются, грязные клоны - только с force. */
@@ -981,17 +998,21 @@ export class Daemon {
   }
 
   private async dirtyReason(clone: string): Promise<string | null> {
-    const run = (args: string[], cwd = clone): Promise<ExecResult> => this.deps.exec('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], { cwd });
+    const run = (args: string[], cwd = clone): Promise<ExecResult> =>
+      this.deps.exec('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], { cwd, timeoutMs: GIT_PROBE_TIMEOUT_MS });
     const trees = await run(['worktree', 'list', '--porcelain']);
     const paths = trees.code === 0 ? trees.stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)) : [clone];
     for (const tree of paths.length ? paths : [clone]) {
       const status = await run(['status', '--porcelain=v1', '--untracked-files=all'], tree);
-      if (status.code !== 0 || status.stdout.trim()) return 'изменения в рабочем дереве';
+      if (status.code !== 0) return UNCHECKED_CLONE;
+      if (status.stdout.trim()) return 'изменения в рабочем дереве';
     }
     const ahead = await run(['rev-list', '--count', '--branches', '--not', '--remotes']);
-    if (ahead.code !== 0 || Number(ahead.stdout.trim()) !== 0) return 'незапушенные коммиты';
+    if (ahead.code !== 0) return UNCHECKED_CLONE;
+    if (Number(ahead.stdout.trim()) !== 0) return 'незапушенные коммиты';
     const stash = await run(['stash', 'list']);
-    if (stash.code !== 0 || stash.stdout.trim()) return 'stash';
+    if (stash.code !== 0) return UNCHECKED_CLONE;
+    if (stash.stdout.trim()) return 'stash';
     return null;
   }
 
@@ -1101,6 +1122,13 @@ export function uniqueNames(names: string[]): string[] {
 
 const SID = /^[0-9a-f-]{8,64}$/;
 const DU_TIMEOUT_MS = 20_000;
+const GIT_PROBE_TIMEOUT_MS = 20_000;
+/** Сессий, которые окно «Место на хостах» замеряет одновременно (допущение, D-36). */
+const DISK_POOL = 4;
+/** Ответ на disk уходит не позже: у Cyborg предел 120 с, остаток - на канал (допущение, D-36). */
+const DISK_BUDGET_MS = 90_000;
+// Клон, который git не проверил, остаётся на хосте: незапушенная работа в нём не исключена.
+const UNCHECKED_CLONE = 'клон не проверен: git завершился с ошибкой или не ответил';
 
 /** Дольше запуск агента установку плагинов не ждёт: агент стартует без недоставленных. */
 const SETUP_WAIT_MS = 10 * 60_000;

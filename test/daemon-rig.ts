@@ -48,11 +48,15 @@ export interface Rig {
   clock: { now: number };
   /** Ответы git по первой совпавшей подстроке команды. */
   answers: Record<string, Partial<ExecResult>>;
+  /** Команда с этой подстрокой ждёт обещания: долгий du или git. */
+  hold: Record<string, Promise<void>>;
+  /** Вызовов exec одновременно: сейчас и наибольшее. */
+  inflight: { now: number; peak: number };
 }
 
 /** Стенд; home - каталог прежнего стенда: новый демон на том же диске, как после перезапуска. */
 export function rig(t: { after: (fn: () => void) => void }, extra: Partial<DaemonDeps> = {}, home = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-ad-'))): Rig {
-  const r: Rig = { home, spawned: [], procs: [], execs: [], killed: [], kills: [], clock: { now: 1_000_000 }, answers: {}, daemon: undefined as unknown as Daemon };
+  const r: Rig = { home, spawned: [], procs: [], execs: [], killed: [], kills: [], clock: { now: 1_000_000 }, answers: {}, hold: {}, inflight: { now: 0, peak: 0 }, daemon: undefined as unknown as Daemon };
   r.daemon = new Daemon({
     home,
     version: 'v1',
@@ -67,6 +71,12 @@ export function rig(t: { after: (fn: () => void) => void }, extra: Partial<Daemo
       r.execs.push({ file, args, cwd: opts?.cwd, env: opts?.env });
       const line = `${file} ${args.join(' ')}`;
       if (args[0] === 'clone') fs.mkdirSync(args[args.length - 1], { recursive: true });
+      const held = Object.keys(r.hold).find((k) => line.includes(k));
+      if (held) {
+        r.inflight.peak = Math.max(r.inflight.peak, ++r.inflight.now);
+        await r.hold[held];
+        r.inflight.now--;
+      }
       const hit = Object.keys(r.answers).find((k) => line.includes(k));
       return { code: 0, stdout: '', stderr: '', ...(hit ? r.answers[hit] : {}) };
     },

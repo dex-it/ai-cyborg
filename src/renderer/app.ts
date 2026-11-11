@@ -40,7 +40,7 @@ import { MarkdownViewer } from './md-viewer';
 import { isMarkdown } from './md-links';
 import { localFs, remoteFs, type FsPort } from './fs-port';
 import type { ClaudeTokenStatus } from '../main/remote/claude-token';
-import { diskRows, diskSummary, purgePlan, purgeReport } from './host-disk';
+import { diskRows, diskSummary, purgeCalls, purgePlan, purgeReport } from './host-disk';
 import { formatBytes, type HostDisk } from '../shared/host-disk';
 import type { RemoteInfo } from '../main/remote/remote-sessions';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
@@ -1701,7 +1701,9 @@ hostDiskPurge.addEventListener('click', async () => {
   const force = plan.dirty.length > 0 && confirm(`В этих клонах есть незапушенная работа:\n\n${plan.dirty.join('\n')}\n\nУдалить и их? «Отмена» - оставить их на хосте.`);
   hostDiskPurge.disabled = true;
   try {
-    const report = purgeReport(await api.remotePurge(owner.id, hostDisk.host, plan.sids, force));
+    const results = [];
+    for (const call of purgeCalls(plan, force)) results.push(...(await api.remotePurge(owner.id, hostDisk.host, call.sids, call.force)));
+    const report = purgeReport(results);
     await loadHostDisk();
     showHostDiskError(report);
   } catch (error) {

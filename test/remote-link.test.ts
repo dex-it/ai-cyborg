@@ -355,6 +355,22 @@ describe('HostLink: обрыв связи и подхват', () => {
     await until(() => a.sessions.peers(info.id)?.[0].state === 'waiting');
   });
 
+  it('неудачное подключение по запросу окна во время обрыва не снимает повтор: хост вернулся - вкладка снова на связи', async (t) => {
+    const { r, ssh } = world(t);
+    const clock = fakeTimers();
+    const a = side(t, ssh, { timers: clock.timers });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    ssh.channels[0].cut();
+    ssh.failure = { code: 255, stdout: '', stderr: 'Connection refused' };
+    await assert.rejects(a.remote.disk(project, 'dev1'), /Connection refused|нет связи/);
+    const retry = clock.queue.filter((x) => x.alive && RECONNECT_MS.includes(x.ms));
+    assert.equal(retry.length, 1, 'после неудачи окна повтор переподключения запланирован');
+    ssh.failure = null;
+    retry.forEach((x) => ((x.alive = false), x.fn()));
+    await until(() => a.sessions.peers(info.id)?.[0].link === undefined);
+  });
+
   it('ввод без связи в удалённую сессию бросает «без связи с хостом», сообщение остаётся в очереди', async (t) => {
     const { r, ssh } = world(t);
     const a = side(t, ssh, { timers: fakeTimers().timers });

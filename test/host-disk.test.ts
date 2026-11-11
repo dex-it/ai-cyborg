@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatBytes, lowSpace, readHostDisk, readPurge, type HostDisk } from '../src/shared/host-disk';
-import { diskRows, diskSummary, purgePlan, purgeReport } from '../src/renderer/host-disk';
+import { diskRows, diskSummary, purgeCalls, purgePlan, purgeReport } from '../src/renderer/host-disk';
 
 const GiB = 1024 ** 3;
 
@@ -39,6 +39,8 @@ describe('host-disk: разбор ответа хоста', () => {
     assert.deepEqual(disk.sessions[0].dirty, [{ path: '/w/a', reason: 'stash ' }]);
     assert.equal(disk.sessions[1].state, 'orphan');
     assert.equal(disk.sessions[1].bytes, null);
+    assert.deepEqual(disk.sessions.map((s) => s.measured), [true, true], 'ответ демона без measured - замер был');
+    assert.equal(readHostDisk('dev1', { sessions: [{ sid: 'aaaaaaaa-1', measured: false }] }).sessions[0].measured, false);
     assert.deepEqual(readPurge({ results: [{ sid: 'aaaaaaaa-1', removed: ['/w/a'], kept: [], error: 7 }] }), [{ sid: 'aaaaaaaa-1', removed: ['/w/a'], kept: [] }]);
     assert.deepEqual(readPurge(null), []);
   });
@@ -51,9 +53,10 @@ describe('host-disk: окно', () => {
     free: 3 * GiB,
     total: 30 * GiB,
     sessions: [
-      { sid: 'aaaaaaaa-1', state: 'live', title: 'идёт', branch: 'a', dirs: [], lastActive: now, bytes: 10, dirty: [] },
-      { sid: 'bbbbbbbb-2', state: 'asleep', title: '', branch: 'b', dirs: [], lastActive: now - 3 * 3_600_000, bytes: 5 * GiB, dirty: [{ path: '/w/b/a', reason: 'незапушенные коммиты' }] },
-      { sid: 'cccccccc-3', state: 'orphan', title: '', branch: '', dirs: [], lastActive: 0, bytes: null, dirty: [] },
+      { sid: 'aaaaaaaa-1', state: 'live', title: 'идёт', branch: 'a', dirs: [], lastActive: now, bytes: 10, dirty: [], measured: true },
+      { sid: 'bbbbbbbb-2', state: 'asleep', title: '', branch: 'b', dirs: [], lastActive: now - 3 * 3_600_000, bytes: 5 * GiB, dirty: [{ path: '/w/b/a', reason: 'незапушенные коммиты' }], measured: true },
+      { sid: 'cccccccc-3', state: 'orphan', title: '', branch: '', dirs: [], lastActive: 0, bytes: null, dirty: [], measured: true },
+      { sid: 'dddddddd-4', state: 'done', title: '', branch: '', dirs: [], lastActive: 0, bytes: null, dirty: [], measured: false },
     ],
   };
 
@@ -63,18 +66,33 @@ describe('host-disk: окно', () => {
       ['bbbbbbbb-2', true, 'спит', '5,0 ГиБ', '3 ч'],
       ['aaaaaaaa-1', false, 'работает', '10 Б', 'только что'],
       ['cccccccc-3', true, 'без записи', 'не посчитан', ''],
+      ['dddddddd-4', true, 'завершена', 'не посчитан', ''],
     ]);
+    assert.equal(rows[3].dirty, 'не проверены');
     assert.equal(rows[0].title, 'bbbbbbbb');
     assert.equal(rows[0].dirty, 'незапушенные коммиты');
-    assert.equal(diskSummary(disk), 'dev1: свободно 3,0 ГиБ из 30,0 ГиБ (10 %)');
+    assert.equal(diskSummary(disk), 'dev1: свободно 3,0 ГиБ из 30,0 ГиБ (10 %); не уложились в отведённое время, размер и клоны не проверены: 1');
+    assert.equal(diskSummary({ ...disk, sessions: disk.sessions.slice(0, 3) }), 'dev1: свободно 3,0 ГиБ из 30,0 ГиБ (10 %)');
   });
 
   it('план удаления: работающая не попадает даже отмеченной, грязные пути - для второго подтверждения', () => {
-    assert.deepEqual(purgePlan(disk, new Set(['aaaaaaaa-1', 'bbbbbbbb-2', 'cccccccc-3'])), {
-      sids: ['bbbbbbbb-2', 'cccccccc-3'],
+    const plan = purgePlan(disk, new Set(['aaaaaaaa-1', 'bbbbbbbb-2', 'cccccccc-3', 'dddddddd-4']));
+    assert.deepEqual(plan, {
+      sids: ['bbbbbbbb-2', 'cccccccc-3', 'dddddddd-4'],
+      dirtySids: ['bbbbbbbb-2'],
       dirty: ['/w/b/a - незапушенные коммиты'],
     });
     assert.equal(purgeReport([{ sid: 'bbbbbbbb-2', removed: [], kept: [{ path: '/w/b/a', reason: 'stash' }], error: 'нет' }]), 'bbbbbbbb: нет\nоставлен /w/b/a: stash');
     assert.equal(purgeReport([{ sid: 'cccccccc-3', removed: ['/w/c'], kept: [] }]), '');
+  });
+
+  it('удаление: с подтверждением force уходит только сессиям из перечня, непроверенные и чистые - без force', () => {
+    const plan = { sids: ['bbbbbbbb-2', 'cccccccc-3', 'dddddddd-4'], dirtySids: ['bbbbbbbb-2'], dirty: ['/w/b/a - незапушенные коммиты'] };
+    assert.deepEqual(purgeCalls(plan, true), [
+      { sids: ['cccccccc-3', 'dddddddd-4'], force: false },
+      { sids: ['bbbbbbbb-2'], force: true },
+    ]);
+    assert.deepEqual(purgeCalls(plan, false), [{ sids: plan.sids, force: false }]);
+    assert.deepEqual(purgeCalls({ sids: ['bbbbbbbb-2'], dirtySids: ['bbbbbbbb-2'], dirty: [] }, true), [{ sids: ['bbbbbbbb-2'], force: true }]);
   });
 });

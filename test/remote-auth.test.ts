@@ -100,9 +100,9 @@ describe('collectGitAuth', () => {
       ['git@github.com:o/a.git', 'https://github.com/o/b.git', 'git@gl.example.com:o/c.git', 'git@ghe.example.com:o/d.git', 'git@none.example.com:o/e.git', 'не адрес'],
       runner(
         {
-          'gh auth token -h github.com': 'gho_A\n',
-          'glab config get token -h gl.example.com': 'glpat-B\n',
-          'gh auth token -h ghe.example.com': 'ghe_C\n',
+          'gh auth token --hostname github.com': 'gho_A\n',
+          'glab config get token --host gl.example.com': 'glpat-B\n',
+          'gh auth token --hostname ghe.example.com': 'ghe_C\n',
         },
         calls,
       ),
@@ -112,7 +112,7 @@ describe('collectGitAuth', () => {
       { kind: 'gitlab', host: 'gl.example.com', token: 'glpat-B' },
       { kind: 'github', host: 'ghe.example.com', token: 'ghe_C' },
     ]);
-    assert.equal(calls.filter((c) => c.endsWith('-h github.com')).length, 1);
+    assert.equal(calls.filter((c) => c.endsWith('--hostname github.com')).length, 1);
   });
 
   it('корневой токен glab для хоста без записи не уходит хосту, и хост доходит до gh как GitHub Enterprise', async () => {
@@ -120,10 +120,10 @@ describe('collectGitAuth', () => {
       ['git@ghe.example.com:o/d.git', 'git@gl.example.com:o/c.git'],
       runner(
         {
-          'glab config get token -h ghe.example.com': 'ROOT\n',
-          'glab config get token -h gl.example.com': 'glpat-B\n',
-          'glab config get token -h cyborg-no-such-host.invalid': 'ROOT\n',
-          'gh auth token -h ghe.example.com': 'ghe_C\n',
+          'glab config get token --host ghe.example.com': 'ROOT\n',
+          'glab config get token --host gl.example.com': 'glpat-B\n',
+          'glab config get token --host cyborg-no-such-host.invalid': 'ROOT\n',
+          'gh auth token --hostname ghe.example.com': 'ghe_C\n',
         },
         [],
       ),
@@ -134,8 +134,17 @@ describe('collectGitAuth', () => {
     ]);
   });
 
+  it('glab спрашивается длинным --host: короткий -h в glab 1.80 и 1.130 - справка с кодом 0', async () => {
+    const help = 'Prints the value of a given configuration key.\n\n  USAGE\n    glab config get <key> [--flags]\n';
+    const creds = await collectGitAuth(
+      ['git@gl.example.com:o/c.git'],
+      runner({ 'glab config get token -h gl.example.com': help, 'glab config get token --host gl.example.com': 'glpat-B\n' }, []),
+    );
+    assert.deepEqual(creds, [{ kind: 'gitlab', host: 'gl.example.com', token: 'glpat-B' }]);
+  });
+
   it('ответ с пробелом внутри не считается токеном', async () => {
-    assert.deepEqual(await collectGitAuth(['git@github.com:o/a.git'], runner({ 'gh auth token -h github.com': 'not logged in\n' }, [])), []);
+    assert.deepEqual(await collectGitAuth(['git@github.com:o/a.git'], runner({ 'gh auth token --hostname github.com': 'not logged in\n' }, [])), []);
   });
 });
 

@@ -22,21 +22,22 @@ export async function collectGitAuth(urls: string[], run: CliRunner): Promise<Gi
   let fallback: Promise<string> | undefined;
   for (const host of hosts) {
     if (host === 'github.com') {
-      const token = await tokenOf(run, 'gh', ['auth', 'token', '-h', host]);
+      const token = await tokenOf(run, 'gh', ['auth', 'token', '--hostname', host]);
       if (token) creds.push({ kind: 'github', host, token });
       continue;
     }
-    let gitlab = await tokenOf(run, 'glab', ['config', 'get', 'token', '-h', host]);
+    // Короткий -h в новых glab (1.80, 1.130) - справка с кодом 0, а не хост.
+    let gitlab = await tokenOf(run, 'glab', ['config', 'get', 'token', '--host', host]);
     // Для хоста без записи glab отдаёт корневой токен конфигурации: он не входил на этот хост и не должен ему уходить.
     if (gitlab) {
-      fallback ??= tokenOf(run, 'glab', ['config', 'get', 'token', '-h', NO_SUCH_HOST]);
+      fallback ??= tokenOf(run, 'glab', ['config', 'get', 'token', '--host', NO_SUCH_HOST]);
       if (gitlab === (await fallback)) gitlab = '';
     }
     if (gitlab) {
       creds.push({ kind: 'gitlab', host, token: gitlab });
       continue;
     }
-    const enterprise = await tokenOf(run, 'gh', ['auth', 'token', '-h', host]);
+    const enterprise = await tokenOf(run, 'gh', ['auth', 'token', '--hostname', host]);
     if (enterprise) creds.push({ kind: 'github', host, token: enterprise });
   }
   return creds;

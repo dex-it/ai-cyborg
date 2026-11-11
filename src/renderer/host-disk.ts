@@ -27,20 +27,37 @@ export function diskRows(disk: HostDisk, now: number): DiskRow[] {
       branch: s.branch,
       size: s.bytes === null ? 'не посчитан' : formatBytes(s.bytes),
       active: s.lastActive ? ago(s.lastActive, now) : '',
-      dirty: s.dirty.map((d) => d.reason).join('; '),
+      dirty: s.measured ? s.dirty.map((d) => d.reason).join('; ') : 'не проверены',
     }));
 }
 
 export function diskSummary(disk: HostDisk): string {
   if (!(disk.total > 0)) return `${disk.host}: место на диске неизвестно`;
   const share = Math.round((disk.free / disk.total) * 100);
-  return `${disk.host}: свободно ${formatBytes(disk.free)} из ${formatBytes(disk.total)} (${share} %)`;
+  const unmeasured = disk.sessions.filter((s) => !s.measured).length;
+  const note = unmeasured ? `; не уложились в отведённое время, размер и клоны не проверены: ${unmeasured}` : '';
+  return `${disk.host}: свободно ${formatBytes(disk.free)} из ${formatBytes(disk.total)} (${share} %)${note}`;
+}
+
+export interface PurgePlan {
+  sids: string[];
+  /** Сессии с грязными клонами, которые человек увидит во втором подтверждении. */
+  dirtySids: string[];
+  dirty: string[];
 }
 
 /** Что удалить и какие клоны требуют второго подтверждения. */
-export function purgePlan(disk: HostDisk, checked: ReadonlySet<string>): { sids: string[]; dirty: string[] } {
+export function purgePlan(disk: HostDisk, checked: ReadonlySet<string>): PurgePlan {
   const chosen = disk.sessions.filter((s) => s.state !== 'live' && checked.has(s.sid));
-  return { sids: chosen.map((s) => s.sid), dirty: chosen.flatMap((s) => s.dirty.map((d) => `${d.path} - ${d.reason}`)) };
+  const dirty = chosen.filter((s) => s.dirty.length);
+  return { sids: chosen.map((s) => s.sid), dirtySids: dirty.map((s) => s.sid), dirty: dirty.flatMap((s) => s.dirty.map((d) => `${d.path} - ${d.reason}`)) };
+}
+
+/** Вызовы удаления: force только у сессий из перечня второго подтверждения, остальные демон перепроверит и грязное оставит. */
+export function purgeCalls(plan: PurgePlan, force: boolean): { sids: string[]; force: boolean }[] {
+  const forced = force ? plan.dirtySids : [];
+  const plain = plan.sids.filter((sid) => !forced.includes(sid));
+  return [...(plain.length ? [{ sids: plain, force: false }] : []), ...(forced.length ? [{ sids: forced, force: true }] : [])];
 }
 
 /** Итог удаления для окна: пусто - всё удалено. */

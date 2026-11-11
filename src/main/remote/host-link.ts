@@ -81,6 +81,8 @@ export class HostLink {
       await this.dial();
     } catch (error) {
       this.state = 'offline';
+      // Подключение могло начаться из окна, а не из таймера: повтор, снятый выше, иначе потерялся бы.
+      this.scheduleRetry();
       throw error;
     }
     this.state = 'online';
@@ -184,10 +186,7 @@ export class HostLink {
     const delay = RECONNECT_MS[Math.min(this.attempt, RECONNECT_MS.length - 1)];
     this.attempt++;
     this.retry = this.timers.set(() => {
-      this.ensure().catch((error: Error) => {
-        this.deps.onState({ online: false, reason: error.message });
-        this.scheduleRetry();
-      });
+      this.ensure().catch((error: Error) => this.deps.onState({ online: false, reason: error.message }));
     }, delay);
   }
 
