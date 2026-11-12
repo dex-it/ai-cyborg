@@ -100,10 +100,11 @@ export async function cdp(url, timeoutMs = CDP_TIMEOUT_MS) {
 
 /**
  * Запуск Electron с отдельным каталогом данных; возвращает процесс, чтение stderr и адреса DevTools окна и главного процесса.
+ * `timeout` - сколько ждать адреса DevTools (по умолчанию TIMEOUT_MS); не дождались - процесс убит, ошибка с выводом stderr.
  * `env` - окружение сверх унаследованного (переменные CYBORG_* родителя отбрасываются: смоук, запущенный из сессии Cyborg,
  * унаследовал бы её CYBORG_CWD, и относительный --workspace считался бы не от cwd).
  */
-export async function launch({ dataDir, env, args = [], electronArgs = [], cwd = appRoot }) {
+export async function launch({ dataDir, env, args = [], electronArgs = [], cwd = appRoot, timeout = TIMEOUT_MS }) {
   const electron = [appRoot, root].map((dir) => join(dir, 'node_modules', '.bin', 'electron')).find((file) => existsSync(file));
   const proc = spawn(electron, [appRoot, `--user-data-dir=${dataDir}`, '--remote-debugging-port=0', '--inspect=0', ...electronArgs, ...args], {
     cwd,
@@ -116,10 +117,20 @@ export async function launch({ dataDir, env, args = [], electronArgs = [], cwd =
   proc.once('exit', (code) => {
     if (code) stderr += `\n[electron завершился с кодом ${code}]`;
   });
-  const port = await waitFor('порт DevTools', () => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//.exec(stderr)?.[1]).catch((e) => {
-    throw new Error(`${e.message}\n${stderr}`);
-  });
-  const inspect = await waitFor('отладчик главного процесса', () => /Debugger listening on (ws:\/\/\S+)/.exec(stderr)?.[1]);
+  // Запуск, не дошедший до DevTools, не оставляет процесс: живой Electron держит каналы stdout/stderr, и скрипт после ошибки не завершается.
+  let port;
+  let inspect;
+  try {
+    port = await waitFor('порт DevTools', () => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//.exec(stderr)?.[1], timeout).catch((e) => {
+      throw new Error(`${e.message}\n${stderr}`);
+    });
+    inspect = await waitFor('отладчик главного процесса', () => /Debugger listening on (ws:\/\/\S+)/.exec(stderr)?.[1], timeout);
+  } catch (e) {
+    // Запускает приложение обёртка electron: SIGTERM она передаёт настоящему процессу (SIGKILL оставил бы его сиротой), остаток добивает pkill по каталогу данных.
+    await stop(proc, 3000);
+    killLeftovers(dataDir);
+    throw e;
+  }
   const pages = async () => (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter((t) => t.type === 'page');
   return { proc, port, inspect, pages, stderr: () => stderr };
 }

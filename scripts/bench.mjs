@@ -133,31 +133,40 @@ async function start(prefix, env = {}) {
   const dirs = setup(prefix);
   const fx = prepareFixtures(dirs.base, env);
   const t0 = performance.now();
-  const started = await launch({ dataDir: dirs.userData, env: fx.env, electronArgs });
-  const devtoolsMs = performance.now() - t0;
-  const page = await waitFor('страница окна', async () => (await started.pages())[0]);
-  const mainEv = (await cdp(started.inspect)).ev;
-  // Вызов, ждущий большой вывод, длится минуты: предел ответа DevTools шире, чем у дымового теста.
-  const { ev, send } = await cdp(page.webSocketDebuggerUrl, 300_000);
-  const poll = async (probe) => {
-    for (;;) {
-      if (await probe().catch(() => false)) return performance.now() - t0;
-      if (performance.now() - t0 > 60_000) throw new Error('окно не стало готовым за 60 с');
-      await sleep(POLL_MS);
-    }
-  };
-  const titleMs = await poll(async () => (await ev('document.title')).includes('Cyborg v.'));
-  const readyMs = await poll(async () => ev('/Bench/.test(document.querySelector("#project-select")?.innerText ?? "") && /a\\.txt/.test(document.querySelector("#tree")?.innerText ?? "")'));
-  await send('Performance.enable');
-  /** Секунды, которые главный поток окна проработал с начала страницы (метрика TaskDuration, DevTools). */
-  const busy = async () => (await send('Performance.getMetrics')).result.metrics.find((m) => m.name === 'TaskDuration').value;
+  const started = await launch({ dataDir: dirs.userData, env: fx.env, electronArgs }).catch((e) => {
+    rmSync(dirs.base, { recursive: true, force: true });
+    throw e;
+  });
   const finish = async () => {
     const exited = await stop(started.proc);
     killLeftovers(dirs.base);
     rmSync(dirs.base, { recursive: true, force: true });
     if (!exited) throw new Error('приложение не завершилось по SIGTERM');
   };
-  return { ...dirs, fx, proc: started.proc, ev, send, mainEv, busy, finish, startup: { devtoolsMs, titleMs, readyMs } };
+  // Окно, не ставшее готовым, не оставляет Electron и каталог прогона: вызывающий входит в try/finally только после start.
+  try {
+    const devtoolsMs = performance.now() - t0;
+    const page = await waitFor('страница окна', async () => (await started.pages())[0]);
+    const mainEv = (await cdp(started.inspect)).ev;
+    // Вызов, ждущий большой вывод, длится минуты: предел ответа DevTools шире, чем у дымового теста.
+    const { ev, send } = await cdp(page.webSocketDebuggerUrl, 300_000);
+    const poll = async (probe) => {
+      for (;;) {
+        if (await probe().catch(() => false)) return performance.now() - t0;
+        if (performance.now() - t0 > 60_000) throw new Error('окно не стало готовым за 60 с');
+        await sleep(POLL_MS);
+      }
+    };
+    const titleMs = await poll(async () => (await ev('document.title')).includes('Cyborg v.'));
+    const readyMs = await poll(async () => ev('/Bench/.test(document.querySelector("#project-select")?.innerText ?? "") && /a\\.txt/.test(document.querySelector("#tree")?.innerText ?? "")'));
+    await send('Performance.enable');
+    /** Секунды, которые главный поток окна проработал с начала страницы (метрика TaskDuration, DevTools). */
+    const busy = async () => (await send('Performance.getMetrics')).result.metrics.find((m) => m.name === 'TaskDuration').value;
+    return { ...dirs, fx, proc: started.proc, ev, send, mainEv, busy, finish, startup: { devtoolsMs, titleMs, readyMs } };
+  } catch (e) {
+    await finish().catch(() => {});
+    throw e;
+  }
 }
 
 /** Выражение страницы: ждёт, пока в видимом терминале появится текст; возвращает performance.now() в этот момент. */

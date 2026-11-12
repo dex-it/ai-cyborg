@@ -174,13 +174,19 @@ const readLaunches = (file) => (existsSync(file) ? readFileSync(file, 'utf8').sp
 
 async function play(session, world) {
   const norm = normalizer(world);
-  const started = await launch({ dataDir: world.userdata, env: world.fx.env, electronArgs });
-  const page = await waitFor('страница окна', async () => (await started.pages())[0]);
-  const mainEv = (await cdp(started.inspect)).ev;
-  let { ev, send } = await cdp(page.webSocketDebuggerUrl);
-  let pageId = page.id;
+  let mainEv;
+  let started;
+  let ev;
+  let send;
+  let pageId;
   const probes = {};
+  // Всё, что стартует процесс или ждёт окно, внутри try: окно, не ставшее готовым, не оставляет Electron (finally ниже).
   try {
+    started = await launch({ dataDir: world.userdata, env: world.fx.env, electronArgs });
+    const page = await waitFor('страница окна', async () => (await started.pages())[0]);
+    mainEv = (await cdp(started.inspect)).ev;
+    ({ ev, send } = await cdp(page.webSocketDebuggerUrl));
+    pageId = page.id;
     await waitFor('окно и проект', async () => /Smoke/.test(await ev('document.querySelector("#project-select")?.innerText ?? ""')));
     // Запуск окна заканчивается вызовами загрузки (кнопки, проекты, ветки): трасса начинается после них, иначе их число зависит от гонки.
     await sleep(1500);
@@ -296,7 +302,7 @@ async function play(session, world) {
     for (const key of Object.keys(programs)) if (!programs[key].length) delete programs[key];
     return { contracts, programs, probes };
   } finally {
-    await stop(started.proc);
+    if (started) await stop(started.proc);
     killLeftovers(world.base);
   }
 }
