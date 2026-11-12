@@ -28,10 +28,11 @@ describe('scripts/lib/driver.mjs: запуск Electron', () => {
       const electron = join(base, 'node_modules', '.bin', 'electron');
       writeFileSync(electron, '#!/bin/sh\necho $$ > "$PIDFILE"\nexec sleep 60\n');
       chmodSync(electron, 0o755);
+      // Каталог данных идёт через окружение, не через текст скрипта: launch() добивает остатки `pkill -f <каталог>`, и на Linux pkill нашёл бы сам дочерний node по аргументу -e.
       const script = `import { launch } from ${JSON.stringify(driver)};
-        try { await launch({ dataDir: ${JSON.stringify(join(base, 'data'))}, env: {}, timeout: 1000 }); console.log('запуск удался'); }
+        try { await launch({ dataDir: process.env.DATA_DIR, env: {}, timeout: 1000 }); console.log('запуск удался'); }
         catch (e) { console.log('ошибка: ' + e.message.split('\\n')[0]); }`;
-      const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 15_000, env: { ...process.env, CYBORG_APP_DIR: base, PIDFILE: pidFile } });
+      const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 15_000, env: { ...process.env, CYBORG_APP_DIR: base, PIDFILE: pidFile, DATA_DIR: join(base, 'data') } });
       // Живой процесс Electron держит каналы stdout/stderr, и скрипт, получивший ошибку запуска, не завершается сам.
       assert.equal(run.error, undefined, `скрипт после ошибки запуска не завершился за 15 с: ${run.error?.message}`);
       assert.match(run.stdout, /ошибка: не дождались: порт DevTools/, run.stdout + run.stderr);
