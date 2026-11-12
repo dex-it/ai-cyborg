@@ -1,0 +1,271 @@
+{
+  "id": "S08",
+  "title": "Карточка «Статус»",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Кнопка «Статус» открывает карточку: задача Jira SMK-1 в работе, детали по клику, «Начать» создаёт сессию по ключу, повторное нажатие возвращает к ней без новой вкладки.",
+  "steps": [
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#status-toggle\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "задача Jira в карточке",
+      "js": "/SMK-1/.test(document.querySelector('#status-popover').innerText)"
+    },
+    {
+      "do": "js",
+      "js": "[...document.querySelectorAll('.status-link')].find((e) => e.textContent === 'SMK-1').click()"
+    },
+    {
+      "do": "wait",
+      "what": "детали задачи",
+      "js": "/Описание из Jira/.test(document.querySelector('#status-popover').innerText)"
+    },
+    {
+      "do": "probe",
+      "name": "карточка",
+      "js": "document.querySelector('#status-popover').innerText.replace(/\\s+/g, ' ')"
+    },
+    {
+      "do": "js",
+      "js": "document.body.click()"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#status-toggle\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "карточка открыта снова",
+      "js": "!document.querySelector('#status-popover').hidden"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector('.status-item .status-actions button').click()"
+    },
+    {
+      "do": "wait",
+      "what": "вкладок не меньше 1",
+      "js": "document.querySelectorAll('#session-list > *').length >= 1"
+    },
+    {
+      "do": "wait",
+      "what": "в терминале «fake-claude ready»",
+      "js": "[...document.querySelectorAll('.xterm-rows')].some((e) => e.offsetParent && e.textContent.replace(/\\s+/g, '').includes(\"fake-claudeready\"))"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#status-toggle\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "кнопка «К сессии»",
+      "js": "document.querySelector('.status-item .status-actions button')?.textContent === 'К сессии'"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector('.status-item .status-actions button').click()"
+    },
+    {
+      "do": "probe",
+      "name": "вкладок",
+      "js": "document.querySelectorAll('#session-list > *').length"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "invoke jira:details": [
+        {
+          "args": [
+            "p1",
+            "SMK-1"
+          ],
+          "result": {
+            "details": {
+              "issue": {
+                "key": "SMK-1",
+                "summary": "Задача из Jira",
+                "status": "In Progress",
+                "category": "indeterminate",
+                "type": "Bug",
+                "priority": "",
+                "assignee": null,
+                "reporter": null,
+                "created": "",
+                "updated": "",
+                "labels": [],
+                "description": "Описание из Jira"
+              },
+              "comments": [
+                {
+                  "author": "Коллега",
+                  "created": "",
+                  "text": "Комментарий из Jira"
+                }
+              ],
+              "total": 1
+            }
+          }
+        }
+      ],
+      "invoke session:create": [
+        {
+          "args": [
+            "<repo>",
+            [],
+            {
+              "jira": {
+                "key": "SMK-1"
+              }
+            }
+          ],
+          "result": 1
+        }
+      ],
+      "invoke git:root": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "<repo>"
+        }
+      ],
+      "event session:activity": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "SessionStart"
+            }
+          ]
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        }
+      ],
+      "send session:resize": [
+        {
+          "args": [
+            1,
+            162,
+            56
+          ]
+        },
+        {
+          "args": [
+            1,
+            162,
+            56
+          ]
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ],
+      "event session:data": [
+        {
+          "id": 1,
+          "text": "fake-claude ready\nARGS: --settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или комм…[1190 знаков, sha1 d7870967]"
+        }
+      ]
+    },
+    "programs": {
+      "claude": [
+        "--settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или коммитом - EnterWorktree, да…[1165 знаков, sha1 4e340f9d]"
+      ],
+      "claudeTail": [
+        "овек допишет реплику сам. Реплика не начинается с «!». Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай. Задача Jira SMK-1: прочитай её (jira issue view SMK-1 --comments 5), разберись в постановке и предложи план работ. Код не правь, пока я не подтвержу план."
+      ],
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50",
+        "issue view SMK-1 --raw --comments 3"
+      ]
+    },
+    "probes": {
+      "карточка": "Smoke обновлено только что Обновить Статус не получен GitHub acme/demo: You are not logged in to any GitHub hosts. JIRA · НА МНЕ: 1 В работе SMK-1 Задача из Jira In Progress High обновлена 26.10.2026 Начать Тип: Bug Статус: In Progress Исполнитель: не назначен Описание из Jira Комментарии (последние 1 из 1) Коллега Комментарий из Jira Открыть в Jira",
+      "вкладок": 1
+    }
+  },
+  "volatile": []
+}

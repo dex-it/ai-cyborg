@@ -1,0 +1,1 @@
+{"name":"smoke-market","plugins":[{"name":"smk-plugin","source":"./plugins/smk-plugin","description":"Плагин пробы"},{"name":"smk-remote","source":{"source":"url","url":"https://example.invalid/r.git"},"description":"Удалённый плагин пробы"}]}

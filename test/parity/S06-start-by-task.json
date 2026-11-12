@@ -1,0 +1,296 @@
+{
+  "id": "S06",
+  "title": "Старт сессии по задаче",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Панель «Задачи» берёт открытые задачи GitHub через gh (подставной, FAKE_GH=data), «Начать» создаёт сессию с намерением {task} и промптом из ссылки; в аргументы claude попадают ссылка и команда gh, а не название и автор.",
+  "world": {
+    "gh": "data"
+  },
+  "steps": [
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#tasks-toggle\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "три задачи в панели",
+      "js": "document.querySelectorAll('#tasks-panel .task-row').length >= 3"
+    },
+    {
+      "do": "probe",
+      "name": "строки",
+      "js": "[...document.querySelectorAll('#tasks-panel .task-row .task-title')].map((e) => e.textContent)"
+    },
+    {
+      "do": "js",
+      "js": "[...document.querySelectorAll('#tasks-panel .task-row button')].find((b) => b.textContent === 'Начать').click()"
+    },
+    {
+      "do": "wait",
+      "what": "вкладок не меньше 1",
+      "js": "document.querySelectorAll('#session-list > *').length >= 1"
+    },
+    {
+      "do": "waitTrace",
+      "channel": "session:activity",
+      "what": "claude стартовал (SessionStart)"
+    },
+    {
+      "do": "probe",
+      "name": "вкладок",
+      "js": "document.querySelectorAll('#session-list > *').length"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "invoke tasks:list": [
+        {
+          "args": [
+            "p1",
+            true,
+            [],
+            false
+          ],
+          "result": {
+            "tasks": [
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 1,
+                "key": "github:github.com/acme/demo#1",
+                "title": "Задача 1",
+                "state": "open",
+                "workflow": [],
+                "labels": [
+                  {
+                    "name": "bug",
+                    "color": "#d73a4a"
+                  }
+                ],
+                "author": "fake-user",
+                "assignees": [
+                  "fake-user"
+                ],
+                "url": "https://github.com/acme/demo/issues/1",
+                "createdAt": "2026-10-01T10:00:00Z",
+                "updatedAt": "2026-10-21T10:00:00Z",
+                "repos": [
+                  "<repo>"
+                ]
+              },
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 2,
+                "key": "github:github.com/acme/demo#2",
+                "title": "Задача 2",
+                "state": "open",
+                "workflow": [],
+                "labels": [
+                  {
+                    "name": "bug",
+                    "color": "#d73a4a"
+                  }
+                ],
+                "author": "fake-user",
+                "assignees": [
+                  "fake-user"
+                ],
+                "url": "https://github.com/acme/demo/issues/2",
+                "createdAt": "2026-10-01T10:00:00Z",
+                "updatedAt": "2026-10-22T10:00:00Z",
+                "repos": [
+                  "<repo>"
+                ]
+              },
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 3,
+                "key": "github:github.com/acme/demo#3",
+                "title": "Задача 3",
+                "state": "open",
+                "workflow": [],
+                "labels": [
+                  {
+                    "name": "bug",
+                    "color": "#d73a4a"
+                  }
+                ],
+                "author": "fake-user",
+                "assignees": [
+                  "fake-user"
+                ],
+                "url": "https://github.com/acme/demo/issues/3",
+                "createdAt": "2026-10-01T10:00:00Z",
+                "updatedAt": "2026-10-23T10:00:00Z",
+                "repos": [
+                  "<repo>"
+                ]
+              }
+            ],
+            "sources": [
+              {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo"
+              }
+            ],
+            "tracked": [],
+            "enabled": {
+              "github": true,
+              "gitlab": false
+            },
+            "selection": 1
+          }
+        }
+      ],
+      "invoke session:create": [
+        {
+          "args": [
+            "<repo>",
+            [],
+            {
+              "task": {
+                "kind": "github",
+                "host": "github.com",
+                "path": "acme/demo",
+                "number": 3
+              }
+            }
+          ],
+          "result": 1
+        }
+      ],
+      "invoke git:root": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "<repo>"
+        }
+      ],
+      "event session:activity": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "SessionStart"
+            }
+          ]
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        }
+      ],
+      "send session:resize": [
+        {
+          "args": [
+            1,
+            80,
+            24
+          ]
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ],
+      "event session:data": [
+        {
+          "id": 1,
+          "text": "fake-claude ready\nARGS: --settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или комм…[1204 знаков, sha1 fb77ac08]"
+        }
+      ]
+    },
+    "programs": {
+      "claude": [
+        "--settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или коммитом - EnterWorktree, да…[1179 знаков, sha1 0b43825e]"
+      ],
+      "claudeTail": [
+        "еплику сам. Реплика не начинается с «!». Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай. Ознакомься с задачей https://github.com/acme/demo/issues/3. Когда приступишь к работе, смени её статус в трекере (gh issue edit), чтобы было видно, что задача в работе."
+      ],
+      "gh": [
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --jq {state,total_count} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/status",
+        "api --hostname github.com --paginate --jq .[] | select(.pull_request == null) | {number,title,state,html_url,created_at,updated_at,user:.user.login,assignees:[.assignees[]?.login],labels:[.labels[]? | if type==\"object\" then {name,color} else {name:.,color:null} end]} repos/acme/demo/issues?state=open&per_page=100&assignee=fake-user",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/1/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/2/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {login:.user.login,state} repos/acme/demo/pulls/3/reviews?per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {number,title,draft,created_at,updated_at,user:.user.login,head_ref:.head.ref,head_label:.head.label,head_repo:.head.repo.full_name,head_sha:.head.sha,base_ref:.base.ref,assignees:[.assignees[].login],reviewers:[.requested_reviewers[].login]} repos/acme/demo/pulls?state=open&per_page=100",
+        "api --hostname github.com --paginate --jq .[] | {number,title,draft,created_at,updated_at,user:.user.login,head_ref:.head.ref,head_label:.head.label,head_repo:.head.repo.full_name,head_sha:.head.sha,base_ref:.base.ref,assignees:[.assignees[].login],reviewers:[.requested_reviewers[].login]} repos/acme/demo/pulls?state=open&per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com --paginate --jq .check_runs[] | {status,conclusion} repos/acme/demo/commits/0123456789abcdef0123456789abcdef01234567/check-runs?per_page=100",
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "строки": [
+        "#3 Задача 3",
+        "#2 Задача 2",
+        "#1 Задача 1"
+      ],
+      "вкладок": 1
+    }
+  },
+  "volatile": []
+}

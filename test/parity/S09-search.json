@@ -1,0 +1,205 @@
+{
+  "id": "S09",
+  "title": "Поиск файла и текста",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Меню «Поиск»: часть имени файла без учёта регистра (fs:files), Enter открывает файл (fs:read); поиск по содержимому (search:text) с переходом к строке.",
+  "steps": [
+    {
+      "do": "menu",
+      "menu": "Поиск",
+      "item": "Найти файл…"
+    },
+    {
+      "do": "wait",
+      "what": "окно поиска открыто",
+      "js": "document.querySelector('#search-dialog').open"
+    },
+    {
+      "do": "js",
+      "js": "(() => { const f = document.querySelector(\"#search-input\"); f.value = \"A.T\"; f.dispatchEvent(new Event('input')); })()"
+    },
+    {
+      "do": "wait",
+      "what": "совпадение подсвечено",
+      "js": "document.querySelector('#search-results mark')?.textContent === 'a.t'"
+    },
+    {
+      "do": "key",
+      "key": "Enter",
+      "code": "Enter",
+      "vk": 13
+    },
+    {
+      "do": "wait",
+      "what": "файл открыт",
+      "js": "!document.querySelector('#search-dialog').open && /a\\.txt/.test(document.querySelector('#file-preview .file-header')?.innerText ?? '')"
+    },
+    {
+      "do": "menu",
+      "menu": "Поиск",
+      "item": "Найти в файлах…"
+    },
+    {
+      "do": "wait",
+      "what": "окно открыто на «Текст»",
+      "js": "document.querySelector('#search-dialog').open"
+    },
+    {
+      "do": "js",
+      "js": "(() => { const f = document.querySelector(\"#search-input\"); f.value = \"changed\"; f.dispatchEvent(new Event('input')); })()"
+    },
+    {
+      "do": "wait",
+      "what": "строка найдена",
+      "js": "document.querySelector('#search-status').innerText.includes('Найдено 1')"
+    },
+    {
+      "do": "probe",
+      "name": "результат",
+      "js": "document.querySelector('#search-results').innerText.replace(/\\s+/g, ' ')"
+    },
+    {
+      "do": "key",
+      "key": "Enter",
+      "code": "Enter",
+      "vk": 13
+    },
+    {
+      "do": "wait",
+      "what": "диалог закрыт",
+      "js": "!document.querySelector('#search-dialog').open"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "event menu:search": [
+        {
+          "args": [
+            "files"
+          ]
+        },
+        {
+          "args": [
+            "text"
+          ]
+        }
+      ],
+      "invoke fs:files": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            "a.txt"
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            "a.txt"
+          ]
+        }
+      ],
+      "invoke commands:load": [
+        {
+          "args": [],
+          "result": {}
+        }
+      ],
+      "invoke fs:read": [
+        {
+          "args": [
+            "<repo>/a.txt"
+          ],
+          "result": {
+            "content": "hello\nchanged\n"
+          }
+        },
+        {
+          "args": [
+            "<repo>/a.txt"
+          ],
+          "result": {
+            "content": "hello\nchanged\n"
+          }
+        }
+      ],
+      "invoke git:headContent": [
+        {
+          "args": [
+            "<repo>/a.txt"
+          ],
+          "result": "hello\n"
+        },
+        {
+          "args": [
+            "<repo>/a.txt"
+          ],
+          "result": "hello\n"
+        }
+      ],
+      "invoke search:text": [
+        {
+          "args": [
+            {
+              "root": "<repo>",
+              "query": "A.T",
+              "options": {
+                "regex": false,
+                "caseSensitive": false,
+                "wholeWord": false
+              }
+            }
+          ],
+          "result": {
+            "hits": [],
+            "truncated": false
+          }
+        },
+        {
+          "args": [
+            {
+              "root": "<repo>",
+              "query": "changed",
+              "options": {
+                "regex": false,
+                "caseSensitive": false,
+                "wholeWord": false
+              }
+            }
+          ],
+          "result": {
+            "hits": [
+              {
+                "rel": "a.txt",
+                "line": 2,
+                "text": "changed",
+                "range": {
+                  "start": 0,
+                  "end": 7
+                }
+              }
+            ],
+            "truncated": false
+          }
+        }
+      ]
+    },
+    "programs": {
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "результат": "changed a.txt:2"
+    }
+  },
+  "volatile": []
+}

@@ -1,0 +1,62 @@
+#!/bin/sh
+# Подставной claude для дымового теста, замеров и записанных сессий.
+# Подкоманды окна «Расширения» (--version, plugin, mcp) отвечают и выходят, не открывая сессию; вызовы `plugin` пишутся в $FAKE_PLUGIN_LOG.
+# Сессия: SessionStart при старте; по строке
+#   `cd <dir>`      - событие с новым cwd (как хук после EnterWorktree);
+#   `...suggest`    - хвост ответа с кнопками из $FAKE_SUGGEST (событие Stop);
+#   `...ask`        - запрос человека (UserPromptSubmit);
+#   `perm`          - запрос разрешения (Notification, permission_prompt);
+#   `link`          - строки со ссылкой и абсолютным путём к файлу (для кликов по выводу);
+#   `flood N [W]`   - N строк по W символов (по умолчанию 100) с цветом и номером, в конце строка `FLOOD-DONE N`;
+#   `trickle N`     - N коротких строк по одной записи в pty на строку (поток мелких кусков, как токены ответа), в конце `FLOOD-DONE N`;
+#   остальное       - эхом `got: [строка]`.
+# FAKE_FLOOD_ON_START=N - вывести N строк сразу при старте, до чтения ввода (вывод, пришедший раньше, чем окно создало вкладку);
+# FAKE_FLOOD_STYLE=trickle - сделать это мелкими кусками (как `trickle`), а не одним потоком.
+case "$1" in
+  --version) echo "2.1.314 (Claude Code)"; exit 0;;
+  plugin)
+    echo "$*" >> "$FAKE_PLUGIN_LOG"
+    case "$2 $3" in
+      "marketplace list") printf '[{"name":"smoke-market","source":"directory","path":"%s","installLocation":"%s"}]\n' "$FAKE_MARKET" "$FAKE_MARKET";;
+      "list --json") printf '[{"id":"smk-plugin@smoke-market","version":"1.0.0","scope":"user","enabled":true,"installPath":"%s/plugins/smk-plugin"}]\n' "$FAKE_MARKET";;
+      "install "*|"uninstall "*) printf '{"command":"%s","outcome":"ok","message":"Готово: %s"}\n' "$2" "$3";;
+      "marketplace add") printf '{"command":"marketplace-add","outcome":"ok","message":"Магазин подключён"}\n';;
+      "marketplace remove") echo "✔ Successfully removed marketplace: $4";;
+    esac
+    exit 0;;
+  mcp)
+    printf 'Checking MCP server health…\n\nsmk-mcp: https://mcp.example.com (HTTP) - ✔ Connected\nclaude.ai Gmail: https://gmailmcp.example.com/mcp/v1 - ✔ Connected\n'
+    exit 0;;
+esac
+flood() {
+  awk -v n="$1" -v w="${2:-100}" 'BEGIN {
+    pad = sprintf("%" w "s", ""); gsub(/ /, "x", pad)
+    for (i = 1; i <= n; i++) printf "\033[32mline %d\033[0m %s\n", i, substr(pad, 1, w)
+    printf "FLOOD-DONE %d\n", n
+  }'
+}
+trickle() {
+  awk -v n="$1" 'BEGIN {
+    for (i = 1; i <= n; i++) { printf "line %d\n", i; fflush() }
+    printf "FLOOD-DONE %d\n", n
+  }'
+}
+printf '{"hook_event_name":"SessionStart","cwd":"%s"}\n' "$PWD" >> "$CYBORG_EVENTS"
+echo "fake-claude ready"
+echo "ARGS: $*"
+printf '%s\n' "$*" >> "$FAKE_ARGS_LOG"
+if [ -n "$FAKE_FLOOD_ON_START" ]; then
+  if [ "$FAKE_FLOOD_STYLE" = trickle ]; then trickle "$FAKE_FLOOD_ON_START"; else flood "$FAKE_FLOOD_ON_START"; fi
+fi
+while IFS= read -r line; do
+  case "$line" in
+    "cd "*) dir=${line#cd }; printf '{"hook_event_name":"PostToolUse","cwd":"%s","tool_name":"EnterWorktree"}\n' "$dir" >> "$CYBORG_EVENTS"; echo "moved";;
+    "flood "*) set -- $line; flood "$2" "$3";;
+    "trickle "*) set -- $line; trickle "$2";;
+    *suggest) cat "$FAKE_SUGGEST" >> "$CYBORG_EVENTS"; echo "suggested";;
+    perm) printf '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow Bash(rm -rf /)?"}\n' >> "$CYBORG_EVENTS"; echo "asking permission";;
+    link) echo "ссылка:"; echo "https://example.com/docs/start"; echo "файл:"; echo "$PWD/a.txt";;
+    *ask) printf '{"hook_event_name":"UserPromptSubmit"}\n' >> "$CYBORG_EVENTS"; echo "asked";;
+    *) echo "got: [$line]";;
+  esac
+done

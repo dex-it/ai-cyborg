@@ -9,6 +9,8 @@
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
     "measure": "node scripts/measure.mjs",
+    "bench": "node scripts/bench.mjs",
+    "parity": "node scripts/parity.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs",
     "check:corpus": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-corpus.ts",
     "corpus:matrix": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-corpus.ts --write-matrix",

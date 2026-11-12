@@ -1,0 +1,227 @@
+{
+  "id": "S05",
+  "title": "Продолжение и удаление из истории",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Журнал прошлой сессии в ~/.claude/projects/<репозиторий>: вкладка «Сессии» показывает её по заголовку (history:list), клик продолжает через session:resume (claude --resume <id>), «×» с подтверждением стирает журнал (history:delete).",
+  "steps": [
+    {
+      "do": "write",
+      "file": "{home}/.claude/projects/{repoDir}/0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e.jsonl",
+      "mtime": 1790000000,
+      "text": "{\"type\": \"user\", \"entrypoint\": \"cli\", \"message\": {\"role\": \"user\", \"content\": \"Разбери падение сборки\"}}\n"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#side-history\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "запись истории",
+      "js": "document.querySelectorAll('#history .history-item').length === 1"
+    },
+    {
+      "do": "probe",
+      "name": "запись",
+      "js": "document.querySelector('#history .history-item .history-title').textContent"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#history .history-item\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "вкладок не меньше 1",
+      "js": "document.querySelectorAll('#session-list > *').length >= 1"
+    },
+    {
+      "do": "wait",
+      "what": "в терминале «--resume 0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e»",
+      "js": "[...document.querySelectorAll('.xterm-rows')].some((e) => e.offsetParent && e.textContent.replace(/\\s+/g, '').includes(\"--resume0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e\"))"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#side-history\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "запись истории после возврата",
+      "js": "document.querySelectorAll('#history .history-item').length === 1"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#history .history-item .close\").click()"
+    },
+    {
+      "do": "wait",
+      "what": "запись удалена",
+      "js": "document.querySelectorAll('#history .history-item').length === 0"
+    },
+    {
+      "do": "probe",
+      "name": "журнал стёрт",
+      "js": "document.querySelector('#history').innerText"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "invoke history:list": [
+        {
+          "args": [
+            "p1"
+          ],
+          "result": [
+            {
+              "id": "0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e",
+              "repo": "<repo>",
+              "title": "Разбери падение сборки",
+              "updated": 1790000000000
+            }
+          ]
+        },
+        {
+          "args": [
+            "p1"
+          ],
+          "result": [
+            {
+              "id": "0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e",
+              "repo": "<repo>",
+              "title": "Разбери падение сборки",
+              "updated": 1790000000000
+            }
+          ]
+        }
+      ],
+      "invoke session:resume": [
+        {
+          "args": [
+            "<repo>",
+            [],
+            "0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e"
+          ],
+          "result": 1
+        }
+      ],
+      "invoke git:root": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "<repo>"
+        }
+      ],
+      "event session:activity": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "SessionStart"
+            }
+          ]
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        }
+      ],
+      "send session:resize": [
+        {
+          "args": [
+            1,
+            162,
+            56
+          ]
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ],
+      "invoke history:delete": [
+        {
+          "args": [
+            "p1",
+            "<repo>",
+            "0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e"
+          ],
+          "result": null
+        }
+      ],
+      "event session:data": [
+        {
+          "id": 1,
+          "text": "fake-claude ready\nARGS: --settings <userdata>/claude-hooks.json --resume 0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед перво…[1081 знаков, sha1 3c012353]"
+        }
+      ]
+    },
+    "programs": {
+      "claude": [
+        "--settings <userdata>/claude-hooks.json --resume 0b1f6c4e-2d3a-4b5c-8d7e-9f0a1b2c3d4e --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории,…[1056 знаков, sha1 cddcc356]"
+      ],
+      "claudeTail": [
+        "\",\"text\":\"реплика человека к тебе, одной строкой\"}] --> . \"submit\":true добавляй, только если реплику можно отправить без правки; иначе поле не пиши, и человек допишет реплику сам. Реплика не начинается с «!». Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай."
+      ],
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "запись": "Разбери падение сборки",
+      "журнал стёрт": ""
+    }
+  },
+  "volatile": []
+}

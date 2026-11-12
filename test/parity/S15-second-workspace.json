@@ -1,0 +1,173 @@
+{
+  "id": "S15",
+  "title": "Второй воркспейс",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "«Воркспейс -> Открыть…» меняет воркспейс в этом окне (без сессий подтверждение не нужно): окно перечитывает проекты нового файла, заголовок меняется, замок прежнего снят, «Недавние» пополняются. Системный диалог выбора файла подменён ответом с путём.",
+  "settleMs": 1500,
+  "steps": [
+    {
+      "do": "write",
+      "file": "{base}/second.cyborg.json",
+      "json": {
+        "projects": [
+          {
+            "id": "s1",
+            "name": "Second",
+            "description": "",
+            "repos": [
+              "{repo}"
+            ],
+            "trackers": {
+              "github": false,
+              "gitlab": false
+            }
+          }
+        ],
+        "lastProjectId": "s1"
+      }
+    },
+    {
+      "do": "probe",
+      "name": "проект до",
+      "js": "document.querySelector('#project-select').innerText"
+    },
+    {
+      "do": "main",
+      "js": "process.mainModule.require('electron').dialog.showOpenDialog = async () => ({ canceled: false, filePaths: ['{base}/second.cyborg.json'] })"
+    },
+    {
+      "do": "menu",
+      "menu": "Воркспейс",
+      "item": "Открыть…"
+    },
+    {
+      "do": "reattach"
+    },
+    {
+      "do": "wait",
+      "what": "проект второго воркспейса",
+      "js": "/Second/.test(document.querySelector('#project-select')?.innerText ?? '') && !/Smoke/.test(document.querySelector('#project-select').innerText)",
+      "timeout": 30000
+    },
+    {
+      "do": "probe",
+      "name": "проект после",
+      "js": "document.querySelector('#project-select').innerText"
+    },
+    {
+      "do": "probe",
+      "name": "заголовок",
+      "js": "document.title.replace(/ v\\.\\S+/, ' v.<версия>')"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "send notifications:state": [
+        {
+          "args": [
+            true
+          ]
+        }
+      ],
+      "invoke workspace:info": [
+        {
+          "args": [],
+          "result": {
+            "file": "<base>/second.cyborg.json",
+            "name": "second",
+            "home": "<home>",
+            "sep": "/"
+          }
+        }
+      ],
+      "invoke projects:load": [
+        {
+          "args": [],
+          "result": {
+            "projects": [
+              {
+                "id": "s1",
+                "name": "Second",
+                "description": "",
+                "repos": [
+                  "<repo>"
+                ],
+                "trackers": {
+                  "github": false,
+                  "gitlab": false
+                }
+              }
+            ],
+            "lastProjectId": "s1"
+          }
+        }
+      ],
+      "invoke commands:load": [
+        {
+          "args": [],
+          "result": {}
+        }
+      ],
+      "invoke projects:problem": [
+        {
+          "args": [],
+          "result": null
+        }
+      ],
+      "send project:selected": [
+        {
+          "args": [
+            true
+          ]
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ]
+    },
+    "programs": {
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "проект до": "Smoke\nBare",
+      "проект после": "Second",
+      "заголовок": "second - Second - Cyborg v.<версия>"
+    }
+  },
+  "volatile": []
+}

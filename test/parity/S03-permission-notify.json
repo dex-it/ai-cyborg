@@ -1,0 +1,352 @@
+{
+  "id": "S03",
+  "title": "Запрос разрешения и уведомление",
+  "baseline": "e4beb72",
+  "kind": "recorded",
+  "about": "Две сессии; в неактивной claude просит разрешение (Notification/permission_prompt): session:waiting -> session:notify -> системное уведомление с текстом по типу события (не с текстом запроса). Переход к сессии гасит уведомление.",
+  "steps": [
+    {
+      "do": "key",
+      "key": "N",
+      "code": "KeyN",
+      "vk": 78,
+      "mods": [
+        "cmd",
+        "shift"
+      ]
+    },
+    {
+      "do": "wait",
+      "what": "вкладок не меньше 1",
+      "js": "document.querySelectorAll('#session-list > *').length >= 1"
+    },
+    {
+      "do": "wait",
+      "what": "в терминале «fake-claude ready»",
+      "js": "[...document.querySelectorAll('.xterm-rows')].some((e) => e.offsetParent && e.textContent.replace(/\\s+/g, '').includes(\"fake-claudeready\"))"
+    },
+    {
+      "do": "key",
+      "key": "N",
+      "code": "KeyN",
+      "vk": 78,
+      "mods": [
+        "cmd",
+        "shift"
+      ]
+    },
+    {
+      "do": "wait",
+      "what": "вкладок не меньше 2",
+      "js": "document.querySelectorAll('#session-list > *').length >= 2"
+    },
+    {
+      "do": "wait",
+      "what": "вторая сессия показывает приветствие",
+      "js": "[...document.querySelectorAll('.xterm-rows')].filter((e) => e.offsetParent).some((e) => e.textContent.includes('fake-claude ready'))"
+    },
+    {
+      "do": "input",
+      "session": 1,
+      "text": "perm\r"
+    },
+    {
+      "do": "waitTrace",
+      "channel": "session:notify",
+      "what": "session:notify"
+    },
+    {
+      "do": "js",
+      "js": "document.querySelector(\"#session-list > *:nth-child(1)\").click()"
+    },
+    {
+      "do": "waitTrace",
+      "channel": "session:unnotify",
+      "what": "session:unnotify"
+    },
+    {
+      "do": "probe",
+      "name": "вкладок",
+      "js": "document.querySelectorAll('#session-list > *').length"
+    }
+  ],
+  "expect": {
+    "contracts": {
+      "invoke commands:load": [
+        {
+          "args": [],
+          "result": {}
+        },
+        {
+          "args": [],
+          "result": {}
+        }
+      ],
+      "invoke session:create": [
+        {
+          "args": [
+            "<repo>",
+            [],
+            null
+          ],
+          "result": 1
+        },
+        {
+          "args": [
+            "<repo>",
+            [],
+            null
+          ],
+          "result": 2
+        }
+      ],
+      "invoke git:root": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "<repo>"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "<repo>"
+        }
+      ],
+      "event session:activity": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "SessionStart"
+            }
+          ]
+        },
+        {
+          "args": [
+            {
+              "id": 2,
+              "event": "SessionStart"
+            }
+          ]
+        },
+        {
+          "args": [
+            {
+              "id": 1,
+              "event": "Notification"
+            }
+          ]
+        }
+      ],
+      "invoke git:status": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": {
+            "a.txt": "M"
+          }
+        }
+      ],
+      "invoke git:branch": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": "main"
+        }
+      ],
+      "send session:resize": [
+        {
+          "args": [
+            1,
+            162,
+            56
+          ]
+        },
+        {
+          "args": [
+            2,
+            162,
+            56
+          ]
+        },
+        {
+          "args": [
+            1,
+            162,
+            56
+          ]
+        }
+      ],
+      "invoke fs:list": [
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        },
+        {
+          "args": [
+            "<repo>"
+          ],
+          "result": [
+            {
+              "name": "a.txt",
+              "isDir": false
+            }
+          ]
+        }
+      ],
+      "send session:input": [
+        {
+          "id": 1,
+          "data": "perm\r"
+        }
+      ],
+      "event session:waiting": [
+        {
+          "args": [
+            {
+              "id": 1,
+              "reason": "Просит разрешение"
+            }
+          ]
+        }
+      ],
+      "os Notification.show": [
+        {
+          "args": [
+            {
+              "title": "CC1 · repo · Smoke",
+              "body": "Просит разрешение"
+            }
+          ]
+        }
+      ],
+      "send session:notify": [
+        {
+          "args": [
+            1,
+            "CC1 · repo · Smoke",
+            "Просит разрешение"
+          ]
+        }
+      ],
+      "os Notification.close": [
+        {
+          "args": []
+        }
+      ],
+      "send session:unnotify": [
+        {
+          "args": [
+            1
+          ]
+        }
+      ],
+      "event session:data": [
+        {
+          "id": 1,
+          "text": "fake-claude ready\nARGS: --settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или комм…[1058 знаков, sha1 3c348204]"
+        },
+        {
+          "id": 2,
+          "text": "fake-claude ready\nARGS: --settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или комм…[1035 знаков, sha1 8a44a199]"
+        }
+      ]
+    },
+    "programs": {
+      "claude": [
+        "--settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или коммитом - EnterWorktree, да…[1010 знаков, sha1 4e2db67a]",
+        "--settings <userdata>/claude-hooks.json --append-system-prompt В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или коммитом - EnterWorktree, да…[1010 знаков, sha1 4e2db67a]"
+      ],
+      "claudeTail": [
+        "\",\"text\":\"реплика человека к тебе, одной строкой\"}] --> . \"submit\":true добавляй, только если реплику можно отправить без правки; иначе поле не пиши, и человек допишет реплику сам. Реплика не начинается с «!». Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай.",
+        "\",\"text\":\"реплика человека к тебе, одной строкой\"}] --> . \"submit\":true добавляй, только если реплику можно отправить без правки; иначе поле не пиши, и человек допишет реплику сам. Реплика не начинается с «!». Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай."
+      ],
+      "gh": [
+        "api --hostname github.com user --jq .login"
+      ],
+      "jira": [
+        "issue list -q assignee = currentUser() AND statusCategory != Done --raw --order-by updated --paginate 0:50",
+        "issue list -q assignee = currentUser() AND statusCategory = \"In Progress\" --plain --no-headers --columns key --order-by updated --paginate 0:50"
+      ]
+    },
+    "probes": {
+      "вкладок": 2
+    }
+  },
+  "volatile": []
+}

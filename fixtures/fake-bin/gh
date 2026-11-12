@@ -1,0 +1,31 @@
+#!/bin/sh
+# Подставной gh. Без FAKE_GH вход не выполнен: панель открывается без сети и без настоящего входа разработчика.
+# FAKE_GH=data: вход выполнен (пользователь fake-user), ответы - уже после `--jq`, как их читает Cyborg;
+# FAKE_GH_ITEMS - число задач и MR в списках (по умолчанию 30); FAKE_GH_LOG - журнал вызовов.
+[ -n "$FAKE_GH_LOG" ] && echo "$*" >> "$FAKE_GH_LOG"
+if [ "$FAKE_GH" != data ]; then
+  echo "You are not logged in to any GitHub hosts." >&2
+  exit 1
+fi
+n=${FAKE_GH_ITEMS:-30}
+sha=0123456789abcdef0123456789abcdef01234567
+issue() { printf '{"number":%s,"title":"Задача %s","state":"open","html_url":"https://github.com/acme/demo/issues/%s","created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-2%sT10:00:00Z","user":"fake-user","assignees":["fake-user"],"labels":[{"name":"bug","color":"d73a4a"}]}\n' "$1" "$1" "$1" "$(($1 % 10))"; }
+mr() {
+  author=fake-user; reviewers='[]'
+  if [ $(($1 % 2)) -eq 0 ]; then author=colleague; reviewers='["fake-user"]'; fi
+  printf '{"number":%s,"title":"MR %s","draft":false,"created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-2%sT10:00:00Z","user":"%s","head_ref":"feat-%s","head_label":"acme:feat-%s","head_repo":"acme/demo","head_sha":"%s","base_ref":"main","assignees":[],"reviewers":%s}\n' "$1" "$1" "$(($1 % 10))" "$author" "$1" "$1" "$sha" "$reviewers"
+}
+seq_to() { i=1; while [ "$i" -le "$1" ]; do "$2" "$i"; i=$((i + 1)); done; }
+for arg in "$@"; do last=$arg; done
+case "$last" in
+  .login) echo fake-user;;
+  repos/*/issues\?*) seq_to "$n" issue;;
+  repos/*/issues/[0-9]*) issue "${last##*/}";;
+  repos/*/pulls\?*) seq_to "$n" mr;;
+  repos/*/pulls/*/reviews\?*) echo '{"login":"reviewer","state":"APPROVED"}';;
+  repos/*/pulls/[0-9]*) mr "${last##*/}";;
+  repos/*/commits/*/check-runs\?*) echo '{"status":"completed","conclusion":"success"}'; echo '{"status":"completed","conclusion":"success"}';;
+  repos/*/commits/*/status) echo '{"state":"success","total_count":1}';;
+  user) echo fake-user;;
+  *) echo "fake gh: неизвестный вызов: $*" >&2; exit 1;;
+esac

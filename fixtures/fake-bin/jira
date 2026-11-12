@@ -1,0 +1,18 @@
+#!/bin/sh
+# Подставной jira: вход есть, одна задача SMK-1 в работе; формы ответов - как у jira-cli 1.7.0 (`--raw`, `--plain`).
+[ -n "$FAKE_JIRA_LOG" ] && echo "$*" >> "$FAKE_JIRA_LOG"
+case "$1" in
+  version) echo 'Version="1.7.0", GitCommit="smoke"';;
+  me) echo 'smoke@example.com';;
+  open) echo "https://jira.example/browse/$2";;
+  project) printf 'KEY\tNAME\t\t\tTYPE\tLEAD\nSMK\tSmoke\t\t\tsoftware\tIvan\nOTH\tOther\t\t\tsoftware\tOlga\n';;
+  issue)
+    if [ "$2" = list ]; then
+      case "$*" in
+        *--plain*) echo "SMK-1";;
+        *) echo '[{"key":"SMK-1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress"},"issueType":{"name":"Bug"},"priority":{"name":"High"},"assignee":{"displayName":"Я"},"updated":"2026-10-26T12:00:00.000+0300","labels":[],"description":"x"}}]';;
+      esac
+    else
+      echo '{"key":"SMK-1","self":"https://jira.example/rest/api/2/issue/1","fields":{"summary":"Задача из Jira","status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},"issuetype":{"name":"Bug"},"description":"Описание из Jira","comment":{"total":1,"comments":[{"id":"1","author":{"displayName":"Коллега"},"body":"Комментарий из Jira"}]}}}'
+    fi;;
+esac
