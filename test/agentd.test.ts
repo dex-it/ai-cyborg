@@ -380,6 +380,72 @@ describe('daemon: report и close', () => {
   });
 });
 
+describe('daemon: уборка клона на настоящем git', () => {
+  const ID = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (cwd: string, ...args: string[]): string => {
+    const run = spawnSync('git', args, { cwd, env: { ...process.env, ...ID }, encoding: 'utf8' });
+    assert.equal(run.status, 0, `git ${args.join(' ')}: ${run.stderr}`);
+    return run.stdout;
+  };
+  const realExec = (file: string, args: string[], opts?: { cwd?: string; env?: Record<string, string> }) => {
+    const run = spawnSync(file, args, { cwd: opts?.cwd, env: { ...process.env, ...ID, ...opts?.env }, encoding: 'utf8' });
+    return Promise.resolve({ code: run.status ?? 1, stdout: run.stdout ?? '', stderr: run.stderr ?? '' });
+  };
+
+  /** Сессия с одним клоном из локального bare-репозитория: origin настоящий, команды git - настоящие. */
+  async function started(t: { after: (fn: () => void) => void }) {
+    const r = rig(t, { exec: realExec });
+    const origin = path.join(r.home, 'origin.git');
+    git(r.home, 'init', '-q', '--bare', '-b', 'main', origin);
+    const seed = path.join(r.home, 'seed');
+    git(r.home, 'clone', '-q', origin, seed);
+    git(seed, 'commit', '-q', '--allow-empty', '-m', 'one');
+    git(seed, 'push', '-q', 'origin', 'HEAD:main');
+    const { c, conn, sid } = await open(r, { repos: [{ local: '/loc/a', url: origin, name: 'a' }], branch: 'feat/x' });
+    assert.equal(c.of('error').length, 0);
+    const clone = path.join(r.home, '.cyborg', 'work', sid, 'a');
+    return { r, c, conn, sid, clone };
+  }
+
+  const closeAndSee = async (c: ReturnType<typeof client>, conn: ReturnType<Rig['daemon']['connect']>, sid: string) => {
+    conn.receive({ type: 'close', rid: 9, sid, keep: false } as Msg);
+    await until(() => c.of('close').length === 1, 10_000);
+    return c.of('close')[0] as unknown as { removed: string[]; kept: { path: string; reason: string }[] };
+  };
+
+  it('чистый клон на ветке из origin убирается', async (t) => {
+    const { c, conn, sid, clone } = await started(t);
+    const done = await closeAndSee(c, conn, sid);
+    assert.deepEqual(done.removed, [clone]);
+    assert.equal(fs.existsSync(clone), false);
+  });
+
+  it('коммит в detached HEAD клона, нигде не запушенный, не пропадает: клон остаётся с причиной', async (t) => {
+    const { c, conn, sid, clone } = await started(t);
+    git(clone, 'checkout', '-q', '--detach');
+    git(clone, 'commit', '-q', '--allow-empty', '-m', 'работа в detached HEAD');
+    const done = await closeAndSee(c, conn, sid);
+    assert.deepEqual(done.kept, [{ path: clone, reason: 'незапушенные коммиты' }]);
+    assert.ok(fs.existsSync(clone));
+  });
+
+  it('коммит в detached worktree клона тоже сохраняет клон', async (t) => {
+    const { c, conn, sid, clone, r } = await started(t);
+    git(clone, 'worktree', 'add', '-q', '--detach', path.join(r.home, 'wt'));
+    git(path.join(r.home, 'wt'), 'commit', '-q', '--allow-empty', '-m', 'работа в worktree');
+    const done = await closeAndSee(c, conn, sid);
+    assert.deepEqual(done.kept, [{ path: clone, reason: 'незапушенные коммиты' }]);
+    assert.ok(fs.existsSync(clone));
+  });
+
+  it('detached HEAD на коммите, который есть в origin, клон не удерживает', async (t) => {
+    const { c, conn, sid, clone } = await started(t);
+    git(clone, 'checkout', '-q', '--detach', 'origin/main');
+    const done = await closeAndSee(c, conn, sid);
+    assert.deepEqual(done.removed, [clone]);
+  });
+});
+
 const sessDir = (r: Rig, sid: string) => path.join(r.home, '.cyborg', 'sessions', sid);
 const readMeta = (r: Rig, sid: string) => JSON.parse(fs.readFileSync(path.join(sessDir(r, sid), 'meta.json'), 'utf8'));
 const patchMeta = (r: Rig, sid: string, patch: Record<string, unknown>) =>

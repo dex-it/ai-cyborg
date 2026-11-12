@@ -1007,9 +1007,14 @@ export class Daemon {
       if (status.code !== 0) return UNCHECKED_CLONE;
       if (status.stdout.trim()) return 'изменения в рабочем дереве';
     }
-    const ahead = await run(['rev-list', '--count', '--branches', '--not', '--remotes']);
-    if (ahead.code !== 0) return UNCHECKED_CLONE;
-    if (Number(ahead.stdout.trim()) !== 0) return 'незапушенные коммиты';
+    // HEAD каждого дерева: коммит в detached HEAD (в клоне, при rebase, в worktree --detach) ни одной ветке не принадлежит, а с клоном пропал бы.
+    for (const tree of paths.length ? paths : [clone]) {
+      const head = await run(['rev-parse', '--verify', '--quiet', 'HEAD'], tree);
+      if (head.code > 1) return UNCHECKED_CLONE;
+      const ahead = await run(['rev-list', '--count', '--branches', ...(head.code === 0 ? ['HEAD'] : []), '--not', '--remotes'], tree);
+      if (ahead.code !== 0) return UNCHECKED_CLONE;
+      if (Number(ahead.stdout.trim()) !== 0) return 'незапушенные коммиты';
+    }
     const stash = await run(['stash', 'list']);
     if (stash.code !== 0) return UNCHECKED_CLONE;
     if (stash.stdout.trim()) return 'stash';
