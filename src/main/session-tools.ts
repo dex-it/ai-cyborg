@@ -5,6 +5,7 @@ import type { SayResult, SessionInfo } from './sessions.ts';
 export const OPEN_SESSION_TOOL = 'open_session';
 export const LIST_SESSIONS_TOOL = 'list_sessions';
 export const SEND_TO_SESSION_TOOL = 'send_to_session';
+export const CLOSE_SESSION_TOOL = 'close_session';
 
 /** Промпт новой сессии уходит позиционным аргументом claude, а Linux ограничивает один аргумент 128 КиБ (MAX_ARG_STRLEN). */
 export const MAX_TEXT_BYTES = 100_000;
@@ -13,6 +14,9 @@ export const HANDOFF_TIMEOUT_MS = 20_000;
 
 /** Хвост ответа в list_sessions: итог работы обычно в конце ответа. */
 export const ANSWER_TAIL = 1500;
+
+/** Своя вкладка закрывается после ответа: иначе результат вызова не дошёл бы до её диалога и пропал бы из возобновлённой сессии. */
+export const CLOSE_SELF_DELAY_MS = 1000;
 
 /** Каталоги вызывающей сессии - перечень в схеме: модель видит, из чего выбирать активный каталог новой. */
 export function sessionTools(dirs: string[]): McpTool[] {
@@ -61,6 +65,24 @@ export function sessionTools(dirs: string[]): McpTool[] {
         additionalProperties: false,
       },
     },
+    {
+      name: CLOSE_SESSION_TOOL,
+      description:
+        'Закрывает вкладку Cyborg с сессией проекта - как крестик на вкладке: процесс Claude Code завершается, вкладка убирается, очередь её сообщений пропадает. ' +
+        'Диалог остаётся в истории сессий проекта, его можно возобновить. ' +
+        'Своя вкладка (номер с self: true в list_sessions) закрывается через секунду после ответа. ' +
+        'Чужую вкладку в состоянии working, asking или starting инструмент не закрывает - её работа или вопрос человеку пропали бы; закрыть её всё же - force: true. ' +
+        'Прежде чем закрыть соседку, прочитай её итог в list_sessions.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', description: 'Номер сессии из list_sessions.' },
+          force: { type: 'boolean', description: 'Закрыть и работающую, и ждущую человека сессию.' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+    },
   ];
 }
 
@@ -104,6 +126,22 @@ export function validateSend(value: unknown, peers: SessionInfo[], caller: numbe
   if (target.state === 'starting') return `сессия ${target.id} ещё запускается: повтори позже`;
   if (target.state === 'asking') return `сессия ${target.id} ждёт человека (${target.reason ?? 'вопрос'}): текст ушёл бы в её диалог, повтори после его ответа`;
   return { id: target.id, message: cleanMessage(message) };
+}
+
+export function validateClose(value: unknown, peers: SessionInfo[], caller: number): { id: number } | string {
+  const { id, force } = args(value);
+  if (force !== undefined && typeof force !== 'boolean') return 'force - true или false';
+  const target = peers.find((p) => p.id === id);
+  if (!target) return `сессии ${String(id)} нет среди открытых вкладок проекта: номера - в list_sessions`;
+  // Вызывающая сессия в своём ходу всегда working: правило о работающих к ней не относится.
+  if (force || target.id === caller || target.state === 'waiting') return { id: target.id };
+  const busy =
+    target.state === 'asking'
+      ? `ждёт человека (${target.reason ?? 'вопрос'})`
+      : target.state === 'starting'
+        ? 'ещё запускается'
+        : 'работает';
+  return `сессия ${target.id} ${busy}: закрытие оборвёт её, закрыть всё же - force: true`;
 }
 
 const tail = (text: string): string => (text.length > ANSWER_TAIL ? `…${text.slice(-ANSWER_TAIL)}` : text);
@@ -183,7 +221,13 @@ export interface SessionsPort {
   say(id: number, text: string): Promise<SayResult>;
 }
 
-export function createSessionTools(sessions: SessionsPort, handoffs: Pick<Handoffs, 'request'>): McpBackend {
+export function createSessionTools(
+  sessions: SessionsPort,
+  handoffs: Pick<Handoffs, 'request'>,
+  /** Закрывает вкладку сессии, а без окна - завершает её процесс. */
+  close: (id: number) => void,
+  closeSelfDelayMs = CLOSE_SELF_DELAY_MS,
+): McpBackend {
   return {
     tools: (caller) => {
       const dirs = sessions.dirsOf(caller);
@@ -201,6 +245,16 @@ export function createSessionTools(sessions: SessionsPort, handoffs: Pick<Handof
         return result === 'queued'
           ? `Сессия ${valid.id} работает: сообщение в очереди Cyborg и уйдёт, когда она закончит ход.`
           : `Сообщение отправлено сессии ${valid.id}.`;
+      }
+      if (name === CLOSE_SESSION_TOOL) {
+        const valid = validateClose(value, peers, caller);
+        if (typeof valid === 'string') throw new Error(valid);
+        if (valid.id !== caller) {
+          close(valid.id);
+          return `Вкладка сессии ${valid.id} закрыта.`;
+        }
+        setTimeout(() => close(caller), closeSelfDelayMs);
+        return 'Эта вкладка закроется через секунду.';
       }
       if (name !== OPEN_SESSION_TOOL) throw new Error(`неизвестный инструмент ${name}`);
       const valid = validateOpenSession(value, dirs);

@@ -980,6 +980,12 @@ api.on<{ hid: string; from: number; repo: string }>('session:handoff', ({ hid, f
   createSessionView(caller.project, repo, { handoff: hid }).catch((error) => api.handoffFailed(hid, ipcErrorText(error)));
 });
 
+api.on<{ id: number }>('session:close', ({ id }) => {
+  const session = findSession(id);
+  if (session) closeSession(session, true);
+  else api.kill(id);
+});
+
 api.on<{ id: number }>('session:reveal', ({ id }) => {
   const session = findSession(id);
   if (!session) return;
