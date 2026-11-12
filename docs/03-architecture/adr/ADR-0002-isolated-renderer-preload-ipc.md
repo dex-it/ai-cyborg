@@ -2,7 +2,7 @@
 id: ADR-0002
 status: review
 date: 2026-10-24
-relates_to: product
+relates_to: product, 17-ssh-remote-agents, ADR-0020
 origin: derived
 quality-checks: входных записей нет
 ---
@@ -32,8 +32,8 @@ quality-checks: входных записей нет
    `webUtils.getPathForFile`), - синхронной функцией моста без канала главного процесса (фича `03-path-drop`, D-10);
    так же отдаётся платформа - `process.platform` полем моста (фича `05-macos-support`, D-03).
    Каналы по состоянию на a91aafa, добавленные позже первой редакции: запрос с ответом - `commands:load|save`, `prompts:load|save` (фича 12), `search:text`, `search:changes`, `fs:files` (фича 13),
-   `extensions:load|probe|act|usage`, `hubs:list|change|fetch` (фича 14), `jira:*` (фича 11), `path:open`, `url:open`, `config:reveal` (PR #37; открывают путь из вывода сессии и адрес в приложении и браузере системы, файл настроек кнопок и промптов), `workspace:*`, `fs:write` (фича 16, единственный канал записи файла репозитория);
-   отправка без ответа - `session:notify`, `session:unnotify`, `notifications:state`, `project:selected`, `session:handoffFailed` (фича 15), `edits:unsaved` (фича 16, число файлов с несохранённой правкой); события - `session:suggest`, `session:waiting`, `session:reveal`, `session:handoff`, `session:close` (фича 15), `notifications:toggle` и `menu:*`.
+   `extensions:load|probe|act|usage`, `hubs:list|change|fetch` (фича 14), `jira:*` (фича 11), `path:open`, `url:open`, `config:reveal` (PR #37; открывают путь из вывода сессии и адрес в приложении и браузере системы, файл настроек кнопок и промптов), `workspace:*`, `fs:write` (фича 16, единственный канал записи файла репозитория), `remote:create|discover|fs` (фича 17, `remote:fs` - только чтение, операции из белого списка);
+   отправка без ответа - `session:notify`, `session:unnotify`, `notifications:state`, `project:selected`, `session:handoffFailed` (фича 15), `edits:unsaved` (фича 16, число файлов с несохранённой правкой); события - `session:suggest`, `session:waiting`, `session:reveal`, `session:handoff`, `session:close` (фича 15), `remote:link`, `remote:report` (фича 17), `notifications:toggle` и `menu:*`.
 4. Тип API выводится из самого preload-скрипта, интерфейс пользуется этим типом.
 5. Главный процесс не доверяет аргументам из интерфейса: путь к файлу и каталогу принимается, только если он
    абсолютный, без сегмента `..` и лежит в репозиториях проектов, в каталогах и cwd работающих сессий (сессия может

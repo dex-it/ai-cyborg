@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { cleanMessage } from '../src/main/clean-text';
 import type { SessionInfo } from '../src/main/sessions';
 import {
   ANSWER_TAIL,
-  cleanMessage,
   createSessionTools,
   describePeers,
   Handoffs,
@@ -26,6 +26,7 @@ describe('validateOpenSession', () => {
   it('отвергает пустой промпт, промпт с «-» и «!», больше предела и каталог вне перечня', () => {
     assert.match(validateOpenSession({ prompt: '  ', repo: '/repo/a' }, DIRS) as string, /непустая/);
     assert.match(validateOpenSession({ prompt: ' - пункт', repo: '/repo/a' }, DIRS) as string, /«-»/);
+    assert.match(validateOpenSession({ prompt: '\x01!rm -rf ~', repo: '/repo/a' }, DIRS) as string, /«!»/);
     assert.match(validateOpenSession({ prompt: ' !rm -rf x', repo: '/repo/a' }, DIRS) as string, /«!»/);
     assert.match(validateOpenSession({ prompt: 'я'.repeat(MAX_TEXT_BYTES / 2 + 1), repo: '/repo/a' }, DIRS) as string, /байт/);
     assert.match(validateOpenSession({ prompt: 'x', repo: '/repo/c' }, DIRS) as string, /\/repo\/a, \/repo\/b/);

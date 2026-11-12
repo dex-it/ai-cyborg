@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { validateNotifyArgs } from '../src/main/notify-args';
+import { notificationKey, validateNotifyArgs } from '../src/main/notify-args';
 
 describe('validateNotifyArgs', () => {
   it('принимает номер сессии, заголовок и текст', () => {
@@ -27,5 +27,12 @@ describe('validateNotifyArgs', () => {
     assert.ok(args.title.endsWith('…') && args.body.endsWith('…'));
     assert.equal(validateNotifyArgs(1, 'я'.repeat(200), 'ы'.repeat(300))!.body.length, 300);
     assert.ok(!validateNotifyArgs(1, 'я'.repeat(200), 'ы'.repeat(300))!.body.endsWith('…'));
+  });
+});
+
+describe('notificationKey', () => {
+  it('уведомления итогов без вкладки (id 0) не вытесняют друг друга, у сессии с вкладкой ключ - её номер', () => {
+    assert.notEqual(notificationKey(0), notificationKey(0));
+    assert.equal(notificationKey(3), notificationKey(3));
   });
 });

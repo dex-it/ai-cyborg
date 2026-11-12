@@ -1,4 +1,5 @@
 import { basename, el, parentRel } from './dom';
+import { localFs, type FsPort } from './fs-port';
 import { makeDraggable } from './drop-path';
 import { restoreIndex, rowKey, tabStopIndex, treeKeyAction, type KeyRow } from './tree-keys';
 
@@ -20,7 +21,6 @@ interface Entry {
   isDir: boolean;
 }
 
-const api = window.cyborg;
 
 /** Опрос, не ответивший дольше этого, считается зависшим: следующий тик запускается, не дожидаясь его. */
 const POLL_STALE_MS = 30_000;
@@ -107,6 +107,7 @@ export class TreeView {
     private readonly onChange: () => void,
     /** Нет - веткой управляет сессия, сменить её из дерева нельзя. */
     private readonly onBranch?: (root: TreeRoot, anchor: HTMLElement) => void,
+    private readonly fs: FsPort = localFs,
   ) {}
 
   setRoots(roots: TreeRoot[]): void {
@@ -142,7 +143,7 @@ export class TreeView {
     // Статус и ветка независимы: два запроса к git идут одновременно, а не друг за другом.
     const results = await Promise.all(
       roots.map(async (root) => {
-        const [status, branch] = await Promise.all([api.gitStatus(root.path), api.gitBranch(root.path)]);
+        const [status, branch] = await Promise.all([this.fs.status(root.path), this.fs.branch(root.path)]);
         return { status, branch };
       }),
     );
@@ -195,7 +196,7 @@ export class TreeView {
   private async renderDir(root: TreeRoot, state: RootState, abs: string, rel: string, depth: number, container: DocumentFragment): Promise<void> {
     let entries: Entry[];
     try {
-      entries = await api.listDir(abs);
+      entries = await this.fs.list(abs);
     } catch {
       return;
     }

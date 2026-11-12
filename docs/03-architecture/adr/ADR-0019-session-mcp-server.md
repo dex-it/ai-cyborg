@@ -2,7 +2,7 @@
 id: ADR-0019
 status: review
 date: 2026-11-09
-relates_to: product, 15-session-mcp, ADR-0002, ADR-0003
+relates_to: product, 15-session-mcp, 17-ssh-remote-agents, ADR-0002, ADR-0003, ADR-0020
 origin: source
 quality-checks: входных записей нет
 ---

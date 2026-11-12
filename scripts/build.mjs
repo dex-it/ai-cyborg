@@ -28,6 +28,16 @@ await build({
 });
 await build({
   ...common,
+  entryPoints: ['src/agentd/agentd.ts'],
+  outfile: 'dist/agentd.js',
+  platform: 'node',
+  format: 'cjs',
+  target: 'node18',
+  sourcemap: false,
+  minify: false,
+});
+await build({
+  ...common,
   entryPoints: ['src/renderer/app.ts'],
   outfile: 'dist/renderer/app.js',
   platform: 'browser',

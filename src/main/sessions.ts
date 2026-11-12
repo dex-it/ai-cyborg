@@ -3,7 +3,11 @@ import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs } from './claude-args.ts';
-import { parseSuggestions, withoutSuggestions } from './suggestions.ts';
+import { cleanMessage } from './clean-text.ts';
+import { parseSuggestions } from './suggestions.ts';
+import { hookSettings, track, waitingReason, type SessionEvent, type SessionState } from './session-state.ts';
+
+export { waitingReason, type SessionEvent, type SessionState };
 import { writeJsonAtomic } from './jsonfile.ts';
 import { isAlive } from './pid.ts';
 import { validateInputArgs, validateResizeArgs, validateSessionId } from './session-args.ts';
@@ -20,15 +24,39 @@ export interface McpLink {
 // node-pty собран под ABI Electron и в чистом node не грузится: модуль подключается при первом запуске сессии, а тест подставляет свой spawn.
 const nodePtySpawn: Spawn = (...args) => require('node-pty').spawn(...args);
 
+/** Порт ввода-вывода сессии: локальный pty либо канал к демону на хосте. */
+export interface TermPort {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+}
+
+/** Удалённая вкладка: хост, кто её открыл и что с итогом. */
+export interface RemoteMeta {
+  host: string;
+  origin: 'tool' | 'human';
+  keep: boolean;
+  spawnedBy?: number;
+  online: boolean;
+}
+
+export interface AdoptOptions {
+  term: TermPort;
+  dirs: string[];
+  cwd: string;
+  remote: RemoteMeta;
+}
+
 interface Session {
   id: number;
-  pty: pty.IPty;
-  eventsFile: string;
+  term: TermPort;
+  remote?: RemoteMeta;
+  eventsFile?: string;
   offset: number;
   cwd: string;
   /** Репозитории запуска: ветками в них управляет сессия. */
   dirs: string[];
-  watcher: fs.FSWatcher;
+  watcher?: fs.FSWatcher;
   /** Отложенное «ждёт» после Stop: любое следующее событие сессии его отменяет. */
   stopTimer?: NodeJS.Timeout;
   /** Интерфейсу отправлены предложенные моделью кнопки, которые ещё не сняты. */
@@ -43,9 +71,6 @@ interface Session {
   delivering?: boolean;
 }
 
-/** starting - SessionStart ещё не пришёл (CC грузится или стоит на доверии к каталогу); asking - ждёт человека на вопросе, разрешении или лимите. */
-export type SessionState = 'starting' | 'working' | 'waiting' | 'asking';
-
 export interface SessionInfo {
   id: number;
   dirs: string[];
@@ -55,6 +80,9 @@ export interface SessionInfo {
   lastAnswer?: string;
   /** Сообщений в очереди сессии. */
   queued: number;
+  /** Только у удалённой вкладки. */
+  host?: string;
+  link?: 'offline';
 }
 
 export type SayResult = 'sent' | 'queued';
@@ -62,67 +90,7 @@ export type SayResult = 'sent' | 'queued';
 /** Пауза между текстом и Enter, как у кнопок команд (command-bar.ts): пакет «текст и Enter» TUI вправе принять за вставку. */
 export const SUBMIT_DELAY_MS = 150;
 
-const sameDirs = (a: string[], b: string[]): boolean => a.length === b.length && [...a].sort().join('\0') === [...b].sort().join('\0');
-
-export interface SessionEvent {
-  hook_event_name?: string;
-  cwd?: string;
-  tool_name?: string;
-  message?: string;
-  notification_type?: string;
-  last_assistant_message?: string;
-  /** Есть у событий инструментов субагента, в том числе фонового, который работает после Stop главного хода. */
-  agent_id?: string;
-  background_tasks?: unknown[];
-  session_crons?: unknown[];
-}
-
-// Claude Code не оборачивается: Cyborg только дописывает хуки через --settings, и они кладут JSON события в файл сессии.
-const HOOK_COMMAND = '{ cat; echo; } >> "$CYBORG_EVENTS"';
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'Notification'];
-
-// Белый список: новый тип Notification в следующей версии CC не уведомляет; idle_prompt повторяет Stop через минуту.
-// Текст уведомления зависит только от типа события: ответ Claude и сообщение запроса на экран блокировки не попадают (D-07).
-const WAITING_NOTIFICATIONS: ReadonlyMap<string, string> = new Map([
-  ['permission_prompt', 'Просит разрешение'],
-  ['elicitation_dialog', 'Задаёт вопрос'],
-  ['elicitation_url_dialog', 'Задаёт вопрос'],
-  ['agent_needs_input', 'Ждёт ответа'],
-  ['quota_auto_resume_stale', 'Остановилась на лимите'],
-  ['quota_auto_resume_disabled', 'Остановилась на лимите'],
-]);
-
-/** Сессия ждёт человека: ход закончен либо CC стоит на вопросе, разрешении или лимите (типы - code.claude.com/docs/en/hooks). */
-export function waitingReason(event: SessionEvent): string | null {
-  if (event.hook_event_name === 'Stop') {
-    // Непустые background_tasks или session_crons - пауза до фоновой работы: сессия проснётся сама.
-    if (event.background_tasks?.length || event.session_crons?.length) return null;
-    return 'Ход завершён, ждёт ответа';
-  }
-  if (event.hook_event_name !== 'Notification') return null;
-  return WAITING_NOTIFICATIONS.get(event.notification_type ?? '') ?? null;
-}
-
-/** Состояние для list_sessions; фоновый субагент (agent_id) хода главной модели не меняет. */
-function track(session: Session, event: SessionEvent): void {
-  const name = event.hook_event_name;
-  // SessionStart приходит и на сжатии контекста посреди хода.
-  if (name === 'SessionStart') {
-    if (session.state === 'starting') session.state = 'waiting';
-  } else if (name === 'UserPromptSubmit' || (name === 'PostToolUse' && !event.agent_id)) session.state = 'working';
-  else if (name === 'Stop') {
-    // С фоновыми задачами или расписанием сессия проснётся сама: для ввода извне она всё ещё работает.
-    session.state = event.background_tasks?.length || event.session_crons?.length ? 'working' : 'waiting';
-    if (typeof event.last_assistant_message === 'string') session.lastAnswer = withoutSuggestions(event.last_assistant_message);
-  } else if (name === 'Notification') {
-    const reason = waitingReason(event);
-    if (!reason) return;
-    session.state = 'asking';
-    session.reason = reason;
-    return;
-  } else return;
-  session.reason = undefined;
-}
+export const sameDirs = (a: string[], b: string[]): boolean => a.length === b.length && [...a].sort().join('\0') === [...b].sort().join('\0');
 
 // Унаследованные маркеры делают сессию дочерней, и CC не пишет её транскрипт.
 const PARENT_SESSION_VARS = [
@@ -167,14 +135,8 @@ export class SessionManager {
     prepareEventsDir(this.eventsDir);
     this.removeOrphanedEvents();
     this.settingsFile = path.join(userData, 'claude-hooks.json');
-    const hooks = Object.fromEntries(
-      HOOK_EVENTS.map((event) => [
-        event,
-        [{ ...(event === 'PostToolUse' ? { matcher: '*' } : {}), hooks: [{ type: 'command', command: HOOK_COMMAND }] }],
-      ]),
-    );
     // Атомарно: соседний инстанс пишет тот же файл, а запускающийся claude не должен прочитать обрезанный.
-    writeJsonAtomic(this.settingsFile, { hooks });
+    writeJsonAtomic(this.settingsFile, hookSettings());
   }
 
   create(cwd: string, addDirs: string[], prompt?: string, resume?: string): number {
@@ -205,7 +167,7 @@ export class SessionManager {
     });
     const session: Session = {
       id,
-      pty: proc,
+      term: { write: (data) => proc.write(data), resize: (cols, rows) => proc.resize(cols, rows), kill: () => proc.kill() },
       eventsFile,
       offset: 0,
       cwd,
@@ -222,7 +184,7 @@ export class SessionManager {
     proc.onExit(({ exitCode }) => {
       clearTimeout(session.stopTimer);
       clearTimeout(session.outboxTimer);
-      session.watcher.close();
+      session.watcher?.close();
       fs.rmSync(eventsFile, { force: true });
       if (mcpFile) {
         fs.rmSync(mcpFile, { force: true });
@@ -236,12 +198,16 @@ export class SessionManager {
 
   /** Работающие сессии: завершившаяся убирается из набора в onExit. */
   count(): number {
-    return this.sessions.size;
+    return this.local().length;
+  }
+
+  private local(): Session[] {
+    return [...this.sessions.values()].filter((s) => !s.remote);
   }
 
   /** Каталоги и текущие cwd работающих сессий: интерфейсу они доступны, даже если лежат не в репозиториях проекта. */
   liveDirs(): string[] {
-    return [...this.sessions.values()].flatMap((s) => [...s.dirs, s.cwd]);
+    return this.local().flatMap((s) => [...s.dirs, s.cwd]);
   }
 
   /** Каталоги запуска сессии - её рабочий и подключённые через --add-dir; null - сессии нет. */
@@ -255,7 +221,16 @@ export class SessionManager {
     if (!own) return null;
     return [...this.sessions.values()]
       .filter((s) => sameDirs(s.dirs, own.dirs))
-      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox }) => ({ id, dirs, cwd, state, reason, lastAnswer, queued: outbox.length }));
+      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, remote }) => ({
+        id,
+        dirs,
+        cwd,
+        state,
+        reason,
+        lastAnswer,
+        queued: outbox.length,
+        ...(remote ? { host: remote.host, ...(remote.online ? {} : { link: 'offline' as const }) } : {}),
+      }));
   }
 
   /** Сообщение от другой сессии: ждущей - сразу, работающей - в очередь до конца её хода; на вопросе и при запуске - отказ. */
@@ -277,9 +252,10 @@ export class SessionManager {
     // Перед каждой записью: открытый запрос разрешения принял бы Enter за «Да».
     const write = (data: string): void => {
       if (this.sessions.get(session.id) !== session) throw new Error(`сессия ${session.id} завершилась`);
+      if (session.remote && !session.remote.online) throw new Error(`сессия ${session.id} без связи с хостом`);
       if (session.state !== 'waiting') throw new Error(`сессия ${session.id} начала ход: текст вставлен в её ввод, Enter не отправлен`);
       try {
-        session.pty.write(data);
+        session.term.write(data);
       } catch {
         throw new Error(`сессия ${session.id} завершилась`);
       }
@@ -287,7 +263,8 @@ export class SessionManager {
     session.delivering = true;
     try {
       // Вставкой: перевод строки в тексте TUI мог бы принять за Enter и отправить сообщение по кускам.
-      write(`\x1b[200~${text}\x1b[201~`);
+      // Чистка у записи: в очередь попадает и текст хоста, минуя validateSend.
+      write(`\x1b[200~${cleanMessage(text)}\x1b[201~`);
       await new Promise((resolve) => setTimeout(resolve, SUBMIT_DELAY_MS));
       write('\r');
     } finally {
@@ -301,7 +278,7 @@ export class SessionManager {
   /** Очередь отдаёт по сообщению, когда сессия ждёт и молчит outboxDelayMs: чужой Stop-хук мог продолжить ход. */
   private scheduleOutbox(session: Session): void {
     clearTimeout(session.outboxTimer);
-    if (session.state !== 'waiting' || !session.outbox.length || session.delivering) return;
+    if (session.state !== 'waiting' || !session.outbox.length || session.delivering || (session.remote && !session.remote.online)) return;
     session.outboxTimer = setTimeout(
       () => {
         const text = session.outbox.shift();
@@ -312,28 +289,28 @@ export class SessionManager {
   }
 
   uses(dir: string): boolean {
-    return [...this.sessions.values()].some((s) => s.dirs.includes(dir));
+    return this.local().some((s) => s.dirs.includes(dir));
   }
 
   // Аргументы приходят из интерфейса и не проверены (session-args.ts): мусор молча отбрасывается. Вызов pty в try: процесс мог
   // завершиться между проверкой и вызовом, и ioctl на закрытом дескрипторе бросает, а исключение в обработчике канала - ошибка главного процесса.
   write(id: unknown, data: unknown): void {
     const args = validateInputArgs(id, data);
-    if (args) this.guarded(args.id, (p) => p.write(args.data));
+    if (args) this.guarded(args.id, (t) => t.write(args.data));
   }
 
   resize(id: unknown, cols: unknown, rows: unknown): void {
     const args = validateResizeArgs(id, cols, rows);
-    if (args) this.guarded(args.id, (p) => p.resize(args.cols, args.rows));
+    if (args) this.guarded(args.id, (t) => t.resize(args.cols, args.rows));
   }
 
   kill(id: unknown): void {
     const valid = validateSessionId(id);
-    if (valid !== null) this.guarded(valid, (p) => p.kill());
+    if (valid !== null) this.guarded(valid, (t) => t.kill());
   }
 
-  private guarded(id: number, action: (proc: pty.IPty) => void): void {
-    const proc = this.sessions.get(id)?.pty;
+  private guarded(id: number, action: (term: TermPort) => void): void {
+    const proc = this.sessions.get(id)?.term;
     if (!proc) return;
     try {
       action(proc);
@@ -343,7 +320,7 @@ export class SessionManager {
   }
 
   killAll(): void {
-    for (const session of this.sessions.values()) session.pty.kill();
+    for (const session of this.local()) session.term.kill();
   }
 
   // Убитый экземпляр не доходит до onExit, и его файлы событий остаются.
@@ -355,6 +332,7 @@ export class SessionManager {
   }
 
   private readEvents(session: Session): void {
+    if (!session.eventsFile) return;
     let size: number;
     try {
       size = fs.statSync(session.eventsFile).size;
@@ -373,47 +351,125 @@ export class SessionManager {
     const end = buffer.lastIndexOf(0x0a);
     if (end < 0) return;
     session.offset += end + 1;
-    for (const line of buffer.subarray(0, end).toString('utf8').split('\n')) {
+    this.ingest(session.id, buffer.subarray(0, end).toString('utf8').split('\n'), { replay: false });
+  }
+
+  /** Удалённая вкладка: порт - канал к демону; номер выдаёт Cyborg, события и вывод приходят по каналу. */
+  adopt(options: AdoptOptions): number {
+    const id = this.nextId++;
+    this.sessions.set(id, {
+      id,
+      term: options.term,
+      remote: options.remote,
+      offset: 0,
+      cwd: options.cwd,
+      dirs: options.dirs,
+      state: 'starting',
+      outbox: [],
+      lastEventAt: Date.now(),
+    });
+    return id;
+  }
+
+  /** Вывод удалённой сессии: как у локальной, интерфейс разбирает его сам. */
+  feed(id: number, data: string): void {
+    if (this.sessions.get(id)?.remote) this.emit('session:data', { id, data });
+  }
+
+  /** Конец удалённой сессии: вкладка получает session:exit, причина - необязательная строка. */
+  finish(id: number, exitCode: number, reason?: string): void {
+    const session = this.sessions.get(id);
+    if (!session?.remote) return;
+    clearTimeout(session.stopTimer);
+    clearTimeout(session.outboxTimer);
+    this.sessions.delete(id);
+    this.emit('session:exit', { id, exitCode, ...(reason ? { reason } : {}) });
+  }
+
+  /** Убрать удалённую сессию без session:exit: вкладки интерфейс ещё не создал. */
+  discard(id: number): void {
+    const session = this.sessions.get(id);
+    if (!session?.remote) return;
+    clearTimeout(session.stopTimer);
+    clearTimeout(session.outboxTimer);
+    this.sessions.delete(id);
+  }
+
+  setCwd(id: number, cwd: string): void {
+    const session = this.sessions.get(id);
+    if (session) session.cwd = cwd;
+  }
+
+  setLink(id: number, online: boolean): void {
+    const session = this.sessions.get(id);
+    if (!session?.remote) return;
+    session.remote.online = online;
+    if (online) this.scheduleOutbox(session);
+  }
+
+  remoteOf(id: number): RemoteMeta | null {
+    return this.sessions.get(id)?.remote ?? null;
+  }
+
+  /** Сообщение в очередь сессии без отказа: уйдёт, когда она будет ждать. false - сессии нет. */
+  enqueue(id: number, text: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    session.outbox.push(text);
+    this.scheduleOutbox(session);
+    return true;
+  }
+
+  /**
+   * Строки событий хука: из файла (live) либо с канала хоста. replay - догон после отсутствия:
+   * состояние, cwd, ответ и кнопки считаются по всем событиям, уведомление и задержка Stop - только по последнему.
+   */
+  ingest(id: number, lines: string[], { replay }: { replay: boolean }): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    const events: SessionEvent[] = [];
+    for (const line of lines) {
       if (!line.trim()) continue;
-      let event: SessionEvent;
       try {
-        event = JSON.parse(line);
+        events.push(JSON.parse(line));
       } catch {
         continue;
       }
-      if (event.cwd && event.cwd !== session.cwd) {
-        session.cwd = event.cwd;
-        this.emit('session:cwd', { id: session.id, cwd: event.cwd });
-      }
-      this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
-      session.lastEventAt = Date.now();
-      track(session, event);
-      this.scheduleOutbox(session);
-      if (event.hook_event_name === 'Stop') {
-        // Кнопки относятся к последнему ответу: Stop без них снимает прежние (модель проснулась после фоновой задачи и ответила текстом).
-        const buttons = parseSuggestions(event.last_assistant_message);
-        if (buttons.length || session.suggested) {
-          this.emit('session:suggest', { id: session.id, buttons });
-          session.suggested = buttons.length > 0;
-        }
-      } else if (event.hook_event_name === 'UserPromptSubmit') {
-        session.suggested = false; // кнопки снимает интерфейс по этому же событию
-      } else if (
-        session.suggested &&
-        // Инструмент фонового субагента - не ход модели: ответ с кнопками уже дан, субагент работает за ним.
-        ((event.hook_event_name === 'PostToolUse' && !event.agent_id) || (event.hook_event_name === 'Notification' && waitingReason(event)))
-      ) {
-        // Модель снова работает без запроса человека (фоновая задача, расписание) либо стоит на вопросе: предложение относилось к прошлому ходу,
-        // а кнопка с submit отправила бы Enter уже в чужой диалог.
-        this.emit('session:suggest', { id: session.id, buttons: [] });
-        session.suggested = false;
-      }
-      clearTimeout(session.stopTimer);
-      const reason = waitingReason(event);
-      if (!reason) continue;
-      if (event.hook_event_name === 'Stop') {
-        session.stopTimer = setTimeout(() => this.emit('session:waiting', { id: session.id, reason }), this.stopDelayMs);
-      } else this.emit('session:waiting', { id: session.id, reason });
     }
+    events.forEach((event, i) => this.apply(session, event, !replay || i === events.length - 1));
+  }
+
+  private apply(session: Session, event: SessionEvent, notify: boolean): void {
+    if (event.cwd && event.cwd !== session.cwd) {
+      session.cwd = event.cwd;
+      this.emit('session:cwd', { id: session.id, cwd: event.cwd });
+    }
+    if (notify) this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
+    session.lastEventAt = Date.now();
+    track(session, event);
+    this.scheduleOutbox(session);
+    if (event.hook_event_name === 'Stop') {
+      // Кнопки относятся к последнему ответу: Stop без них снимает прежние (модель проснулась после фоновой задачи и ответила текстом).
+      const buttons = parseSuggestions(event.last_assistant_message);
+      if (buttons.length || session.suggested) {
+        this.emit('session:suggest', { id: session.id, buttons });
+        session.suggested = buttons.length > 0;
+      }
+    } else if (event.hook_event_name === 'UserPromptSubmit') {
+      session.suggested = false;
+    } else if (
+      session.suggested &&
+      ((event.hook_event_name === 'PostToolUse' && !event.agent_id) || (event.hook_event_name === 'Notification' && waitingReason(event)))
+    ) {
+      // Модель снова работает без запроса человека либо стоит на вопросе: кнопка с submit отправила бы Enter в чужой диалог.
+      this.emit('session:suggest', { id: session.id, buttons: [] });
+      session.suggested = false;
+    }
+    clearTimeout(session.stopTimer);
+    const reason = waitingReason(event);
+    if (!reason || !notify) return;
+    if (event.hook_event_name === 'Stop') {
+      session.stopTimer = setTimeout(() => this.emit('session:waiting', { id: session.id, reason }), this.stopDelayMs);
+    } else this.emit('session:waiting', { id: session.id, reason });
   }
 }

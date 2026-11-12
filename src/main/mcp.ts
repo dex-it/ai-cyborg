@@ -92,6 +92,23 @@ export class McpServer {
     this.server.close();
   }
 
+  /** Порт на 127.0.0.1, в который ведёт туннель удалённых сессий; 0 до listen. */
+  get boundPort(): number {
+    return this.port;
+  }
+
+  /** Токен без конфига: его кладёт на хост демон, а Cyborg лишь связывает с номером. */
+  issue(caller: number): string {
+    const token = randomBytes(32).toString('base64url');
+    this.callers.set(token, caller);
+    return token;
+  }
+
+  /** Принять известный токен живой удалённой сессии после перезапуска Cyborg. */
+  accept(token: string, caller: number): void {
+    this.callers.set(token, caller);
+  }
+
   /** Конфиг для --mcp-config сессии с новым токеном; до listen порта нет. */
   connect(caller: number): McpConfig {
     if (!this.port) throw new Error('MCP-сервер не запущен');

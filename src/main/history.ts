@@ -9,6 +9,8 @@ export interface HistoryEntry {
   title: string;
   /** Время последней записи журнала, мс. */
   updated: number;
+  /** Спящая удалённая сессия на этом хосте: id - её идентификатор на хосте. */
+  host?: string;
 }
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -100,6 +102,16 @@ function readEdges(file: string, size: number): [string, string] {
     return [read(0, Math.min(size, EDGE_BYTES)), size > EDGE_BYTES ? read(size - EDGE_BYTES, EDGE_BYTES) : ''];
   } finally {
     fs.closeSync(fd);
+  }
+}
+
+/** Факты журнала по краям файла; журнала нет или он пуст - null. */
+export function readJournalFacts(file: string): JournalFacts | null {
+  try {
+    const size = fs.statSync(file).size;
+    return size > 0 ? journalFacts(...readEdges(file, size)) : null;
+  } catch {
+    return null;
   }
 }
 

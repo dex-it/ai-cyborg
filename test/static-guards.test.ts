@@ -47,12 +47,12 @@ describe('привязка задачи и MR к сессии только в п
     assert.deepEqual(keys.filter((key) => !allowed.some((re) => re.test(key))), []);
   });
 
-  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, список хабов магазинов, кэш статистики вызовов расширений, настройки хуков, файлы событий сессий и их конфиги MCP Cyborg, список недавних воркспейсов, замок открытого воркспейса и правку Markdown из просмотрщика', () => {
+  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, список хабов магазинов, кэш статистики вызовов расширений, настройки хуков, файлы событий сессий и их конфиги MCP Cyborg, список недавних воркспейсов, замок открытого воркспейса, правку Markdown из просмотрщика и зашифрованный токен входа Claude удалённых агентов', () => {
     const writers = sources('src/main')
       .filter((file) => /\b(writeFileSync|appendFileSync|writeJsonAtomic|createWriteStream|writeFile)\(/.test(code(file)))
       .map((file) => file.split(path.sep).join('/'))
       .sort();
-    assert.deepEqual(writers, ['src/main/command-store.ts', 'src/main/events-store.ts', 'src/main/extensions-usage.ts', 'src/main/files.ts', 'src/main/hubs.ts', 'src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
+    assert.deepEqual(writers, ['src/main/command-store.ts', 'src/main/events-store.ts', 'src/main/extensions-usage.ts', 'src/main/files.ts', 'src/main/hubs.ts', 'src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/remote/claude-token.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
   });
 });
 
@@ -68,3 +68,24 @@ describe('диалоги названы для программ чтения с 
     }
   });
 });
+
+describe('поиск у удалённой вкладки идёт на хосте (FR-17006)', () => {
+  it('окно поиска ищет через порт вкладки, а не напрямую каналами главного процесса', () => {
+    const dialog = code('src/renderer/search-dialog.ts');
+    assert.doesNotMatch(dialog, /window\.cyborg|\bapi\.(listFiles|searchText|searchChanges)/);
+    const app = code('src/renderer/app.ts');
+    const setup = /new SearchDialog\(\{[\s\S]*?\n\}\);/.exec(app)?.[0] ?? '';
+    assert.match(setup, /fs: \(\) => active\?\.remote\?\.fs \?\? localFs/);
+  });
+});
+
+describe('уведомления итогов без вкладки', () => {
+  it('session:notify хранит и закрывает уведомление по notificationKey, а не по голому id', () => {
+    const text = code('src/main/main.ts');
+    const handler = /ipcMain\.on\('session:notify',[\s\S]*?\n\}\);/.exec(text)?.[0] ?? '';
+    assert.ok(handler, 'обработчик session:notify не найден');
+    assert.match(handler, /const key = notificationKey\(id\)/);
+    assert.doesNotMatch(handler, /shownNotifications\.(get|set|delete)\(id\b/);
+  });
+});
+

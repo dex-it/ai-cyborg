@@ -255,10 +255,11 @@ export async function gitDiffSearch(request: SearchRequest, signal: AbortSignal)
   if ((await gitRoot(root)) === null) return empty({ error: 'Не git-репозиторий' });
   // git diff, как и status, гоняет clean-фильтры из конфига репозитория: ключи перекрываются (ADR-0005), внешний diff и textconv выключены.
   const overrides = await filterOverrides(root);
+  // Отказ «нет HEAD» распознаётся по тексту stderr, а git переводит его по локали; строки сверяет JS, так что C-локаль поиску не мешает.
   const diff = await run(
     root,
     ['diff', 'HEAD', '-U0', '--no-ext-diff', '--no-textconv', '--no-color', '--no-prefix', '--no-renames', '--ignore-submodules=all'],
-    overrides,
+    { ...overrides, LC_ALL: 'C' },
     signal,
   );
   if (diff.code !== 0 && !diff.overflow) {
