@@ -337,10 +337,17 @@ if (!existsSync(join(appRoot, 'dist', 'main.js'))) {
   console.error('parity: нет dist/, сначала npm run build');
   process.exit(1);
 }
-const files = readdirSync(dir)
+const number = (name) => Number(/^S(\d+)/.exec(name)[1]);
+const all = readdirSync(dir)
   .filter((f) => /^S\d+.*\.json$/.test(f))
-  .sort()
-  .filter((f) => !wanted.length || wanted.some((w) => f.startsWith(w)));
+  .sort();
+// Запись выбирается по номеру: S1 и S01 - одна запись, S1 не захватывает S10-S18; номер без записи - ошибка, а не пустой зелёный прогон.
+const missing = wanted.filter((w) => !all.some((f) => number(f) === number(w)));
+if (missing.length) {
+  console.error(`parity: нет записи для ${missing.join(', ')} в ${dir}`);
+  process.exit(1);
+}
+const files = all.filter((f) => !wanted.length || wanted.some((w) => number(f) === number(w)));
 let failed = 0;
 for (const file of files) {
   const path = join(dir, file);
