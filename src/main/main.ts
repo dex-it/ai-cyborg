@@ -78,6 +78,9 @@ let win: BrowserWindow | null = null;
 const sessions = new SessionManager(app.getPath('userData'), (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
+// Несуществующий каталог в --plugin-dir - на усмотрение claude; сессия без скиллов Cyborg лучше сессии, которая не запустилась.
+const pluginDir = path.join(__dirname, 'plugin');
+if (fs.existsSync(path.join(pluginDir, '.claude-plugin', 'plugin.json'))) sessions.pluginDir = pluginDir;
 const handoffs = new Handoffs((request) => {
   if (!win || win.isDestroyed()) return false;
   win.webContents.send('session:handoff', request);
