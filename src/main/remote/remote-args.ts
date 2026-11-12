@@ -35,6 +35,17 @@ export function validateHumanRemoteCreate(value: unknown, project: Project | und
   return validateRemoteCreate({ host, repo, branch }, project);
 }
 
+/**
+ * Адрес origin для клона на хосте: учётные данные в http(s)-адресе (`https://пользователь:токен@хост/…`) отбрасываются.
+ * Иначе токен из локального `.git/config` лёг бы в `.git/config` клона на диске хоста и в аргументы `git clone`, которые видны в списке процессов (NFR-17001);
+ * доступ к хостингу дают токены gh и glab (FR-17016). Пользователь `git` в `ssh://git@хост/…` не секрет и остаётся.
+ */
+export function hostCloneUrl(url: string): { url: string; stripped: boolean } {
+  const m = /^(https?:\/\/)([^/?#]*)(.*)$/is.exec(url);
+  const at = m ? m[2].lastIndexOf('@') : -1;
+  return m && at >= 0 ? { url: m[1] + m[2].slice(at + 1) + m[3], stripped: true } : { url, stripped: false };
+}
+
 export const REMOTE_FS_OPS = ['list', 'read', 'root', 'branch', 'status', 'head', 'files'] as const;
 export type RemoteFsOp = (typeof REMOTE_FS_OPS)[number];
 

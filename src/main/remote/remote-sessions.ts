@@ -11,7 +11,7 @@ import { sameDirs, type SessionManager, type TermPort } from '../sessions';
 import { marketplaceUrl, type ClaudeMirror } from './claude-config';
 import type { AgentdBundle } from './install';
 import { HostLink, realTimers, type Timers } from './host-link';
-import { readSearchReply, type RemoteCreateArgs, type RemoteFsOp } from './remote-args';
+import { hostCloneUrl, readSearchReply, type RemoteCreateArgs, type RemoteFsOp } from './remote-args';
 import type { SearchReply, SearchRequest } from '../../shared/search-pattern';
 import type { SshTransport } from './ssh';
 
@@ -213,10 +213,13 @@ export class RemoteSessions implements RemoteToolsPort {
 
   async create(project: Project, args: RemoteCreateArgs, extra: CreateExtra): Promise<RemoteInfo> {
     const repos: RepoSpec[] = [];
+    const withCredentials: string[] = [];
     for (const dir of project.repos) {
-      const url = await this.deps.originUrl(dir);
-      if (!url) throw new Error(`у репозитория ${dir} нет origin: удалённой сессии нечего клонировать`);
-      if (url.startsWith('-')) throw new Error(`адрес origin репозитория ${dir} начинается с «-»`);
+      const origin = await this.deps.originUrl(dir);
+      if (!origin) throw new Error(`у репозитория ${dir} нет origin: удалённой сессии нечего клонировать`);
+      if (origin.startsWith('-')) throw new Error(`адрес origin репозитория ${dir} начинается с «-»`);
+      const { url, stripped } = hostCloneUrl(origin);
+      if (stripped) withCredentials.push(dir);
       repos.push({ local: dir, url, name: path.basename(dir) || 'repo' });
     }
     const selected = project.repos.indexOf(args.repo);
@@ -261,7 +264,7 @@ export class RemoteSessions implements RemoteToolsPort {
       entry.roots = (reply.clones as string[]) ?? [];
       const cwd = String(reply.cwd ?? args.repo);
       this.deps.sessions.setCwd(entry.id, cwd);
-      return { id: entry.id, host: args.host, dirs, cwd, roots: [cwd, ...entry.roots.filter((r) => r !== cwd)], notes: [...this.notes(link, repos.map((r) => r.url), auth), ...setupNotes], size: START_SIZE };
+      return { id: entry.id, host: args.host, dirs, cwd, roots: [cwd, ...entry.roots.filter((r) => r !== cwd)], notes: [...withCredentials.map((dir) => `адрес origin ${dir} содержит учётные данные: на хост они не переданы, клон идёт токеном gh или glab`), ...this.notes(link, repos.map((r) => r.url), auth), ...setupNotes], size: START_SIZE };
     } catch (error) {
       this.forget(entry);
       this.deps.sessions.discard(entry.id);

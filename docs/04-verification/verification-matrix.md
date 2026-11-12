@@ -201,5 +201,5 @@ date: 2026-10-26
 | FR-17013 | Локальные сессии и соседство не меняются | 17-ssh-remote-agents | автотест | `test/remote-tools.test.ts`, `src/main/sessions.test.ts` |
 | FR-17014 | Сон, пробуждение из «Истории» и перезапуск демона | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
 | FR-17015 | Место на хосте | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/host-disk.test.ts`, `test/menu.test.ts` |
-| FR-17016 | Доступы git и Claude у агента на хосте | 17-ssh-remote-agents | автотест | `test/remote-auth.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/menu.test.ts` |
+| FR-17016 | Доступы git и Claude у агента на хосте | 17-ssh-remote-agents | автотест | `test/remote-auth.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/remote-args.test.ts`, `test/menu.test.ts` |
 | FR-17017 | Зеркало настройки Claude, доверие к клонам, память и MCP пользователя | 17-ssh-remote-agents | автотест | `test/remote-config.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts` |

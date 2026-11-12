@@ -192,6 +192,35 @@ describe('RemoteSessions: открытие человеком', () => {
     assert.equal(a.sessions.peers(info.id)?.[0].cwd, '/h/w/a');
   });
 
+  it('учётные данные в адресе origin (https://пользователь:токен@хост/…) на хост не уходят: ни в spawn, ни в клон; вкладка называет это заметкой', async (t) => {
+    const { r, ssh } = world(t);
+    const urls: Record<string, string> = {
+      '/loc/a': 'https://oauth2:glpat-SECRET123@gitlab.example.com/o/a.git',
+      '/loc/b': 'https://ghp_TOKENONLY@github.com/o/b.git',
+    };
+    const a = side(t, ssh, { originUrl: async (d) => urls[d] });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    const spawn = ssh.seen.find((m) => m.type === 'spawn') as any;
+    assert.deepEqual(spawn.repos.map((x: any) => x.url), ['https://gitlab.example.com/o/a.git', 'https://github.com/o/b.git']);
+    const wire = JSON.stringify(ssh.seen);
+    assert.ok(!wire.includes('SECRET123') && !wire.includes('TOKENONLY'), 'секрет из адреса ушёл по каналу');
+    await until(() => r.execs.filter((e) => e.args[0] === 'clone').length === 2);
+    assert.ok(r.execs.every((e) => !e.args.join(' ').includes('SECRET123') && !e.args.join(' ').includes('TOKENONLY')), 'секрет из адреса попал в аргументы git на хосте');
+    assert.ok(info.notes?.some((n) => /\/loc\/a/.test(n) && /учётные данные/.test(n)), `нет заметки: ${JSON.stringify(info.notes)}`);
+    assert.ok(info.notes?.some((n) => /\/loc\/b/.test(n) && /учётные данные/.test(n)));
+  });
+
+  it('адрес origin без учётных данных уходит как есть: scp-форма, ssh:// с пользователем git, https без пользователя', async (t) => {
+    const { r, ssh } = world(t);
+    const urls: Record<string, string> = { '/loc/a': 'ssh://git@h.example.com:2222/o/a.git', '/loc/b': 'https://h.example.com/o/b.git' };
+    const a = side(t, ssh, { originUrl: async (d) => urls[d] });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    const spawn = ssh.seen.find((m) => m.type === 'spawn') as any;
+    assert.deepEqual(spawn.repos.map((x: any) => x.url), ['ssh://git@h.example.com:2222/o/a.git', 'https://h.example.com/o/b.git']);
+    assert.ok(!info.notes?.some((n) => /учётные данные/.test(n)));
+    await until(() => r.spawned.length === 1);
+  });
+
   it('репозиторий без origin: отказ с путём, демону ничего не уходит', async (t) => {
     const { ssh } = world(t);
     const a = side(t, ssh, { originUrl: async (d) => (d === '/loc/b' ? null : 'u') });

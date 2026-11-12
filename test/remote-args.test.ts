@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { branchNameProblem, validBranchName } from '../src/main/branch-name';
 import { ProjectStore, type Project } from '../src/main/projects';
 import { parsePreflight } from '../src/main/remote/preflight';
-import { readSearchReply, REMOTE_FS_OPS, validateHumanRemoteCreate, validateRemoteCreate, validateRemoteFs } from '../src/main/remote/remote-args';
+import { hostCloneUrl, readSearchReply, REMOTE_FS_OPS, validateHumanRemoteCreate, validateRemoteCreate, validateRemoteFs } from '../src/main/remote/remote-args';
 import { classifySshError, sshArgs, systemSsh } from '../src/main/remote/ssh';
 import { MAX_TEXT_BYTES } from '../src/main/session-tools';
 import { validateProjectsState } from '../src/main/trackers';
@@ -96,6 +96,30 @@ describe('parsePreflight', () => {
   });
   it('с токеном Claude вход на хосте не нужен', () => {
     assert.deepEqual(parsePreflight(good.replace('{"loggedIn":true}', '{"loggedIn":false}'), true), { home: '/home/u', installed: [], tools: none });
+  });
+});
+
+describe('hostCloneUrl: учётные данные в адресе origin', () => {
+  it('в http(s)-адресе пользователь, пароль и токен-как-пользователь отбрасываются, остальное не меняется', () => {
+    const cases: [string, string][] = [
+      ['https://oauth2:glpat-x@gitlab.example.com/o/a.git', 'https://gitlab.example.com/o/a.git'],
+      ['https://ghp_x@github.com/o/b.git', 'https://github.com/o/b.git'],
+      ['HTTP://u:p@h.example.com:8080/o/c', 'HTTP://h.example.com:8080/o/c'],
+      ['https://u:p%40q@h.example.com/o/d.git', 'https://h.example.com/o/d.git'],
+      ['https://u:p@q@h.example.com/o/e.git', 'https://h.example.com/o/e.git'],
+      ['https://h.example.com/o/a@b.git', 'https://h.example.com/o/a@b.git'],
+      ['https://h.example.com/o/f.git?x=a@b', 'https://h.example.com/o/f.git?x=a@b'],
+    ];
+    for (const [from, to] of cases) {
+      assert.equal(hostCloneUrl(from).url, to, from);
+      assert.equal(hostCloneUrl(from).stripped, from !== to, from);
+    }
+  });
+
+  it('scp-форма, ssh:// с пользователем git, git:// и локальный путь уходят как есть', () => {
+    for (const url of ['git@h.example.com:o/a.git', 'ssh://git@h.example.com:2222/o/a.git', 'git://h.example.com/o/a.git', '/srv/git/a.git', 'file:///srv/git/a.git']) {
+      assert.deepEqual(hostCloneUrl(url), { url, stripped: false }, url);
+    }
   });
 });
 
