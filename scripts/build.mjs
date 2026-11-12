@@ -47,6 +47,7 @@ await build({
 });
 
 cpSync('assets/icon.png', 'dist/icon.png');
+cpSync('plugin', 'dist/plugin', { recursive: true });
 cpSync('src/renderer/index.html', 'dist/renderer/index.html');
 cpSync('src/renderer/styles.css', 'dist/renderer/styles.css');
 cpSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/renderer/xterm.css');

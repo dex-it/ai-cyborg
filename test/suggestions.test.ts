@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { describe, it } from 'node:test';
-import { ISOLATION_PROMPT, SESSION_PROMPT, claudeArgs } from '../src/main/claude-args';
+import { ISOLATION_PROMPT, MCP_SESSION_PROMPT, PARALLEL_PROMPT, PARALLEL_SKILL, SESSION_PROMPT, claudeArgs } from '../src/main/claude-args';
 import { LABEL_MAX, TEXT_MAX } from '../src/main/commands';
+import { CLOSE_AGENT_TOOL, CLOSE_SESSION_TOOL, LIST_SESSIONS_TOOL, OPEN_SESSION_TOOL, SEND_TO_SESSION_TOOL, SPAWN_AGENT_TOOL } from '../src/main/session-tools';
 import { parseSuggestions, SUGGEST_MAX, SUGGEST_PROMPT } from '../src/main/suggestions';
 
 const tail = (json: string, before = 'Готово.\n\n'): string => `${before}<!-- cyborg-buttons: ${json} -->`;
@@ -120,6 +122,26 @@ describe('Кнопки от модели: инструкция сессии', ()
     assert.ok(SESSION_PROMPT.endsWith(SUGGEST_PROMPT));
     assert.ok(SESSION_PROMPT.startsWith(ISOLATION_PROMPT), 'инструкция об изоляции не потеряна');
     assert.deepEqual(claudeArgs([]).slice(0, 2), ['--append-system-prompt', SESSION_PROMPT]);
+  });
+
+  it('сессии с MCP дописана инструкция о параллельных сессиях, без MCP её нет', () => {
+    assert.match(PARALLEL_PROMPT, /несколько независимых заданий, предложи/);
+    assert.match(PARALLEL_PROMPT, /запомни его решение/);
+    assert.ok(PARALLEL_PROMPT.includes(`скилл ${PARALLEL_SKILL}`));
+    assert.ok(MCP_SESSION_PROMPT.startsWith(ISOLATION_PROMPT) && MCP_SESSION_PROMPT.includes(PARALLEL_PROMPT));
+    assert.ok(MCP_SESSION_PROMPT.endsWith(SUGGEST_PROMPT), 'кнопки от модели остаются последними');
+    assert.ok(!SESSION_PROMPT.includes(PARALLEL_PROMPT));
+  });
+
+  it('скилл, названный в инструкции, лежит в плагине под этим именем, сборка кладёт плагин в dist', () => {
+    const [plugin, skill] = PARALLEL_SKILL.split(':');
+    assert.equal(JSON.parse(fs.readFileSync('plugin/.claude-plugin/plugin.json', 'utf8')).name, plugin);
+    const body = fs.readFileSync(`plugin/skills/${skill}/SKILL.md`, 'utf8');
+    assert.match(body, new RegExp(`^---\\nname: ${skill}\\ndescription: .+\\n---\\n`));
+    for (const tool of [OPEN_SESSION_TOOL, SPAWN_AGENT_TOOL, LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL, CLOSE_SESSION_TOOL, CLOSE_AGENT_TOOL]) assert.ok(body.includes(`\`${tool}\``), tool);
+    assert.match(body, /наименее занятую площадку/);
+    assert.match(body, /сохрани в постоянную память/);
+    assert.match(fs.readFileSync('scripts/build.mjs', 'utf8'), /cpSync\('plugin', 'dist\/plugin'/);
   });
 
   it('пример из инструкции сам разбирается', () => {
