@@ -1,6 +1,6 @@
 # Сырые результаты замеров базы (PL-09)
 
-Числа документа [`cyborg-baseline.md`](https://github.com/dex-it/cyborg-harness/blob/pl09-baseline/docs/04-verification/cyborg-baseline.md) (репозиторий cyborg-harness, PR #108) пересчитываются из этих файлов. Среда: MacBookPro18,1, Apple M1 Pro, macOS 27.2, Electron 45.0.0, нагрузка 6-12 (поля `environment` в JSON). Файлы не перезаписывать: новые замеры класть рядом под другим именем.
+Числа документа [`cyborg-baseline.md`](https://github.com/dex-it/cyborg-harness/blob/master/docs/05-verification/cyborg-baseline.md) (репозиторий cyborg-harness, PR #108) пересчитываются из этих файлов. Среда: MacBookPro18,1, Apple M1 Pro, macOS 27.2, Electron 45.0.0, нагрузка 6-12 (поля `environment` в JSON). Файлы не перезаписывать: новые замеры класть рядом под другим именем.
 
 | Файл | Что это |
 |---|---|

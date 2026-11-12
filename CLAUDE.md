@@ -29,7 +29,7 @@
 - `src/shared/` - код, общий для главного процесса и интерфейса: extensions.ts (окно «Расширения»), search-pattern.ts (запрос поиска)
 - `src/renderer/` - интерфейс: проекты, полоса сессий, xterm, дерево, Monaco; точка входа app.ts и index.html. Панели задач, MR и «Статус»: tasks, mrs, panel, status; кнопки-команды: command-bar и редакторы command-editor, prompt-editor, config-editor; окно поиска search-dialog; окно «Расширения» extensions-dialog
 - `fixtures/` - подставные программы и данные для smoke, замеров и записанных сессий: fake-bin (claude, gh, jira, shell), slow-git (медленный `rev-parse --show-toplevel`), claude-home (каталог настроек Claude), market (магазин плагинов)
-- `test/` - тесты на node:test, по файлу на область (хранилища, меню, поиск, расширения, кнопки, клавиатура интерфейса, статические проверки); запускает scripts/test.mjs; `test/parity/` - записанные сессии S1-S18 (JSON, играет scripts/parity.mjs); `test/baseline/` - сырые результаты замеров базы PL-09 (JSON и логи bench, measure, parity), см. README в каталоге
+- `test/` - тесты на node:test, по файлу на область (хранилища, меню, поиск, расширения, кнопки, клавиатура интерфейса, статические проверки, запуск Electron драйвером стенда и выбор записей `scripts/parity.mjs`); запускает scripts/test.mjs; `test/parity/` - записанные сессии S1-S18 (JSON, играет scripts/parity.mjs); `test/baseline/` - сырые результаты замеров базы PL-09 (JSON и логи bench, measure, parity), см. README в каталоге
 - `.github/` - workflows ci.yml (сборка, типы, тесты, smoke, корпус) и docs-site.yml (сайт), dependabot.yml
 
 ## Правила
