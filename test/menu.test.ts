@@ -22,6 +22,8 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   editProject() {},
   editCommands() {},
   editPrompts() {},
+  claudeToken() {},
+  hostDisk() {},
   search() {},
   extensions() {},
   ...over,
@@ -49,7 +51,7 @@ describe('appMenuTemplate', () => {
       const unlabeled = (items: MenuItemConstructorOptions[]): string[] =>
         items.flatMap((item) => [
           ...(item.type !== 'separator' && !item.label ? [String(item.role)] : []),
-          ...(item.label && /[A-Za-z]/.test(item.label.replace('Cyborg', '').replace('MCP', '')) ? [item.label] : []),
+          ...(item.label && /[A-Za-z]/.test(item.label.replace('Cyborg', '').replace('MCP', '').replace('Claude', '')) ? [item.label] : []),
           ...(Array.isArray(item.submenu) ? unlabeled(item.submenu) : []),
         ]);
       assert.deepEqual(unlabeled(appMenuTemplate(platform, () => {}, notifications, workspaceMenu())), []);
@@ -81,7 +83,7 @@ describe('appMenuTemplate', () => {
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     it(`${platform}: «Воркспейс» с восемью пунктами в заданном порядке`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      assert.deepEqual(labels, ['Открыть…', 'Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…', 'Промпты кнопок…']);
+      assert.deepEqual(labels, ['Открыть…', 'Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…', 'Промпты кнопок…', 'Вход Claude на хостах…', 'Место на хостах…']);
     });
   }
 

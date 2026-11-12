@@ -631,6 +631,41 @@ select:disabled {
   color: var(--fg-dim);
 }
 
+/* Удалённая сессия: квадратная метка вместо точки; нет связи - кольцо, как у завершённой, но подпись остаётся. */
+.tab.session.remote .icon {
+  border-radius: 2px;
+}
+
+.tab.session.offline .icon {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--fg-faint);
+}
+
+.tab.session.offline {
+  color: var(--fg-dim);
+}
+
+.remote-mark {
+  margin-right: 4px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.host-chip {
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 #session-strip > button {
   height: auto;
   flex: none;
@@ -653,14 +688,34 @@ select:disabled {
   color: var(--fg);
 }
 
-#new-session {
-  margin-right: 8px !important;
-  background: var(--accent-solid) !important;
-  color: #fff !important;
+.split-button {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  margin: 5px 8px 5px 0;
 }
 
-#new-session:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-solid) 86%, #fff) !important;
+.split-button > button {
+  height: auto;
+  background: var(--accent-solid);
+  border: none;
+  box-shadow: none;
+  color: #fff;
+  font-weight: 500;
+}
+
+.split-button > button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-solid) 86%, #fff);
+  border: none;
+}
+
+#new-session:has(+ #new-session-more:not([hidden])) {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+#new-session-more {
+  padding: 0 8px;
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 #new-session .plus {
@@ -1050,6 +1105,18 @@ select:focus-visible {
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-note {
+  padding: 4px 8px 6px;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  white-space: pre-line;
+}
+
+.history-item.waking {
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .history-item {
@@ -1920,6 +1987,42 @@ label.disabled .hint {
   margin-bottom: 12px;
   color: var(--danger, #d13438);
   font-size: 12px;
+}
+
+#host-disk-dialog {
+  width: min(860px, 94vw);
+}
+
+#host-disk-error {
+  white-space: pre-line;
+}
+
+.host-disk-list {
+  max-height: 50vh;
+  margin-bottom: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+#host-disk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+#host-disk-table th, #host-disk-table td {
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+#host-disk-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-raised);
+  font-weight: 600;
 }
 
 /* ---------- кнопки-команды под терминалом (фича 12) ---------- */

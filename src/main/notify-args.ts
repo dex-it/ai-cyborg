@@ -15,3 +15,6 @@ export function validateNotifyArgs(id: unknown, title: unknown, body: unknown): 
   if (typeof title !== 'string' || typeof body !== 'string' || !title.trim()) return null;
   return { id, title: clip(title, TITLE_LENGTH), body: clip(body, BODY_LENGTH) };
 }
+
+/** id 0 - итог сессии, у которой нет вкладки: такие уведомления не вытесняют друг друга, у каждого свой ключ. */
+export const notificationKey = (id: number): number | symbol => (id === 0 ? Symbol('без вкладки') : id);

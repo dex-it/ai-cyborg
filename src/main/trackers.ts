@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { DEFAULT_PROMPTS, fillPrompt } from './prompts';
-import { readTrackers, validateJira, type Project, type ProjectsState, type TrackerSettings } from './projects';
+import { readTrackers, validateHosts, validateJira, type Project, type ProjectsState, type TrackerSettings } from './projects';
 
 export type { TrackerSettings } from './projects';
 
@@ -280,7 +280,10 @@ export function validateProjectsState(value: unknown): ProjectsState | null {
     if (!trackers) return null;
     const jira = validateJira((p as Partial<Project>).jira);
     if (jira === null) return null;
-    projects.push({ ...p, trackers, ...(jira ? { jira } : {}) });
+    const hosts = validateHosts((p as Partial<Project>).hosts);
+    if (hosts === null) return null;
+    const { hosts: _stored, ...rest } = p as Project;
+    projects.push({ ...rest, trackers, ...(jira ? { jira } : {}), ...(hosts?.length ? { hosts } : {}) });
   }
   return { ...state, projects };
 }
@@ -326,9 +329,10 @@ export class TrackerSettingsStore {
 
 // ---------- запуск gh и glab ----------
 
-/** gh и glab берут токен из своей конфигурации; Cyborg его не читает и не передаёт. cwd вне репозиториев: glab не выводит хост из текущего. */
-export function createCliRunner(cwd: string, limits = CLI_LIMITS): CliRunner & JiraRunner {
-  const env = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' };
+/** gh и glab берут токен из своей конфигурации; читает его только сбор доступов удалённого агента (remote/auth.ts, ADR-0020). cwd вне репозиториев: glab не выводит хост из текущего. */
+export function createCliRunner(cwd: string, limits = CLI_LIMITS, dropEnv: readonly string[] = []): CliRunner & JiraRunner {
+  const env: NodeJS.ProcessEnv = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' };
+  for (const name of dropEnv) delete env[name];
   return (cmd, args) =>
     new Promise((resolve) => {
       execFile(cmd, args, { cwd, env, timeout: limits.timeoutMs, maxBuffer: limits.maxBuffer }, (error, stdout, stderr) => {

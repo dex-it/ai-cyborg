@@ -1,10 +1,11 @@
 import type { SearchMode } from '../main/menu';
-import { isHeavyPattern, MAX_HITS, queryProblem, type LineHit, type SearchReply } from '../shared/search-pattern';
+import { isHeavyPattern, MAX_HITS, queryProblem, type LineHit, type SearchReply, type SearchRequest } from '../shared/search-pattern';
 import { el } from './dom';
 import { readChoice, readPref, writePref } from './prefs';
 import { compileMatcher, lineSummary, matchFiles, moveActive, resultSummary, type FileEntry, type FileHit, type SearchOptions } from './search-model';
 import { bindTablist, markTab, selectTab } from './tabs';
 import type { TreeRoot } from './tree';
+import type { FsPort } from './fs-port';
 
 export type { SearchMode };
 
@@ -14,6 +15,8 @@ export interface SearchHost {
   roots(): TreeRoot[];
   /** Открыть файл; line - строка, к которой перейти (поиск по содержимому и изменениям). */
   open(path: string, root: TreeRoot, line?: number): void;
+  /** Где искать: у удалённой вкладки - на хосте. */
+  fs(): FsPort;
 }
 
 // Больше строк DOM не потянет без задержки на каждом нажатии.
@@ -26,8 +29,6 @@ const MODES: { id: SearchMode; label: string; title: string; placeholder: string
   { id: 'text', label: 'Текст', title: 'Поиск в файлах', placeholder: 'Текст в файлах', list: 'Найденные строки' },
   { id: 'changes', label: 'Изменения', title: 'Поиск в изменениях', placeholder: 'Текст в добавленных и удалённых строках', list: 'Найденные строки изменений' },
 ];
-
-const api = window.cyborg;
 
 const flag = (key: string): boolean => readPref(`cyborg.search.${key}`) === '1';
 
@@ -50,6 +51,7 @@ export class SearchDialog {
   private readonly tabs = new Map<SearchMode, HTMLElement>();
   private readonly toggles: Record<keyof SearchOptions, HTMLButtonElement>;
   private roots: TreeRoot[] = [];
+  private fs: FsPort | null = null;
   private entries: FileEntry[] | null = null;
   private rows: Row[] = [];
   private active = 0;
@@ -124,6 +126,7 @@ export class SearchDialog {
   open(mode: SearchMode = last.mode): void {
     this.opened++;
     this.roots = this.host.roots();
+    this.fs = this.host.fs();
     this.entries = null;
     this.input.value = last.query;
     this.syncToggles();
@@ -202,7 +205,8 @@ export class SearchDialog {
   }
 
   private async load(ticket: number): Promise<void> {
-    const lists = await Promise.all(this.roots.map((root) => api.listFiles(root.path).catch(() => [] as string[])));
+    const port = this.fs!;
+    const lists = await Promise.all(this.roots.map((root) => port.files(root.path).catch(() => [] as string[])));
     if (ticket !== this.opened) return;
     this.entries = lists.flatMap((files, root) => files.map((rel) => ({ root, rel })));
     if (last.mode === 'files') this.run();
@@ -226,7 +230,8 @@ export class SearchDialog {
     }
     const ticket = ++this.requested;
     this.clearRows('Поиск…');
-    const ask = mode === 'text' ? api.searchText : api.searchChanges;
+    const port = this.fs!;
+    const ask = (request: SearchRequest) => (mode === 'text' ? port.searchText(request) : port.searchChanges(request));
     const replies = await Promise.all(
       this.roots.map((root) =>
         ask({ root: root.path, query, options: { ...last.options } }).catch((error: unknown): SearchReply => ({ hits: [], truncated: false, error: String(error) })),

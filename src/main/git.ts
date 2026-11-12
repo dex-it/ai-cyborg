@@ -173,6 +173,15 @@ export async function gitRemotes(root: string): Promise<string[]> {
   }
 }
 
+/** Адрес origin; нет репозитория или remote origin - null. Только читающая команда. */
+export async function gitOriginUrl(root: string): Promise<string | null> {
+  try {
+    return (await git(root, ['remote', 'get-url', 'origin'])).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export interface Branches {
   current: string | null;
   local: string[];

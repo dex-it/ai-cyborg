@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, safeStorage, session, shell } from 'electron';
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { globalBase, saveCommandsText, type CommandsConfig } from './commands';
 import { CommandStore } from './command-store';
@@ -21,15 +21,23 @@ import type { SearchReply } from '../shared/search-pattern';
 import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
-import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
-import { validateNotifyArgs } from './notify-args';
+import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
+import { appMenuTemplate, HOST_DISK_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
+import { notificationKey, validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
-import { SessionManager } from './sessions';
+import { SessionManager, sameDirs } from './sessions';
 import { McpServer } from './mcp';
-import { createSessionTools, Handoffs } from './session-tools';
+import { createSessionTools, Handoffs, type RemoteToolsPort, type SessionsPort } from './session-tools';
+import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
+import { ClaudeTokenStore } from './remote/claude-token';
+import { buildMirror, readMemory } from './remote/claude-config';
+import { bundleOf } from './remote/install';
+import { validateHumanRemoteCreate, validateRemoteCreate, validateRemoteFs } from './remote/remote-args';
+import { validateSearchRequest } from './search-args';
+import { RemoteSessions } from './remote/remote-sessions';
+import { systemSsh } from './remote/ssh';
 import { createTaskHandlers, TaskDetailsService } from './task-details';
 import {
   createCliRunner,
@@ -80,7 +88,43 @@ const closeSession = (id: number): void => {
   if (win && !win.isDestroyed()) win.webContents.send('session:close', { id });
   else sessions.kill(id);
 };
-const mcpServer = new McpServer(createSessionTools(sessions, handoffs, closeSession), app.getVersion());
+// Удалённая часть строится после MCP-сервера, которому нужны её инструменты: обращения идут через замыкания.
+const remoteTools: RemoteToolsPort = {
+  prepare: (host, repo, limits) => remote.prepare(host, repo, limits),
+  report: (id, report) => remote.report(id, report),
+  close: (id, keep, caller) => remote.close(id, keep, caller),
+};
+const hostsOf = (dirs: string[]): string[] => projects.load().projects.find((p) => sameDirs(p.repos, dirs))?.hosts ?? [];
+const sessionsPort: SessionsPort = {
+  dirsOf: (id) => sessions.dirsOf(id),
+  peers: (id) => sessions.peers(id),
+  say: (id, text) => sessions.say(id, text),
+  kindOf: (id) => (sessions.remoteOf(id) ? 'remote' : sessions.dirsOf(id) ? 'local' : null),
+  hostsOf,
+};
+const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools), app.getVersion());
+// На Linux без связки ключей safeStorage шифрует постоянным ключом: такое хранение токен на диск не пускает.
+const claudeToken = new ClaudeTokenStore(path.join(app.getPath('userData'), 'remote-claude-token.bin'), {
+  available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+  encrypt: (text) => safeStorage.encryptString(text),
+  decrypt: (data) => safeStorage.decryptString(data),
+});
+const remote = new RemoteSessions({
+  ssh: systemSsh,
+  bundle: bundleOf(fs.readFileSync(path.join(__dirname, 'agentd.js'), 'utf8')),
+  sessions,
+  mcp: mcpServer,
+  originUrl: gitOriginUrl,
+  emit: (channel, payload) => {
+    if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  },
+  closeTab: closeSession,
+  alert: (title, text) => void dialog.showMessageBox({ type: 'warning', message: title, detail: text }),
+  gitAuth: (urls) => collectGitAuth(urls, createCliRunner(app.getPath('userData'), undefined, HOST_AGNOSTIC_TOKEN_ENV)),
+  claudeToken: () => claudeToken.get(),
+  mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
+  memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),
+});
 // Сессии создаёт окно, а оно грузится дольше, чем поднимается сервер; если порт не дали, сессии работают без MCP Cyborg.
 mcpServer
   .listen()
@@ -310,10 +354,76 @@ ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?
   if (!prompt) throw new Error('Некорректный старт сессии');
   return sessions.create(cwd as string, addDirs as string[], prompt);
 });
-ipcMain.handle('history:list', (_event, projectId: unknown) => {
-  const project = projects.load().projects.find((p) => p.id === projectId);
-  return project ? listHistory(project.repos) : [];
+// Удалённая сессия: аргументы из интерфейса проверяются против проекта; запись в клоны и смена ветки каналов не имеют (ADR-0020).
+ipcMain.handle('remote:create', async (_event, arg: unknown) => {
+  const input = (typeof arg === 'object' && arg !== null ? arg : {}) as Record<string, unknown>;
+  const project = projects.load().projects.find((p) => p.id === input.projectId);
+  if (!project) throw new Error('Проект не найден');
+  if (typeof input.handoff === 'string') {
+    const handoff = handoffs.take(input.handoff, input.repo);
+    if (!handoff?.remote) throw new Error('Переданная задача не найдена или устарела');
+    try {
+      const args = validateRemoteCreate({ host: handoff.remote.host, repo: input.repo, branch: handoff.remote.branch, prompt: handoff.prompt }, project);
+      if (typeof args === 'string') throw new Error(args);
+      const info = await remote.create(project, args, { origin: 'tool', keep: handoff.remote.keep, spawnedBy: handoff.from, limits: handoff.remote.limits });
+      handoff.resolve(info.id);
+      return info;
+    } catch (error) {
+      handoff.reject(new Error(String(error instanceof Error ? error.message : error).slice(0, 500)));
+      throw error;
+    }
+  }
+  const args = validateHumanRemoteCreate(input, project);
+  if (typeof args === 'string') throw new Error(args);
+  return remote.create(project, args, { origin: 'human' });
 });
+ipcMain.handle('remote:discover', (_event, projectId: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  return project?.hosts?.length ? remote.discover(project) : [];
+});
+ipcMain.handle('remote:fs', (_event, id: unknown, op: unknown, target: unknown) => {
+  const args = validateRemoteFs(id, op);
+  if (!args) throw new Error('Некорректные аргументы remote:fs');
+  return remote.fsOp(args.id, args.op, target);
+});
+ipcMain.handle('remote:search', (_event, id: unknown, mode: unknown, request: unknown) => {
+  const valid = validateSearchRequest(request);
+  if (typeof id !== 'number' || (mode !== 'text' && mode !== 'changes') || !valid) throw new Error('Некорректные аргументы поиска');
+  return remote.search(id, mode, valid);
+});
+ipcMain.handle('history:list', async (_event, projectId: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project) return [];
+  return listHistory(project.repos);
+});
+// Отдельно от локальных: «История» показывает свои строки сразу, не дожидаясь ssh к хостам.
+ipcMain.handle('history:remote', async (_event, projectId: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  return project?.hosts?.length ? remote.history(project) : { entries: [], unreachable: [] };
+});
+ipcMain.handle('remote:wake', (_event, projectId: unknown, host: unknown, sid: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project || typeof host !== 'string' || typeof sid !== 'string') throw new Error('Некорректное пробуждение сессии');
+  return remote.wake(project, host, sid);
+});
+ipcMain.handle('remote:remove-asleep', (_event, projectId: unknown, host: unknown, sid: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project || typeof host !== 'string' || typeof sid !== 'string') throw new Error('Некорректное удаление сессии');
+  return remote.removeAsleep(project, host, sid);
+});
+ipcMain.handle('remote:disk', (_event, projectId: unknown, host: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project || typeof host !== 'string') throw new Error('Некорректный запрос места на хосте');
+  return remote.disk(project, host);
+});
+ipcMain.handle('remote:purge', (_event, projectId: unknown, host: unknown, sids: unknown, force: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project || typeof host !== 'string' || !Array.isArray(sids)) throw new Error('Некорректное удаление сессий');
+  return remote.purge(project, host, sids as string[], force === true);
+});
+ipcMain.handle('remote:claude-token:status', () => claudeToken.status());
+ipcMain.handle('remote:claude-token:set', (_event, value: unknown) => claudeToken.set(value));
+ipcMain.handle('remote:claude-token:clear', () => claudeToken.clear());
 ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
@@ -387,15 +497,16 @@ ipcMain.on('session:kill', (_event, id: unknown) => sessions.kill(id));
 ipcMain.on('session:handoffFailed', (_event, hid: unknown, reason: unknown) => handoffs.fail(hid, reason));
 
 // Без ссылки уведомление собирает GC, и клик по нему уже некому обработать.
-const shownNotifications = new Map<number, Notification>();
+const shownNotifications = new Map<number | symbol, Notification>();
 ipcMain.on('session:notify', (_event, rawId: unknown, rawTitle: unknown, rawBody: unknown) => {
   const args = validateNotifyArgs(rawId, rawTitle, rawBody);
   if (!args || !Notification.isSupported()) return;
   const { id, title, body } = args;
-  shownNotifications.get(id)?.close();
+  const key = notificationKey(id);
+  shownNotifications.get(key)?.close();
   const notification = new Notification({ title, body, icon: path.join(__dirname, 'icon.png') });
   const forget = () => {
-    if (shownNotifications.get(id) === notification) shownNotifications.delete(id);
+    if (shownNotifications.get(key) === notification) shownNotifications.delete(key);
   };
   notification.on('click', () => {
     forget();
@@ -408,7 +519,7 @@ ipcMain.on('session:notify', (_event, rawId: unknown, rawTitle: unknown, rawBody
   notification.on('close', forget);
   // Разрешение на уведомления снято или демона уведомлений нет: показа не будет, держать ссылку незачем.
   notification.on('failed', forget);
-  shownNotifications.set(id, notification);
+  shownNotifications.set(key, notification);
   notification.show();
 });
 ipcMain.on('session:unnotify', (_event, id: unknown) => {
@@ -429,7 +540,7 @@ ipcMain.on('notifications:state', (_event, enabled: boolean) => {
 });
 ipcMain.on('project:selected', (_event, selected: unknown) => {
   menuState.hasProject = selected === true;
-  for (const id of [PROJECT_PROPERTIES_MENU_ID, ...Object.values(SEARCH_MENU_IDS), ...Object.values(EXTENSIONS_MENU_IDS)]) {
+  for (const id of [PROJECT_PROPERTIES_MENU_ID, HOST_DISK_MENU_ID, ...Object.values(SEARCH_MENU_IDS), ...Object.values(EXTENSIONS_MENU_IDS)]) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id);
     if (item) item.enabled = menuState.hasProject;
   }
@@ -512,6 +623,8 @@ function rebuildMenu(): void {
     editProject: () => win?.webContents.send('menu:project', 'edit'),
     editCommands: () => win?.webContents.send('menu:commands'),
     editPrompts: () => win?.webContents.send('menu:prompts'),
+    claudeToken: () => win?.webContents.send('menu:claude-token'),
+    hostDisk: () => win?.webContents.send('menu:host-disk'),
     search: (mode) => win?.webContents.send('menu:search', mode),
     extensions: (tab) => win?.webContents.send('menu:extensions', tab),
   };
@@ -610,7 +723,10 @@ async function replaceFromMenu(): Promise<void> {
   const outcome = replaceWorkspace(file, {
     current: current.file,
     confirm: () => confirmEndSessions('Открыть', 'При смене воркспейса они будут завершены.'),
-    endSessions: () => sessions.killAll(),
+    endSessions: () => {
+      sessions.killAll();
+      remote.closeLinks();
+    },
     openHere,
     releasePrevious: () => {
       if (previous) releaseLock(previous);
@@ -681,6 +797,7 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => {
   sessions.killAll();
+  remote.closeLinks();
   mcpServer.close();
   app.quit();
 });
