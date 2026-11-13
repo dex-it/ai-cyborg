@@ -1103,3 +1103,74 @@ describe('daemon: поиск в клонах', () => {
     assert.match(String((await ask({ type: 'search', mode: 'exec', request: { root: clone, query: 'a', options } })).error), /Некорректные/);
   });
 });
+
+describe('daemon: голосовой ввод', () => {
+  const self = { node: '/opt/node/bin/node', script: '/home/u/.cyborg/agentd/v1/agentd.js' };
+  const askMic = (sock: string, line: string) =>
+    new Promise<string>((resolve) => {
+      const s = net.connect(sock, () => s.write(line + '\n'));
+      let got = '';
+      s.on('data', (d) => (got += d));
+      s.on('close', () => resolve(got));
+    });
+
+  it('сессия получает подставной arecord первым в PATH и сокет микрофона 0600', async (t) => {
+    const r = rig(t, { self });
+    const { sid } = await open(r);
+    const dir = path.join(r.home, '.cyborg', 'sessions', sid);
+    const env = r.spawned[0].env;
+    assert.equal(env.CYBORG_MIC, path.join(dir, 'mic.sock'));
+    assert.equal(env.PATH.split(':')[0], path.join(dir, 'bin'));
+    assert.equal(mode(path.join(dir, 'bin', 'arecord')), 0o700);
+    assert.equal(fs.readFileSync(path.join(dir, 'bin', 'arecord'), 'utf8'), `#!/bin/sh\nexec '${self.node}' '${self.script}' arecord "$@"\n`);
+    assert.equal(mode(env.CYBORG_MIC), 0o600);
+  });
+
+  it('без self голосового ввода нет: окружение как прежде', async (t) => {
+    const r = rig(t);
+    await open(r);
+    assert.equal(r.spawned[0].env.CYBORG_MIC, undefined);
+  });
+
+  it('ответ сокета: туннель в hello - ok и запись с sid; без туннеля - выключен; без владельца - не на связи', async (t) => {
+    const r = rig(t, { self });
+    const fwd = path.join(r.home, 'mic-0123456789abcdef.sock');
+    const heads: string[] = [];
+    const upstream = net.createServer((s) => s.once('data', (d) => (heads.push(String(d)), s.end('ok\nPCM'))));
+    await new Promise<void>((res) => upstream.listen(fwd, res));
+    t.after(() => upstream.close());
+    const conn = r.daemon.connect(client());
+    conn.receive({ type: 'hello', rid: 0, instance: 'i', mic: fwd } as Msg);
+    conn.receive(spawnMsg());
+    await until(() => r.spawned.length > 0);
+    const sock = r.spawned[0].env.CYBORG_MIC;
+    assert.equal(await askMic(sock, 'probe'), 'ok\n');
+    assert.equal(await askMic(sock, 'record'), 'ok\nPCM');
+    assert.deepEqual(heads, ['{"sid":"aaaaaaaa-1"}\n']);
+    conn.receive({ type: 'hello', rid: 1, instance: 'i' } as Msg);
+    assert.match(await askMic(sock, 'record'), /^no голосовой ввод для этого хоста выключен/);
+    conn.close();
+    assert.equal(await askMic(sock, 'probe'), 'no Cyborg не на связи с хостом\n');
+  });
+
+  it('hello с путём mic не по форме туннеля не принимается', async (t) => {
+    const r = rig(t, { self });
+    const conn = r.daemon.connect(client());
+    conn.receive({ type: 'hello', rid: 0, instance: 'i', mic: '/etc/passwd' } as Msg);
+    conn.receive(spawnMsg());
+    await until(() => r.spawned.length > 0);
+    assert.match(await askMic(r.spawned[0].env.CYBORG_MIC, 'probe'), /выключен/);
+  });
+
+  it('устаревший туннель mic- прежнего подключения убирается, как fwd-', async (t) => {
+    const r = rig(t, { self });
+    const run = path.join(r.home, '.cyborg', 'run');
+    const stale = path.join(run, 'mic-ffffffffffffffff.sock');
+    const live = path.join(run, 'mic-0000000000000000.sock');
+    fs.writeFileSync(stale, '');
+    fs.writeFileSync(live, '');
+    r.daemon.connect(client()).receive({ type: 'hello', rid: 0, instance: 'j', mic: live } as Msg);
+    assert.equal(fs.existsSync(stale), false);
+    assert.equal(fs.existsSync(live), true);
+  });
+});

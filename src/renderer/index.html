@@ -70,6 +70,11 @@
           <span>Хосты SSH</span>
           <input id="project-hosts" autocomplete="off" placeholder="алиасы из ~/.ssh/config через пробел, например dev1 dev2" />
         </label>
+        <div class="field" id="project-voice-field" hidden>
+          <span>Голосовой ввод /voice</span>
+          <div id="project-voice" class="voice-hosts"></div>
+          <div class="source-status">Микрофон этого компьютера пробрасывается на отмеченные хосты; запись идёт, только пока удерживается пробел во вкладке сессии в фокусе.</div>
+        </div>
         <div class="field">
           <span>Источники задач</span>
           <div class="source">

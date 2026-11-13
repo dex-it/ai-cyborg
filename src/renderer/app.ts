@@ -48,6 +48,7 @@ import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 import { osc52Allowed, osc52Text } from './osc52';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
+import { initMic } from './mic';
 
 interface FileTab {
   viewer: Viewer;
@@ -186,6 +187,28 @@ const projectName = byId<HTMLInputElement>('project-name');
 const projectDescription = byId<HTMLTextAreaElement>('project-description');
 const projectRepos = byId('project-repos');
 const projectHosts = byId<HTMLInputElement>('project-hosts');
+const projectVoice = byId('project-voice');
+const projectVoiceField = byId('project-voice-field');
+
+/** Галочки голосового ввода по хостам из поля «Хосты SSH»; отмеченные переживают правку поля. */
+function renderVoiceHosts(checked: string[]): void {
+  const hosts = [...new Set(projectHosts.value.split(/[\s,]+/).filter(Boolean))];
+  projectVoiceField.hidden = !hosts.length;
+  projectVoice.replaceChildren(
+    ...hosts.map((host) => {
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = host;
+      box.checked = checked.includes(host);
+      const label = document.createElement('label');
+      label.append(box, ` ${host}`);
+      return label;
+    }),
+  );
+}
+
+const voiceChecked = (): string[] => [...projectVoice.querySelectorAll<HTMLInputElement>('input:checked')].map((b) => b.value);
+projectHosts.addEventListener('input', () => renderVoiceHosts(voiceChecked()));
 const projectDelete = byId<HTMLButtonElement>('project-delete');
 const sources = initSourcesSection();
 
@@ -203,6 +226,7 @@ function editProject(target: Project | null): void {
   projectDescription.value = draft.description;
   projectDelete.hidden = !target;
   projectHosts.value = (draft.hosts ?? []).join(' ');
+  renderVoiceHosts(draft.voiceHosts ?? []);
   renderDraftRepos();
   sources.open(draft.trackers, draft.jira, draft.repos);
   projectDialog.returnValue = '';
@@ -281,6 +305,8 @@ projectDialog.addEventListener('close', () => {
   draft.description = projectDescription.value.trim();
   const hosts = projectHosts.value.split(/[\s,]+/).filter(Boolean);
   draft.hosts = hosts.length ? [...new Set(hosts)] : undefined;
+  const voiceHosts = voiceChecked().filter((h) => hosts.includes(h));
+  draft.voiceHosts = voiceHosts.length ? voiceHosts : undefined;
   const read = sources.read();
   draft.trackers = read.trackers;
   draft.jira = read.jira;
@@ -681,6 +707,9 @@ const linkOpeners: LinkOpeners = { openPath: (path) => void api.openPath(path), 
 
 let lastUserAt = -Infinity;
 for (const type of ['keydown', 'pointerup'] as const) window.addEventListener(type, () => (lastUserAt = performance.now()), true);
+/** Последнее нажатие пробела человеком в терминале вкладки: без него процесс хоста запись не начнёт. */
+let lastSpace = { id: -1, at: -Infinity };
+const SPACE_FRESH_MS = 2_000;
 
 function createTerminal(id: number): Terminal {
   const term = new Terminal({
@@ -712,6 +741,7 @@ function createTerminal(id: number): Terminal {
       return false;
     }
     if (event.type !== 'keydown') return true;
+    if (event.code === 'Space' && !event.ctrlKey && !event.metaKey && !event.altKey) lastSpace = { id, at: performance.now() };
     // На macOS Cmd+C/V выполняют пункты меню Electron (Copy/Paste): xterm копирует выделение и принимает вставку сам.
     if (!mac && isClipboardKey(event, 'KeyC')) {
       const selection = term.getSelection();
@@ -1066,6 +1096,16 @@ api.on<{ id: number }>('session:reveal', ({ id }) => {
 
 window.addEventListener('focus', () => {
   if (active) notifier.dismiss(active.id);
+});
+
+initMic(api, {
+  refuse: (id) => {
+    if (!document.hasFocus()) return 'окно Cyborg не в фокусе';
+    if (active?.id !== id || !active.remote) return 'вкладка этой сессии в Cyborg не активна';
+    if (lastSpace.id !== id || performance.now() - lastSpace.at > SPACE_FRESH_MS) return 'запись начинается только по пробелу, нажатому человеком в терминале этой вкладки';
+    return null;
+  },
+  recording: (id, on) => findSession(id)?.stripTab.classList.toggle('mic', on),
 });
 
 api.on<{ host: string; online: boolean }>('remote:link', ({ host, online }) => {

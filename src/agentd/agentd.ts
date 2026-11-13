@@ -4,6 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Daemon, type PtyProc } from './daemon.ts';
+import { arecord, MIC_BIN } from './mic.ts';
 import type { Msg } from './protocol.ts';
 
 const IDLE_EXIT_MS = 10 * 60_000;
@@ -89,6 +90,7 @@ async function serve(): Promise<void> {
         });
       }),
     onShutdown: () => quit(),
+    self: { node: process.execPath, script: process.argv[1] },
     claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || undefined,
     sleepMs: Number(process.env.CYBORG_SLEEP_MS) || undefined,
     groupOwned,
@@ -169,3 +171,4 @@ async function connect(): Promise<void> {
 
 if (process.argv[2] === 'serve') void serve();
 else if (process.argv[2] === 'connect') void connect();
+else if (process.argv[2] === 'arecord') void arecord(process.argv.slice(3), process.env, path.join(path.dirname(process.env.CYBORG_MIC ?? ''), MIC_BIN)).then((code) => process.exit(code));

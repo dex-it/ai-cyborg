@@ -27,6 +27,8 @@ export interface Project {
   jira?: JiraSettings;
   /** Алиасы хостов ~/.ssh/config для удалённых сессий (ADR-0020); поля нет - хостов нет. */
   hosts?: string[];
+  /** Хосты из hosts, куда пробрасывается микрофон этого компьютера для /voice; поля нет - никуда. */
+  voiceHosts?: string[];
 }
 
 export const MAX_HOSTS = 32;
@@ -176,15 +178,17 @@ export class ProjectStore {
     }
     const state = parsed as Partial<ProjectsState>;
     let fallback: TrackerSettings | undefined;
-    const projects = (state.projects ?? []).map(({ jira: stored, hosts: storedHosts, ...p }) => {
+    const projects = (state.projects ?? []).map(({ jira: stored, hosts: storedHosts, voiceHosts: storedVoice, ...p }) => {
       const jira = readJira(stored);
       const hosts = readHosts(storedHosts);
+      const voiceHosts = (readHosts(storedVoice) ?? []).filter((h) => hosts?.includes(h));
       return {
         ...p,
         repos: Array.isArray(p.repos) ? [...new Set(p.repos.map((repo) => (typeof repo === 'string' ? canonicalRepo(repo) : repo)))] : p.repos,
         trackers: readTrackers((p as Partial<Project>).trackers) ?? { ...(fallback ??= this.defaults()) },
         ...(jira ? { jira } : {}),
         ...(hosts?.length ? { hosts } : {}),
+        ...(voiceHosts.length ? { voiceHosts } : {}),
       };
     });
     return { projects, lastProjectId: state.lastProjectId ?? null };

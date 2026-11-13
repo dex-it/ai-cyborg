@@ -1144,3 +1144,30 @@ describe('поиск у удалённой вкладки', () => {
     assert.equal(ssh.seen.length, sent);
   });
 });
+
+describe('голосовой ввод: туннель микрофона', () => {
+  it('включённый хост - второй -R к локальному сокету и mic в hello; смена настройки переоткрывает канал без туннеля, сессия остаётся', async (t) => {
+    const { r, ssh } = world(t);
+    let voice = true;
+    const a = side(t, ssh, { deps: { mic: (host) => (voice && host === 'dev1' ? '/tmp/cyborg-mic-x/h.sock' : null) } });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    const tunnel = ssh.opens[0].extra.slice(2);
+    assert.equal(tunnel[0], '-R');
+    assert.match(tunnel[1], /^\/.*\/\.cyborg\/run\/mic-[0-9a-f]{16}\.sock:\/tmp\/cyborg-mic-x\/h\.sock$/);
+    const hellos = () => ssh.seen.filter((m) => m.type === 'hello') as { mic?: string }[];
+    assert.equal(hellos()[0].mic, tunnel[1].split(':')[0]);
+    assert.equal(a.remote.idOfSid('dev1', sidOf(ssh)), info.id);
+    assert.equal(a.remote.idOfSid('dev2', sidOf(ssh)), null);
+    a.remote.refreshVoice();
+    assert.equal(ssh.opens.length, 1, 'настройка не менялась - канал тот же');
+    voice = false;
+    a.remote.refreshVoice();
+    await until(() => ssh.opens.length === 2 && hellos().length === 2);
+    assert.equal(ssh.opens[1].extra.length, 2);
+    assert.equal(hellos()[1].mic, undefined);
+    await until(() => ssh.seen.filter((m) => m.type === 'attach').length >= 1);
+    a.sessions.write(info.id, 'x');
+    await until(() => r.procs[0].written.includes('x'));
+  });
+});

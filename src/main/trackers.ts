@@ -282,8 +282,11 @@ export function validateProjectsState(value: unknown): ProjectsState | null {
     if (jira === null) return null;
     const hosts = validateHosts((p as Partial<Project>).hosts);
     if (hosts === null) return null;
-    const { hosts: _stored, ...rest } = p as Project;
-    projects.push({ ...rest, trackers, ...(jira ? { jira } : {}), ...(hosts?.length ? { hosts } : {}) });
+    const voice = validateHosts((p as Partial<Project>).voiceHosts);
+    if (voice === null) return null;
+    const voiceHosts = (voice ?? []).filter((h) => hosts?.includes(h));
+    const { hosts: _stored, voiceHosts: _voice, ...rest } = p as Project;
+    projects.push({ ...rest, trackers, ...(jira ? { jira } : {}), ...(hosts?.length ? { hosts } : {}), ...(voiceHosts.length ? { voiceHosts } : {}) });
   }
   return { ...state, projects };
 }

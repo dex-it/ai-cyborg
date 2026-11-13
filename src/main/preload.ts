@@ -90,6 +90,10 @@ const api = {
   openMr: (ref: MrRef): Promise<{ error?: string }> => ipcRenderer.invoke('mrs:open', ref),
   mrDetails: (id: number): Promise<MrDetailsResult | null> => ipcRenderer.invoke('mrs:details', id),
   input: (id: number, data: string): void => ipcRenderer.send('session:input', id, data),
+  /** Ответ на mic:start: null - захват начат, строка - отказ. */
+  micStarted: (stream: number, refusal: string | null): void => ipcRenderer.send('mic:started', stream, refusal),
+  micData: (stream: number, pcm: Uint8Array): void => ipcRenderer.send('mic:data', stream, pcm),
+  micEnd: (stream: number): void => ipcRenderer.send('mic:end', stream),
   resize: (id: number, cols: number, rows: number): void => ipcRenderer.send('session:resize', id, cols, rows),
   kill: (id: number): void => ipcRenderer.send('session:kill', id),
   /** Вкладку по передаче от сессии открыть не удалось: причина вернётся передавшей модели. */
