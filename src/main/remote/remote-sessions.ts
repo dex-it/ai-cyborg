@@ -592,7 +592,7 @@ export class RemoteSessions implements RemoteToolsPort {
         return;
       case 'reset':
         entry.outPos = Number(msg.at);
-        sessions.feed(entry.id, '\x1bc');
+        sessions.feed(entry.id, `\x1bc${typeof msg.modes === 'string' ? msg.modes : ''}`);
         return;
       case 'events': {
         const items = msg.items as { off: number; line: string }[];
