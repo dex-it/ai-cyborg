@@ -13,6 +13,7 @@ import { projectDirName, readJournalFacts } from '../main/history.ts';
 import { agentAuthEnv, gitAuthEnv, readAuth } from './git-auth.ts';
 import { applyFiles, claudeHome, configHash, hostMcp, installPlugins, pluginsPending, readEnv, readPluginState, trustClone, writeMemory, writePluginState, type ClaudeHome } from './claude-setup.ts';
 import { hookSettings, track, type SessionEvent, type Tracked } from '../main/session-state.ts';
+import { DecModes } from './term-modes.ts';
 import {
   DEFAULT_LIMITS,
   EVENTS_TAIL_BYTES,
@@ -85,6 +86,8 @@ interface Sess {
   ring: Buffer[];
   ringStart: number;
   ringEnd: number;
+  /** Режимы терминала на начало кольца: их восстанавливает reset. */
+  modes: DecModes;
   decoder: StringDecoder;
   emitted: number;
   evOff: number;
@@ -233,6 +236,7 @@ export class Daemon {
       ring: [],
       ringStart: 0,
       ringEnd: 0,
+      modes: new DecModes(),
       decoder: new StringDecoder('utf8'),
       emitted: 0,
       evOff: 0,
@@ -791,6 +795,7 @@ export class Daemon {
     while (sess.ringEnd - sess.ringStart > RING_BYTES && sess.ring.length > 1) {
       const dropped = sess.ring.shift() as Buffer;
       sess.ringStart += dropped.length;
+      sess.modes.feed(dropped);
     }
     const text = sess.decoder.write(chunk);
     if (!text) return;
@@ -813,7 +818,7 @@ export class Daemon {
     const bytes = Buffer.concat(sess.ring);
     let from = outFrom;
     if (from < sess.ringStart) {
-      conn.send({ type: 'reset', sid: sess.sid, at: sess.ringStart });
+      conn.send({ type: 'reset', sid: sess.sid, at: sess.ringStart, modes: sess.modes.restore() });
       from = sess.ringStart;
     }
     const upto = Math.min(sess.emitted, sess.ringEnd);

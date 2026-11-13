@@ -167,14 +167,14 @@ describe('daemon: события и вывод', () => {
 });
 
 describe('daemon: переподключение', () => {
-  it('attach отдаёт вывод и события с отметки, отметка старше кольца - reset и хвост', async (t) => {
+  it('attach отдаёт вывод и события с отметки, отметка старше кольца - reset с режимами терминала и хвост', async (t) => {
     const r = rig(t);
     const { c, conn, sid } = await open(r);
     const file = path.join(r.home, '.cyborg', 'sessions', sid, 'events.jsonl');
     fs.appendFileSync(file, '{"hook_event_name":"Stop"}\n');
     await until(() => c.of('events').length === 1);
     conn.close();
-    r.procs[0].emit('after-1');
+    r.procs[0].emit('after-1\x1b[?2004h\x1b[?1049h');
     const big = 'x'.repeat(600 * 1024);
     r.procs[0].emit(big);
     r.procs[0].emit(big);
@@ -185,6 +185,7 @@ describe('daemon: переподключение', () => {
     await until(() => c2.of('data').length > 0);
     assert.equal(c2.of('reset').length, 1, 'отметка 0 старше начала кольца');
     assert.ok(Number(c2.of('reset')[0].at) > 0);
+    assert.equal(c2.of('reset')[0].modes, '\x1b[?1049h\x1b[?2004h', 'режимы из вытесненного вывода');
     assert.equal(c2.of('events')[0].replay, true);
     assert.equal((c2.of('events')[0].items as unknown[]).length, 1);
   });
