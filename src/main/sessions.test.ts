@@ -391,6 +391,22 @@ test('SessionManager без MCP запускает claude без --mcp-config', 
   assert.equal('CYBORG_PLUGIN' in box.call.env, false);
 });
 
+test('SessionManager без MCP и плагина не наследует их у родительской сессии Cyborg', (t) => {
+  const saved = { mcp: process.env.CYBORG_MCP, plugin: process.env.CYBORG_PLUGIN };
+  process.env.CYBORG_MCP = '/parent/mcp.json';
+  process.env.CYBORG_PLUGIN = '/parent/plugin';
+  t.after(() => {
+    for (const [name, value] of [['CYBORG_MCP', saved.mcp], ['CYBORG_PLUGIN', saved.plugin]] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const { manager, box } = spawningManager(t);
+  manager.create(os.tmpdir(), []);
+  assert.equal('CYBORG_MCP' in box.call.env, false);
+  assert.equal('CYBORG_PLUGIN' in box.call.env, false);
+});
+
 test('SessionManager с плагином без MCP: скиллы подключены, инструкции о параллельных сессиях нет', (t) => {
   const { manager, box } = spawningManager(t);
   manager.pluginDir = '/app/plugin';

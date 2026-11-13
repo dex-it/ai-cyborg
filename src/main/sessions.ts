@@ -111,8 +111,9 @@ function sessionEnv(extra: Record<string, string>): Record<string, string> {
   for (const name of PARENT_SESSION_VARS) delete env[name];
   // Каталог вызова лаунчера: в сессии он перебил бы cwd относительного --workspace у запущенного из неё Cyborg.
   delete env.CYBORG_CWD;
-  // Cyborg, запущенный из сессии Cyborg: путь к MCP-конфигу родителя с его токеном не уходит сессии без своего MCP.
+  // Cyborg, запущенный из сессии Cyborg: MCP-конфиг родителя с его токеном и его плагин не уходят сессии, у которой их нет.
   delete env.CYBORG_MCP;
+  delete env.CYBORG_PLUGIN;
   return { ...env, ...extra };
 }
 
