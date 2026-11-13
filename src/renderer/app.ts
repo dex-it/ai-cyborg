@@ -1106,6 +1106,7 @@ initMic(api, {
     return null;
   },
   recording: (id, on) => findSession(id)?.stripTab.classList.toggle('mic', on),
+  keep: (id) => active?.id === id,
 });
 
 api.on<{ host: string; online: boolean }>('remote:link', ({ host, online }) => {

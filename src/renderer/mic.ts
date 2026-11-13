@@ -10,7 +10,12 @@ export interface MicHooks {
   refuse(id: number): string | null;
   /** Идёт ли запись для вкладки: отметка на её ярлыке. */
   recording(id: number, on: boolean): void;
+  /** Вкладка всё ещё активна: иначе начатая запись обрывается. */
+  keep(id: number): boolean;
 }
+
+/** Предел одной записи: начатую по жесту человека запись процесс хоста не продлит бесконечно. */
+export const MAX_RECORD_MS = 180_000;
 
 /** Частота, которую ждёт `arecord -r 16000` Claude Code. */
 export const TARGET_RATE = 16_000;
@@ -91,6 +96,12 @@ export function initMic(api: MicApi, hooks: MicHooks): void {
     hooks.recording(c.id, false);
   };
 
+  const finish = (stream: number): void => {
+    if (!captures.has(stream)) return;
+    release(stream);
+    api.micEnd(stream);
+  };
+
   const start = async (stream: number, id: number): Promise<void> => {
     const refusal = hooks.refuse(id);
     if (refusal) return api.micStarted(stream, refusal);
@@ -108,8 +119,11 @@ export function initMic(api: MicApi, hooks: MicHooks): void {
       }
       if (c.stopped) return release(stream);
       const node = new AudioWorkletNode(c.ctx, 'cyborg-pcm16k');
+      const startedAt = performance.now();
       node.port.onmessage = (event: MessageEvent<Int16Array>) => {
-        if (!c.stopped) api.micData(stream, new Uint8Array(event.data.buffer));
+        if (c.stopped) return;
+        if (!hooks.keep(id) || performance.now() - startedAt > MAX_RECORD_MS) return finish(stream);
+        api.micData(stream, new Uint8Array(event.data.buffer));
       };
       const mute = c.ctx.createGain();
       mute.gain.value = 0;
@@ -127,9 +141,6 @@ export function initMic(api: MicApi, hooks: MicHooks): void {
   api.on<{ stream: number; id: number }>('mic:start', ({ stream, id }) => void start(stream, id));
   api.on<{ stream: number }>('mic:stop', ({ stream }) => release(stream));
   window.addEventListener('blur', () => {
-    for (const stream of [...captures.keys()]) {
-      release(stream);
-      api.micEnd(stream);
-    }
+    for (const stream of [...captures.keys()]) finish(stream);
   });
 }
