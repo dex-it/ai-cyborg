@@ -46,7 +46,7 @@ import type { RemoteInfo } from '../main/remote/remote-sessions';
 import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepper } from './font-size';
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
-import { osc52Text } from './osc52';
+import { osc52Allowed, osc52Text } from './osc52';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 
 interface FileTab {
@@ -679,6 +679,9 @@ function makeTab(className: string, label: string, onClose?: () => void): HTMLEl
 
 const linkOpeners: LinkOpeners = { openPath: (path) => void api.openPath(path), openUrl: (url) => void api.openUrl(url) };
 
+let lastUserAt = -Infinity;
+for (const type of ['keydown', 'pointerup'] as const) window.addEventListener(type, () => (lastUserAt = performance.now()), true);
+
 function createTerminal(id: number): Terminal {
   const term = new Terminal({
     fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
@@ -692,7 +695,8 @@ function createTerminal(id: number): Terminal {
   term.registerLinkProvider(termLinkProvider(term, linkOpeners));
   // Claude без дисплея (на хосте по SSH) копирует выделение только через OSC 52; чтение буфера программе не даётся.
   term.parser.registerOscHandler(52, (data) => {
-    const text = osc52Text(data);
+    const focused = document.hasFocus() && !!term.textarea && document.activeElement === term.textarea;
+    const text = osc52Allowed(focused, performance.now(), lastUserAt) ? osc52Text(data) : undefined;
     if (text !== undefined) void navigator.clipboard.writeText(text).catch(() => undefined);
     return true;
   });

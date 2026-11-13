@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DecModes } from '../src/agentd/term-modes';
-import { osc52Text } from '../src/renderer/osc52';
+import { OSC52_USER_WINDOW_MS, osc52Allowed, osc52Text } from '../src/renderer/osc52';
 
 const fed = (...chunks: string[]): string => {
   const m = new DecModes();
@@ -39,5 +39,16 @@ describe('osc52Text: запись в буфер обмена из OSC 52', () =>
     assert.equal(osc52Text('c;не base64'), undefined);
     assert.equal(osc52Text(Buffer.from('abc').toString('base64')), undefined);
     assert.equal(osc52Text(`c;${Buffer.from([0xff, 0xfe]).toString('base64')}`), undefined);
+  });
+
+  it('запись сверх предела размера отклоняется', () => {
+    assert.equal(osc52Text(`c;${'A'.repeat(4 * 1024 * 1024 + 4)}`), undefined);
+  });
+
+  it('запись принимается от терминала в фокусе и только вскоре после действия человека', () => {
+    assert.equal(osc52Allowed(true, 1000 + OSC52_USER_WINDOW_MS, 1000), true);
+    assert.equal(osc52Allowed(true, 1001 + OSC52_USER_WINDOW_MS, 1000), false, 'вывод без действия человека буфер не подменяет');
+    assert.equal(osc52Allowed(false, 1100, 1000), false, 'терминал не в фокусе');
+    assert.equal(osc52Allowed(true, 1000, -Infinity), false, 'человек ещё ничего не нажимал');
   });
 });
