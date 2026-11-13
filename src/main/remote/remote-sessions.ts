@@ -45,6 +45,8 @@ export interface RemoteDeps {
   memory?: (repo: string) => Promise<MirrorFile[]>;
   /** Предел ожидания хоста для «Истории»; по умолчанию HISTORY_TIMEOUT_MS. */
   historyTimeoutMs?: number;
+  /** Локальный сокет микрофона для хоста с включённым голосовым вводом; null - выключен. */
+  mic?: (host: string) => string | null;
 }
 
 /** Спящие сессии хостов для «Истории» и хосты, которые не ответили. */
@@ -185,6 +187,7 @@ export class RemoteSessions implements RemoteToolsPort {
       wanted: () => [...this.byId.values()].some((e) => e.host === host),
       timers: this.deps.timers,
       claudeToken: () => !!this.deps.claudeToken?.(),
+      mic: () => this.deps.mic?.(host) ?? null,
       onMessage: (msg) => this.route(msg),
       onState: ({ online, reason }) => {
         for (const e of this.byId.values()) if (e.host === host) this.deps.sessions.setLink(e.id, online);
@@ -716,6 +719,17 @@ export class RemoteSessions implements RemoteToolsPort {
       this.deps.alert(`Сессия ${entry.id} на ${entry.host}`, text);
     }
     return { text, kept };
+  }
+
+  /** Настройка голосового ввода сменилась: каналы, у которых туннель микрофона разошёлся с ней, открываются заново. */
+  refreshVoice(): void {
+    for (const link of this.links.values()) link.relink().catch((error: Error) => this.deps.emit('remote:link', { host: link.host, online: false, reason: error.message }));
+  }
+
+  /** Номер вкладки сессии хоста по её идентификатору там. */
+  idOfSid(host: string, sid: string): number | null {
+    const entry = this.bySid.get(sid);
+    return entry && !entry.ghost && !entry.gone && entry.host === host ? entry.id : null;
   }
 
   isRemote(id: number): boolean {

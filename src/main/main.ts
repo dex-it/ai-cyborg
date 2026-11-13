@@ -37,6 +37,7 @@ import { bundleOf } from './remote/install';
 import { validateHumanRemoteCreate, validateRemoteCreate, validateRemoteFs } from './remote/remote-args';
 import { validateSearchRequest } from './search-args';
 import { RemoteSessions } from './remote/remote-sessions';
+import { MicBridge } from './remote/mic-bridge';
 import { systemSsh } from './remote/ssh';
 import { createTaskHandlers, TaskDetailsService } from './task-details';
 import {
@@ -112,6 +113,31 @@ const claudeToken = new ClaudeTokenStore(path.join(app.getPath('userData'), 'rem
   encrypt: (text) => safeStorage.encryptString(text),
   decrypt: (data) => safeStorage.decryptString(data),
 });
+const MIC_START_TIMEOUT_MS = 30_000;
+const micStarts = new Map<number, (refusal: string | null) => void>();
+const sendToWindow = (channel: string, payload: unknown): void => {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+};
+const mic = new MicBridge({
+  lookup: (host, sid) => remote.idOfSid(host, sid),
+  start: (stream, id) =>
+    new Promise((resolve) => {
+      if (!win || win.isDestroyed()) return resolve('окно Cyborg закрыто');
+      const timer = setTimeout(() => settle('окно Cyborg не начало запись'), MIC_START_TIMEOUT_MS);
+      const settle = (refusal: string | null): void => {
+        clearTimeout(timer);
+        micStarts.delete(stream);
+        resolve(refusal);
+      };
+      micStarts.set(stream, settle);
+      sendToWindow('mic:start', { stream, id });
+    }),
+  stop: (stream) => {
+    micStarts.get(stream)?.('запись отменена');
+    sendToWindow('mic:stop', { stream });
+  },
+});
+const voiceOn = (host: string): boolean => projects.load().projects.some((p) => p.voiceHosts?.includes(host));
 const remote = new RemoteSessions({
   ssh: systemSsh,
   bundle: bundleOf(fs.readFileSync(path.join(__dirname, 'agentd.js'), 'utf8')),
@@ -127,6 +153,16 @@ const remote = new RemoteSessions({
   claudeToken: () => claudeToken.get(),
   mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
   memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),
+  mic: (host) => (voiceOn(host) ? mic.socketFor(host) : null),
+});
+ipcMain.on('mic:started', (_event, stream: unknown, refusal: unknown) => {
+  if (typeof stream === 'number') micStarts.get(stream)?.(typeof refusal === 'string' ? refusal.slice(0, 300) : null);
+});
+ipcMain.on('mic:data', (_event, stream: unknown, data: unknown) => {
+  if (typeof stream === 'number' && data instanceof Uint8Array) mic.write(stream, Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+});
+ipcMain.on('mic:end', (_event, stream: unknown) => {
+  if (typeof stream === 'number') mic.end(stream);
 });
 // Сессии создаёт окно, а оно грузится дольше, чем поднимается сервер; если порт не дали, сессии работают без MCP Cyborg.
 mcpServer
@@ -310,7 +346,11 @@ ipcMain.handle('projects:problem', () => {
   projects.load();
   return projects.problem();
 });
-ipcMain.handle('projects:save', (_event, state: unknown) => saveProjectsState(state, projects, trackers));
+ipcMain.handle('projects:save', async (_event, state: unknown) => {
+  const result = await saveProjectsState(state, projects, trackers);
+  remote.refreshVoice();
+  return result;
+});
 ipcMain.handle('commands:load', (): CommandsConfig => {
   const { raw, problem } = globalCommands.read();
   return { global: raw, ...(problem ? { globalProblem: problem } : {}), workspace: projects.loadCommands() };
@@ -801,6 +841,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   sessions.killAll();
   remote.closeLinks();
+  mic.close();
   mcpServer.close();
   app.quit();
 });

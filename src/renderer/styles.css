@@ -645,6 +645,18 @@ select:disabled {
   color: var(--fg-dim);
 }
 
+/* Идёт запись голоса: метка вкладки красная, пока микрофон занят. */
+.tab.session.mic .icon {
+  background: var(--danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.voice-hosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
 .remote-mark {
   margin-right: 4px;
   color: var(--accent);

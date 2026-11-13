@@ -14,6 +14,7 @@ import { agentAuthEnv, gitAuthEnv, readAuth } from './git-auth.ts';
 import { applyFiles, claudeHome, configHash, hostMcp, installPlugins, pluginsPending, readEnv, readPluginState, trustClone, writeMemory, writePluginState, type ClaudeHome } from './claude-setup.ts';
 import { hookSettings, track, type SessionEvent, type Tracked } from '../main/session-state.ts';
 import { DecModes } from './term-modes.ts';
+import { arecordScript, MIC_BIN, MIC_SOCK, micServer } from './mic.ts';
 import {
   DEFAULT_LIMITS,
   EVENTS_TAIL_BYTES,
@@ -63,6 +64,8 @@ export interface DaemonDeps {
   diskBudgetMs?: number;
   /** Демон выходит по команде shutdown, когда сессий нет. */
   onShutdown?: () => void;
+  /** node и agentd.js демона: из них собирается подставной arecord сессии; нет - голосового ввода нет. */
+  self?: { node: string; script: string };
 }
 
 export interface Client {
@@ -97,6 +100,7 @@ interface Sess {
   lastHookAt: number;
   owner?: Conn;
   server?: net.Server;
+  mic?: net.Server;
   sockets: Set<net.Socket>;
   exited?: { code: number; reason?: string; kept?: CleanupResult['kept'] };
   /** Процесс вышел; exited ставится позже, после уборки. */
@@ -112,10 +116,14 @@ interface Sess {
 interface Conn extends Client {
   instance: string;
   fwd?: string;
+  /** Туннель микрофона Cyborg; нет - голосовой ввод для хоста выключен. */
+  mic?: string;
   open: boolean;
 }
 
 const MAX_PROXY_BODY = 1024 * 1024;
+const FORWARD = /^(fwd|mic)-[0-9a-f]{16}\.sock$/;
+const SUN_PATH_MAX = 107;
 const OFFLINE_TEXT = 'Cyborg не на связи (закрыт либо оборван туннель): вызов не выполнен, повтори его позже';
 
 export class Daemon {
@@ -271,7 +279,8 @@ export class Daemon {
       case 'hello':
         conn.instance = typeof msg.instance === 'string' ? msg.instance : '';
         conn.fwd = typeof msg.fwd === 'string' ? msg.fwd : undefined;
-        if (conn.fwd) this.dropStaleForwards(conn.fwd);
+        conn.mic = typeof msg.mic === 'string' && FORWARD.test(path.basename(msg.mic)) ? msg.mic : undefined;
+        this.dropStaleForwards([conn.fwd, conn.mic]);
         // sessions - то, что держит демон от замены; спящие переживают замену на диске.
         return reply({ proto: PROTO, version: this.deps.version, sessions: this.awake().length, live: this.liveCount(), config: configHash(this.root), disk: this.space() });
       case 'disk':
@@ -469,12 +478,12 @@ export class Daemon {
     return results;
   }
 
-  private dropStaleForwards(current: string): void {
+  private dropStaleForwards(current: (string | undefined)[]): void {
     const dir = path.join(this.root, 'run');
-    const live = new Set([...this.conns].map((c) => c.fwd).filter(Boolean));
+    const live = new Set([...current, ...[...this.conns].flatMap((c) => [c.fwd, c.mic])].filter(Boolean));
     for (const name of fs.readdirSync(dir)) {
       const file = path.join(dir, name);
-      if (/^fwd-[0-9a-f]{16}\.sock$/.test(name) && file !== current && !live.has(file)) fs.rmSync(file, { force: true });
+      if (FORWARD.test(name) && !live.has(file)) fs.rmSync(file, { force: true });
     }
   }
 
@@ -637,6 +646,7 @@ export class Daemon {
     }
     for (const note of readPluginState(this.root)?.notes ?? []) this.progress(sess, note);
     const port = await this.listenProxy(sess);
+    const voice = await this.listenMic(sess);
     if (this.stopped || sess.closing || !this.sessions.has(sess.sid)) {
       this.teardownIo(sess);
       return;
@@ -668,7 +678,7 @@ export class Daemon {
     );
     const env: Record<string, string> = { ...(process.env as Record<string, string>) };
     for (const name of PARENT_SESSION_VARS) delete env[name];
-    Object.assign(env, sess.extra.env, {
+    Object.assign(env, sess.extra.env, voice ? { PATH: `${voice.bin}:${sess.extra.env.PATH ?? env.PATH ?? ''}`, CYBORG_MIC: voice.sock } : {}, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       CYBORG_DIR: dir,
@@ -692,6 +702,40 @@ export class Daemon {
     });
     // Прежний процесс, переживший SIGKILL-таймер сна, может выйти уже после wake: его выход не должен снести новую сессию.
     proc.onExit((code) => sess.proc === proc && void this.onExit(sess, code));
+  }
+
+  /** Сокет микрофона и подставной arecord сессии; длинный путь сокета либо отказ - сессия без голосового ввода. */
+  private async listenMic(sess: Sess): Promise<{ bin: string; sock: string } | null> {
+    const self = this.deps.self;
+    const sock = path.join(sess.dir, MIC_SOCK);
+    if (!self || Buffer.byteLength(sock) > SUN_PATH_MAX) return null;
+    const bin = path.join(sess.dir, MIC_BIN);
+    sess.mic?.close();
+    try {
+      fs.mkdirSync(bin, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(bin, 'arecord'), arecordScript(self.node, self.script, shQuote), { mode: 0o700 });
+      fs.rmSync(sock, { force: true });
+      const server = micServer(() => {
+        const owner = sess.owner?.open ? sess.owner : undefined;
+        if (!owner) return 'Cyborg не на связи с хостом';
+        if (!owner.mic) return 'голосовой ввод для этого хоста выключен в свойствах проекта Cyborg';
+        return { forward: owner.mic, sid: sess.sid };
+      });
+      server.on('connection', (socket) => {
+        sess.sockets.add(socket);
+        socket.on('close', () => sess.sockets.delete(socket));
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(sock, () => resolve());
+      });
+      fs.chmodSync(sock, 0o600);
+      sess.mic = server;
+      return { bin, sock };
+    } catch (error) {
+      this.progress(sess, `голосовой ввод в сессии недоступен: ${(error as Error).message}`);
+      return null;
+    }
   }
 
   private listenProxy(sess: Sess): Promise<number> {
@@ -927,8 +971,10 @@ export class Daemon {
     sess.watcher?.close();
     clearInterval(sess.poll);
     sess.server?.close();
+    sess.mic?.close();
     for (const s of sess.sockets) s.destroy();
     sess.server = undefined;
+    sess.mic = undefined;
   }
 
   private async failStart(sess: Sess, reason: string): Promise<void> {

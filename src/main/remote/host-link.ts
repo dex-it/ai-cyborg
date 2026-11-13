@@ -36,6 +36,8 @@ export interface HostLinkDeps {
   onReconnect: () => void;
   /** Задан токен Claude: вход claude на хосте не требуется. */
   claudeToken?: () => boolean;
+  /** Локальный сокет микрофона, если голосовой ввод для хоста включён; null - туннеля микрофона нет. */
+  mic?: () => string | null;
   timers?: Timers;
 }
 
@@ -48,6 +50,8 @@ export class HostLink {
   config: string | null = null;
   /** Место на диске ~/.cyborg хоста по ответу на hello. */
   disk: DiskSpace | null = null;
+  /** Канал открыт с туннелем микрофона. */
+  voice = false;
   private channel: SshChannel | null = null;
   private connecting: Promise<void> | null = null;
   private readonly pending = new Map<number, { resolve: (m: Msg) => void; reject: (e: Error) => void; timer: unknown }>();
@@ -130,12 +134,16 @@ export class HostLink {
     const fwd = `${this.home}/.cyborg/run/fwd-${randomBytes(8).toString('hex')}.sock`;
     if (Buffer.byteLength(fwd) > SUN_PATH_MAX) throw new Error('путь домашнего каталога хоста слишком длинный для сокета туннеля');
     const port = this.deps.mcpPort();
-    const channel = ssh.open(host, `sh .cyborg/agentd/${bundle.version}/connect.sh`, port ? ['-R', `${fwd}:127.0.0.1:${port}`] : []);
+    const local = this.deps.mic?.() ?? null;
+    const mic = `${this.home}/.cyborg/run/mic-${randomBytes(8).toString('hex')}.sock`;
+    this.voice = !!local;
+    const extra = [...(port ? ['-R', `${fwd}:127.0.0.1:${port}`] : []), ...(local ? ['-R', `${mic}:${local}`] : [])];
+    const channel = ssh.open(host, `sh .cyborg/agentd/${bundle.version}/connect.sh`, extra);
     this.channel = channel;
     channel.onLine((line) => this.receive(line));
     channel.onExit((_code, stderr) => this.exited(channel, stderr));
     try {
-      return await this.request({ type: 'hello', proto: PROTO, instance: this.deps.instance, ...(port ? { fwd } : {}) });
+      return await this.request({ type: 'hello', proto: PROTO, instance: this.deps.instance, ...(port ? { fwd } : {}), ...(local ? { mic } : {}) });
     } catch (error) {
       this.drop();
       throw error;
@@ -209,6 +217,15 @@ export class HostLink {
     if (this.state !== 'online' || !this.channel) return false;
     this.channel.write(JSON.stringify(msg));
     return true;
+  }
+
+  /** Открыть канал заново, если туннель микрофона разошёлся с настройкой: сессии подхватываются как после обрыва. */
+  async relink(): Promise<void> {
+    if (this.state !== 'online' || this.voice === !!this.deps.mic?.()) return;
+    this.timers.clear(this.retry);
+    this.state = 'offline';
+    this.drop();
+    await this.ensure();
   }
 
   /** Закрыть канал без переподключения: демон и его сессии на хосте живут дальше. */
