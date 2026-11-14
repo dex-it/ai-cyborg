@@ -5,6 +5,8 @@ export type SessionState = 'starting' | 'working' | 'waiting' | 'asking';
 
 export interface SessionEvent {
   hook_event_name?: string;
+  /** Номер разговора Claude Code: имя журнала и аргумент --resume. */
+  session_id?: string;
   cwd?: string;
   tool_name?: string;
   message?: string;

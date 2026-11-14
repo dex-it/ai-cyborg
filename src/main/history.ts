@@ -11,6 +11,8 @@ export interface HistoryEntry {
   updated: number;
   /** Спящая удалённая сессия на этом хосте: id - её идентификатор на хосте. */
   host?: string;
+  /** Сессию открыла другая сессия. */
+  child?: boolean;
 }
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

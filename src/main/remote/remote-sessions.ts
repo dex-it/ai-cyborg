@@ -47,6 +47,8 @@ export interface RemoteDeps {
   historyTimeoutMs?: number;
   /** Локальный сокет микрофона для хоста с включённым голосовым вводом; null - выключен. */
   mic?: (host: string) => string | null;
+  /** Номер разговора сессии, открытой другой сессией (spawn_agent): «История» помечает её дочерней. */
+  onChild?: (sid: string) => void;
 }
 
 /** Спящие сессии хостов для «Истории» и хосты, которые не ответили. */
@@ -238,6 +240,7 @@ export class RemoteSessions implements RemoteToolsPort {
       remote: { host: args.host, origin: extra.origin, keep: entry.keep, spawnedBy: extra.spawnedBy, online: true },
     });
     this.register(entry);
+    if (extra.origin === 'tool') this.deps.onChild?.(sid);
     try {
       const mirror = await this.mirror();
       const setupNotes = await this.configure(link, mirror);
