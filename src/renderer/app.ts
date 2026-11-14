@@ -47,6 +47,7 @@ import { DEFAULT_FONT_SIZE, loadFontSize, saveFontSize, stepFontSize, WheelStepp
 import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 import { osc52Allowed, osc52Text } from './osc52';
+import { OutputGate } from './output-gate';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 import { initMic } from './mic';
 
@@ -967,6 +968,7 @@ function closeSession(s: Session, force: boolean): void {
   if (!s.exited) api.kill(s.id);
   notifier.dismiss(s.id);
   commandBars.detach(s.command);
+  output.drop(s);
   s.term.dispose();
   for (const f of s.files) f.viewer.close();
   s.stripTab.remove();
@@ -1032,9 +1034,15 @@ function findSession(id: number): Session | undefined {
   return sessions.find((s) => s.id === id);
 }
 
+const output = new OutputGate<Session>({
+  focused: () => document.hasFocus(),
+  write: (s, data) => s.term.write(data),
+  setTimer: (fn, ms) => window.setTimeout(fn, ms),
+});
+
 api.on<{ id: number; data: string }>('session:data', ({ id, data }) => {
   const session = findSession(id);
-  if (session) session.term.write(data);
+  if (session) output.push(session, data);
   else pendingData.set(id, [...(pendingData.get(id) ?? []), data]);
 });
 
@@ -1113,7 +1121,9 @@ api.on<{ id: number }>('session:reveal', ({ id }) => {
 });
 
 window.addEventListener('focus', () => {
+  output.flushAll();
   if (active) notifier.dismiss(active.id);
+  pollTree();
 });
 
 initMic(api, {
@@ -1154,21 +1164,23 @@ api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
   commandBars.refresh(session.command);
   session.stripTab.classList.remove('busy');
   notifier.dismiss(id);
+  output.flush(session);
   session.term.write(`\r\n\x1b[2m[сессия завершена, код ${exitCode}]\x1b[0m\r\n`);
   updateSessionLabels(session);
   refreshChildren(id);
   if (session.remote) void renderTree(session, false);
 });
 
-// Правки вне хуков (руками, другим процессом) подхватываются опросом git status.
-setInterval(() => {
-  if (document.hidden) return;
+// Правки вне хуков (руками, другим процессом) подхватываются опросом git status; окно без фокуса не опрашивает, возврат фокуса опрашивает сразу.
+function pollTree(): void {
+  if (document.hidden || !document.hasFocus()) return;
   if (active) void renderTree(active, true);
   else {
     void renderProjectTree(true);
     if (preview) void preview.load();
   }
-}, 3000);
+}
+setInterval(pollTree, 5000);
 
 // ---------- запуск сессии ----------
 
