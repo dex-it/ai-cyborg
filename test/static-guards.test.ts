@@ -47,12 +47,12 @@ describe('привязка задачи и MR к сессии только в п
     assert.deepEqual(keys.filter((key) => !allowed.some((re) => re.test(key))), []);
   });
 
-  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, список хабов магазинов, кэш статистики вызовов расширений, настройки хуков, файлы событий сессий и их конфиги MCP Cyborg, список недавних воркспейсов, замок открытого воркспейса, правку Markdown из просмотрщика и зашифрованный токен входа Claude удалённых агентов', () => {
+  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, список хабов магазинов, кэш статистики вызовов расширений, настройки хуков, файлы событий сессий и их конфиги MCP Cyborg, список недавних воркспейсов, замок открытого воркспейса, правку Markdown из просмотрщика, зашифрованный токен входа Claude удалённых агентов и номера дочерних разговоров', () => {
     const writers = sources('src/main')
       .filter((file) => /\b(writeFileSync|appendFileSync|writeJsonAtomic|createWriteStream|writeFile)\(/.test(code(file)))
       .map((file) => file.split(path.sep).join('/'))
       .sort();
-    assert.deepEqual(writers, ['src/main/command-store.ts', 'src/main/events-store.ts', 'src/main/extensions-usage.ts', 'src/main/files.ts', 'src/main/hubs.ts', 'src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/remote/claude-token.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
+    assert.deepEqual(writers, ['src/main/child-sessions.ts', 'src/main/command-store.ts', 'src/main/events-store.ts', 'src/main/extensions-usage.ts', 'src/main/files.ts', 'src/main/hubs.ts', 'src/main/jsonfile.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/remote/claude-token.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
   });
 });
 

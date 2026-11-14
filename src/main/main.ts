@@ -18,7 +18,8 @@ import { createExtensionsHandlers } from './extensions-handlers';
 import { UsageStore } from './extensions-usage';
 import { fetchHub, HubStore } from './hubs';
 import type { SearchReply } from '../shared/search-pattern';
-import { deleteHistory, historyExists, isSessionId, listHistory } from './history';
+import { ChildSessions } from './child-sessions';
+import { deleteHistory, historyExists, isSessionId, listHistory, type HistoryEntry } from './history';
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
@@ -79,6 +80,12 @@ let win: BrowserWindow | null = null;
 const sessions = new SessionManager(app.getPath('userData'), (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
+const childSessions = new ChildSessions(path.join(app.getPath('userData'), 'child-sessions.json'));
+sessions.onChild = (sid) => childSessions.add(sid);
+const markChildren = (entries: HistoryEntry[]): HistoryEntry[] => {
+  const children = childSessions.all();
+  return entries.map((e) => (children.has(e.id) ? { ...e, child: true } : e));
+};
 // Несуществующий каталог в --plugin-dir - на усмотрение claude; сессия без скиллов Cyborg лучше сессии, которая не запустилась.
 const pluginDir = path.join(__dirname, 'plugin');
 if (fs.existsSync(path.join(pluginDir, '.claude-plugin', 'plugin.json'))) sessions.pluginDir = pluginDir;
@@ -154,6 +161,7 @@ const remote = new RemoteSessions({
   mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
   memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),
   mic: (host) => (voiceOn(host) ? mic.socketFor(host) : null),
+  onChild: (sid) => childSessions.add(sid),
 });
 ipcMain.on('mic:started', (_event, stream: unknown, refusal: unknown) => {
   if (typeof stream === 'number') micStarts.get(stream)?.(typeof refusal === 'string' ? refusal.slice(0, 300) : null);
@@ -385,7 +393,7 @@ ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?
     const handoff = handoffs.take(start.handoff, cwd);
     if (!handoff) throw new Error('Переданная задача не найдена или устарела');
     try {
-      const id = sessions.create(cwd as string, addDirs as string[], handoff.prompt);
+      const id = sessions.create(cwd as string, addDirs as string[], handoff.prompt, undefined, true);
       handoff.resolve(id);
       return id;
     } catch (error) {
@@ -437,12 +445,14 @@ ipcMain.handle('remote:search', (_event, id: unknown, mode: unknown, request: un
 ipcMain.handle('history:list', async (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
   if (!project) return [];
-  return listHistory(project.repos);
+  return markChildren(listHistory(project.repos));
 });
 // Отдельно от локальных: «История» показывает свои строки сразу, не дожидаясь ssh к хостам.
 ipcMain.handle('history:remote', async (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
-  return project?.hosts?.length ? remote.history(project) : { entries: [], unreachable: [] };
+  if (!project?.hosts?.length) return { entries: [], unreachable: [] };
+  const found = await remote.history(project);
+  return { ...found, entries: markChildren(found.entries) };
 });
 ipcMain.handle('remote:wake', (_event, projectId: unknown, host: unknown, sid: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);

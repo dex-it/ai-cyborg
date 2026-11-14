@@ -69,6 +69,9 @@ interface Session {
   outboxTimer?: NodeJS.Timeout;
   lastEventAt: number;
   delivering?: boolean;
+  /** Открыта другой сессией: её разговоры уходят в onChild. */
+  child?: boolean;
+  childSid?: string;
 }
 
 export interface SessionInfo {
@@ -130,6 +133,8 @@ export class SessionManager {
   /** Каталог плагина Cyborg со скиллами сессии; подключается ключом --plugin-dir только на время сессии. */
   pluginDir: string | null = null;
   outboxDelayMs = 2000;
+  /** Номер разговора дочерней сессии: приходит с первым событием хука и после /clear. */
+  onChild: ((sid: string) => void) | null = null;
 
   // Чужой Stop-хук может продолжить ход: «ждёт» после Stop объявляется, только если сессия молчит stopDelayMs.
   constructor(userData: string, emit: Emit, spawn: Spawn = nodePtySpawn, stopDelayMs = 30_000) {
@@ -144,7 +149,7 @@ export class SessionManager {
     writeJsonAtomic(this.settingsFile, hookSettings());
   }
 
-  create(cwd: string, addDirs: string[], prompt?: string, resume?: string): number {
+  create(cwd: string, addDirs: string[], prompt?: string, resume?: string, child = false): number {
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     createEventsFile(eventsFile);
@@ -182,6 +187,7 @@ export class SessionManager {
       state: 'starting',
       outbox: [],
       lastEventAt: Date.now(),
+      ...(child ? { child } : {}),
       watcher: fs.watch(eventsFile, () => this.readEvents(session)),
     };
     this.sessions.set(id, session);
@@ -453,6 +459,10 @@ export class SessionManager {
     }
     if (notify) this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
     session.lastEventAt = Date.now();
+    if (session.child && event.session_id && event.session_id !== session.childSid) {
+      session.childSid = event.session_id;
+      this.onChild?.(event.session_id);
+    }
     track(session, event);
     this.scheduleOutbox(session);
     if (event.hook_event_name === 'Stop') {

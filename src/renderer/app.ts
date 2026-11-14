@@ -71,6 +71,8 @@ interface Session {
   mr?: Mr;
   /** Задача Jira, из которой начата сессия; тоже только в памяти интерфейса. */
   jira?: JiraIssue;
+  /** Номер вкладки сессии, открывшей эту через MCP; цвет у них общий. */
+  parent?: number;
   color: string;
   term: Terminal;
   fit: FitAddon;
@@ -455,15 +457,28 @@ const sessionTitle = (s: Session): string =>
       : s.jira
         ? `CC${s.id} · ${s.jira.key} ${s.jira.summary}`
         : s.remote
-          ? `CC${s.id} · ${s.remote.host}${remoteNote(s.remote)}`
-          : `CC${s.id} · ${rootLabel(s)}`;
+          ? `${ccLabel(s)} · ${s.remote.host}${remoteNote(s.remote)}`
+          : `${ccLabel(s)} · ${rootLabel(s)}`;
+
+const ccLabel = (s: Session): string => `CC${s.id}${s.parent ? ` ↳${s.parent}` : ''}`;
+
+/** Подсказка дочерних называет родителя: после его выхода она говорит, что он закрыт. */
+function refreshChildren(parent: number): void {
+  for (const child of sessions) if (child.parent === parent) updateSessionLabels(child);
+}
+
+function parentNote(s: Session): string {
+  if (!s.parent) return '';
+  const parent = findSession(s.parent);
+  return `Открыта сессией ${parent && !parent.exited ? sessionTitle(parent) : `CC${s.parent} (закрыта)`}`;
+}
 
 const remoteNote = (r: NonNullable<Session['remote']>): string => `${r.reported ? ' · итог сдан' : ''}${r.online ? '' : ' · нет связи'}`;
 
 /** Подпись вкладки и шапки дерева: у удалённой - значок и плашка хоста, чтобы её не спутать с локальной (D-33). */
 function fillLabel(target: HTMLElement, s: Session, label: string): void {
   if (!s.remote) return void (target.textContent = label);
-  target.replaceChildren(el('span', 'remote-mark', '⇄'), `CC${s.id} `, el('span', 'host-chip', s.remote.host), remoteNote(s.remote));
+  target.replaceChildren(el('span', 'remote-mark', '⇄'), `${ccLabel(s)} `, el('span', 'host-chip', s.remote.host), remoteNote(s.remote));
 }
 
 /** Из сессии по MR или задаче - обратно к её строке в списке панели; кнопка видна, пока у проекта есть источники. */
@@ -484,7 +499,7 @@ function updateSessionLabels(s: Session): void {
   const label = sessionTitle(s);
   const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
   fillLabel(s.stripTab.querySelector('.label') as HTMLElement, s, label);
-  s.stripTab.title = tooltip ? `${tooltip}\n${s.cwd}` : s.cwd;
+  s.stripTab.title = [tooltip, parentNote(s), s.cwd].filter(Boolean).join('\n');
   s.stripTab.classList.toggle('exited', s.exited);
   s.stripTab.classList.toggle('remote', !!s.remote);
   s.stripTab.classList.toggle('offline', !!s.remote && !s.remote.online && !s.exited);
@@ -759,7 +774,7 @@ function createTerminal(id: number): Terminal {
 
 type TrackerStart = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
 /** handoff - задача, переданная другой сессией через MCP Cyborg: её текст держит главный процесс. */
-type StartFrom = TrackerStart | { handoff: string };
+type StartFrom = TrackerStart | { handoff: string; parent: Session };
 
 const refOf = (x: MrRef): MrRef => ({ kind: x.kind, host: x.host, path: x.path, number: x.number });
 
@@ -801,7 +816,8 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
                 : { jira: { key: start.jira.key } }),
       );
   const root = remote ? remote.cwd : ((await api.gitRoot(repo)) ?? repo);
-  const color = sessionColor(colorIndex++);
+  const parent = start && 'handoff' in start ? start.parent : undefined;
+  const color = parent?.color ?? sessionColor(colorIndex++);
   const term = createTerminal(id);
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -847,6 +863,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     task: start && 'task' in start ? start.task : undefined,
     mr: start && 'mr' in start ? start.mr : undefined,
     jira: start && 'jira' in start ? start.jira : undefined,
+    parent: parent?.id,
     color,
     term,
     fit,
@@ -957,6 +974,7 @@ function closeSession(s: Session, force: boolean): void {
   // sessions идёт в порядке полосы: после закрытия выбирается сосед справа, у последней - слева, а не первая вкладка проекта.
   const peers = sessions.filter((x) => x.project === s.project);
   sessions.splice(sessions.indexOf(s), 1);
+  refreshChildren(s.id);
   if (lastSessionOf.get(s.project.id) === s) lastSessionOf.delete(s.project.id);
   taskSessions.remove(s);
   if (active === s) {
@@ -1072,11 +1090,11 @@ api.on<{ hid: string; from: number; repo: string; host?: string }>('session:hand
     // Ошибку создания главный процесс уже вернул вызвавшей модели через reject передачи.
     api
       .createRemoteSession({ projectId: caller.project.id, handoff: hid, repo })
-      .then((info) => createSessionView(caller.project, repo, { handoff: hid }, undefined, info))
+      .then((info) => createSessionView(caller.project, repo, { handoff: hid, parent: caller }, undefined, info))
       .catch(() => undefined);
     return;
   }
-  createSessionView(caller.project, repo, { handoff: hid }).catch((error) => api.handoffFailed(hid, ipcErrorText(error)));
+  createSessionView(caller.project, repo, { handoff: hid, parent: caller }).catch((error) => api.handoffFailed(hid, ipcErrorText(error)));
 });
 
 api.on<{ id: number }>('session:close', ({ id }) => {
@@ -1138,6 +1156,7 @@ api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {
   notifier.dismiss(id);
   session.term.write(`\r\n\x1b[2m[сессия завершена, код ${exitCode}]\x1b[0m\r\n`);
   updateSessionLabels(session);
+  refreshChildren(id);
   if (session.remote) void renderTree(session, false);
 });
 
@@ -1378,7 +1397,7 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = 
     item.append(
       check,
       el('span', 'history-title', entry.title),
-      el('span', 'repo-path', `${basename(entry.repo)}${entry.host ? ` · ${entry.host} · спит` : ''} · ${ago(entry.updated, Date.now())}`),
+      el('span', 'repo-path', `${basename(entry.repo)}${entry.host ? ` · ${entry.host} · спит` : ''}${entry.child ? ' · дочерняя' : ''} · ${ago(entry.updated, Date.now())}`),
       remove,
     );
     item.addEventListener('click', (event) => {

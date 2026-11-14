@@ -60,6 +60,19 @@ function managerIn(t: { after: (fn: () => void) => void }, events: { channel: st
   return { userData, manager, events, eventsDir: path.join(userData, 'sessions') };
 }
 
+test('SessionManager: номер разговора уходит в onChild только у дочерней сессии, повтор - один раз, новый после /clear - снова', (t) => {
+  const { manager } = managerIn(t);
+  const seen: string[] = [];
+  manager.onChild = (sid) => seen.push(sid);
+  const own = manager.create('/a', []);
+  const child = manager.create('/a', [], 'задание', undefined, true);
+  const event = (sid: string) => JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid });
+  manager.ingest(own, [event('own-sid')], { replay: false });
+  manager.ingest(child, [event('sid-1'), event('sid-1')], { replay: false });
+  manager.ingest(child, [event('sid-2')], { replay: false });
+  assert.deepEqual(seen, ['sid-1', 'sid-2']);
+});
+
 test('SessionManager сужает существующий каталог событий до 0700', (t) => {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
