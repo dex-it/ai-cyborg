@@ -196,7 +196,11 @@ describe('микрофон: подставной arecord', () => {
   it('остановка записи SIGTERM: выход 0 после того, как принятое дописано в файл', async (t) => {
     const dir = tmp(t);
     const sock = path.join(dir, 'mic.sock');
-    const server = net.createServer((s) => void readLine(s).then(() => s.write(Buffer.concat([Buffer.from('ok\n'), Buffer.from('PCM'.repeat(4096))]))));
+    const server = net.createServer((s) => {
+      // arecord закрывает сокет по SIGTERM посреди записи: EPIPE у сервера - ожидаемый исход.
+      s.on('error', () => {});
+      void readLine(s).then(() => s.write(Buffer.concat([Buffer.from('ok\n'), Buffer.from('PCM'.repeat(4096))])));
+    });
     t.after(() => server.close());
     await listen(server, sock);
     // SIGTERM в момент первой записи: принятое ещё в буфере потока, на диск не ушло.
