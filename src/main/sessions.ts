@@ -103,7 +103,7 @@ export const SUBMIT_DELAY_MS = 150;
 export const sameDirs = (a: string[], b: string[]): boolean => a.length === b.length && [...a].sort().join('\0') === [...b].sort().join('\0');
 
 // Унаследованные маркеры делают сессию дочерней, и CC не пишет её транскрипт.
-const PARENT_SESSION_VARS = [
+export const PARENT_SESSION_VARS = [
   'CLAUDECODE',
   'CLAUDE_CODE_CHILD_SESSION',
   'CLAUDE_CODE_ENTRYPOINT',
@@ -116,14 +116,15 @@ const PARENT_SESSION_VARS = [
   'CLAUDE_PID',
 ];
 
-function sessionEnv(extra: Record<string, string>): Record<string, string> {
+/**
+ * Переменные, которые Cyborg, запущенный из сессии, унаследовал бы от неё: CYBORG_CWD перебил бы cwd относительного
+ * --workspace, MCP-конфиг родителя с его токеном и его плагин не должны уходить тому, у кого их нет.
+ */
+export const INHERITED_SESSION_VARS = [...PARENT_SESSION_VARS, 'CYBORG_CWD', 'CYBORG_MCP', 'CYBORG_PLUGIN'];
+
+export function sessionEnv(extra: Record<string, string>): Record<string, string> {
   const env = { ...(process.env as Record<string, string>) };
-  for (const name of PARENT_SESSION_VARS) delete env[name];
-  // Каталог вызова лаунчера: в сессии он перебил бы cwd относительного --workspace у запущенного из неё Cyborg.
-  delete env.CYBORG_CWD;
-  // Cyborg, запущенный из сессии Cyborg: MCP-конфиг родителя с его токеном и его плагин не уходят сессии, у которой их нет.
-  delete env.CYBORG_MCP;
-  delete env.CYBORG_PLUGIN;
+  for (const name of INHERITED_SESSION_VARS) delete env[name];
   return { ...env, ...extra };
 }
 

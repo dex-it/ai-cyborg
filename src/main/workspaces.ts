@@ -317,14 +317,19 @@ interface ChildLike {
   once(event: 'error', cb: (error: Error) => void): unknown;
   unref(): void;
 }
-export type SpawnFn = (command: string, args: string[], options: { detached: boolean; stdio: 'ignore' }) => ChildLike;
+export type SpawnFn = (command: string, args: string[], options: { detached: boolean; stdio: 'ignore'; cwd?: string; env?: NodeJS.ProcessEnv }) => ChildLike;
 
 /** Независимый процесс, живущий после выхода породившего; сбой запуска - в результате, не исключением. */
-export function launchInstance(spawnFn: SpawnFn, execPath: string, args: string[]): Promise<{ error?: string }> {
+export function launchInstance(
+  spawnFn: SpawnFn,
+  execPath: string,
+  args: string[],
+  extra: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<{ error?: string }> {
   return new Promise((resolve) => {
     let child: ChildLike;
     try {
-      child = spawnFn(execPath, args, { detached: true, stdio: 'ignore' });
+      child = spawnFn(execPath, args, { detached: true, stdio: 'ignore', ...extra });
     } catch (error) {
       resolve({ error: (error as Error).message });
       return;

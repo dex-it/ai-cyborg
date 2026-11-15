@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 192; с автотестом - 174, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 202; с автотестом - 184, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -205,3 +205,13 @@ date: 2026-10-26
 | FR-17015 | Место на хосте | 17-ssh-remote-agents | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/host-disk.test.ts`, `test/menu.test.ts` |
 | FR-17016 | Доступы git и Claude у агента на хосте | 17-ssh-remote-agents | автотест | `test/remote-auth.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts`, `test/remote-args.test.ts`, `test/menu.test.ts` |
 | FR-17017 | Зеркало настройки Claude, доверие к клонам, память и MCP пользователя | 17-ssh-remote-agents | автотест | `test/remote-config.test.ts`, `test/agentd.test.ts`, `test/remote-link.test.ts` |
+| FR-18001 | Кнопка «▶ Запустить в терминале» в шапке просмотра запускаемого файла | 18-run-file | автотест | `test/run-file.test.ts` |
+| NFR-18001 | Имя файла, его каталог и shebang не исполняются как текст команды | 18-run-file | автотест | `test/run-file.test.ts` |
+| FR-18002 | Запускаемый файл и команда его запуска: бит исполнения, shebang, расширение | 18-run-file | автотест | `test/run-file.test.ts` |
+| FR-18003 | Предупреждение перед запуском неодобренного файла | 18-run-file | автотест | `test/run-file.test.ts` |
+| FR-18004 | Одобрение относится к содержимому и команде и сверяется перед запуском | 18-run-file | автотест | `test/run-file.test.ts` |
+| FR-18005 | Хранилище одобрений run-approvals.json | 18-run-file | автотест | `test/run-file.test.ts`, `test/static-guards.test.ts` |
+| FR-18006 | Окно системного терминала: эмулятор на Linux, Terminal.app на macOS | 18-run-file | автотест | `test/run-file.test.ts` |
+| FR-18007 | В окне терминала: каталог файла, окружение логин-оболочки без маркеров сессии, код выхода | 18-run-file | автотест | `test/run-file.test.ts` |
+| FR-18008 | Запуск невозможен - окно «Файл не запущен» с причиной, до предупреждения | 18-run-file | автотест | `test/run-file.test.ts` |
+| FR-18009 | Каналы file:runnable и file:run принимают только путь и решают всё в главном процессе | 18-run-file | автотест | `test/run-file.test.ts` |

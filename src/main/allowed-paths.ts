@@ -61,15 +61,24 @@ export class AllowedPaths {
     if (!this.allows(value)) throw new Error(OUTSIDE);
   }
 
-  /** Запись сверяет раскрытый путь: символьная ссылка в репозитории иначе дала бы перезаписать файл где угодно. */
-  assertWritable(value: unknown): asserts value is string {
+  /**
+   * Физический путь файла из интерфейса: символьная ссылка судится по цели, поэтому цель вне разрешённых каталогов - отказ.
+   * Бит, хэш и ключ одобрения берутся у файла, на который ссылка указывает.
+   */
+  realInside(value: unknown): string {
     this.assert(value);
     const real = realpath(value);
     if (real === null) throw new Error('Файл не найден');
-    if (!MARKDOWN.test(value) || !MARKDOWN.test(real)) throw new Error('Править можно только Markdown');
-    if (real.split(path.sep).includes('.git')) throw new Error('В каталог .git писать нельзя');
     const roots = [...this.roots().filter(isPlainPath), ...this.granted].map(realpath);
     if (!roots.some((root) => root !== null && isInside(real, root))) throw new Error(OUTSIDE);
+    return real;
+  }
+
+  /** Запись сверяет раскрытый путь: символьная ссылка в репозитории иначе дала бы перезаписать файл где угодно. */
+  assertWritable(value: unknown): asserts value is string {
+    const real = this.realInside(value);
+    if (!MARKDOWN.test(value as string) || !MARKDOWN.test(real)) throw new Error('Править можно только Markdown');
+    if (real.split(path.sep).includes('.git')) throw new Error('В каталог .git писать нельзя');
   }
 }
 

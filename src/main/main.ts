@@ -8,6 +8,9 @@ import { globalBase, saveCommandsText, type CommandsConfig } from './commands';
 import { CommandStore } from './command-store';
 import { savePromptsText } from './prompts';
 import { PromptStore } from './prompt-store';
+import { RunApprovals } from './run-approvals';
+import { createRunHandlers, registerRunChannels, runChannel, runConfirm } from './run-file';
+import { launcherFor } from './run-terminal';
 import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile, walkFiles, writeTextFile } from './files';
 import { gitDiffSearch, gitGrep } from './git-search';
@@ -185,6 +188,7 @@ const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData
 const userData = app.getPath('userData');
 const prompts = new PromptStore(path.join(userData, 'prompts.json'));
 const globalCommands = new CommandStore(path.join(userData, 'commands.json'));
+const runApprovals = new RunApprovals(path.join(userData, 'run-approvals.json'));
 type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
 // Инстанс без воркспейса (отмена окна первого запуска): проектов нет, писать некуда.
 const noWorkspace: Projects = {
@@ -205,6 +209,13 @@ let heldLock: string | null = null;
 // Поиск одного вида идёт один: новый запрос отменяет прежний и его git.
 const searches = new SearchRunner();
 const allowedPaths = new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]);
+const runs = createRunHandlers({
+  allowed: allowedPaths,
+  approvals: runApprovals,
+  confirm: runConfirm((options) => tell(options)),
+  launch: launcherFor(process.platform, (cmd, args, options) => launchInstance(spawn as unknown as SpawnFn, cmd, args, options)),
+});
+const runFileChannel = runChannel(runs.run, (options) => tell(options));
 const paths = createPathHandlers({
   allowed: allowedPaths,
   liveDirs: () => sessions.liveDirs(),
@@ -617,6 +628,7 @@ ipcMain.handle('hubs:change', (_event, op: unknown) => {
   }
 });
 ipcMain.handle('hubs:fetch', (_event, id: unknown, force: unknown) => extensions.hubFetch(id, force));
+registerRunChannels((channel, listener) => ipcMain.handle(channel, listener), runs, runFileChannel);
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('fs:write', (_event, request: unknown) => paths.write(request));
 ipcMain.on('edits:unsaved', (_event, count: unknown) => {
