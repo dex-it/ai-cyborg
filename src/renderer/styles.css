@@ -842,6 +842,7 @@ select:disabled {
 }
 
 .file-reveal,
+.file-run,
 .file-action {
   flex: none;
   padding: 2px 8px;

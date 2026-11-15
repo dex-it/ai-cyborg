@@ -40,6 +40,10 @@ const api = {
   savePrompts: (text: string): Promise<{ error?: string }> => ipcRenderer.invoke('prompts:save', text),
   /** Путь из вывода сессии - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
   openPath: (file: string): Promise<void> => ipcRenderer.invoke('path:open', file),
+  /** Файл можно запустить в системном терминале (бит, shebang или расширение); команду и хэш считает главный процесс. */
+  runnable: (file: string): Promise<boolean> => ipcRenderer.invoke('file:runnable', file),
+  /** Запуск файла в системном терминале; предупреждение, одобрение и сообщения об ошибках - в главном процессе. */
+  runFile: (file: string): Promise<void> => ipcRenderer.invoke('file:run', file),
   /** http(s)-ссылка - в браузере системы; иные схемы главный процесс отбрасывает. */
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('url:open', url),
   /** Файл кнопок (воркспейса или общий) либо промптов - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
