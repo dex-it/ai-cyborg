@@ -99,6 +99,8 @@ export type TerminalLaunch = { cmd: string; args: string[] } | { error: string }
 /** Запуск внешнего терминала с командой в каталоге dir; своего pty нет. */
 export function terminalLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, dir: string, command: string[], isExec?: IsExec): TerminalLaunch {
   if (platform === 'darwin') {
+    // quoted form of кавычит под sh, а разбирает логин-оболочка: fish читает `\'` в кавычках иначе.
+    if ([dir, ...command].some((word) => word.includes('\\'))) return { error: 'Путь или команда с обратной косой чертой на macOS не запускаются' };
     return { cmd: 'osascript', args: [...MAC_SCRIPT.flatMap((line) => ['-e', line]), '/bin/sh', '-c', RUN_SCRIPT, 'cyborg-run', dir, ...command] };
   }
   if (platform !== 'linux') return { error: 'Запуск в терминале есть на macOS и Linux' };

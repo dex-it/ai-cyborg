@@ -94,20 +94,22 @@ describe('runnableOf', () => {
 describe('RunApprovals', () => {
   const H1 = 'a'.repeat(64);
   const H2 = 'b'.repeat(64);
+  const A1 = { sha256: H1, command: ['bash', '/x'] };
+  const A2 = { sha256: H2, command: ['/x'] };
 
   it('нет записи, тот же хэш, другой хэш заменяет прежний', () => {
     const a = new RunApprovals(path.join(base, 'ap.json'));
     assert.equal(a.get('/x'), undefined);
-    assert.equal(a.set('/x', H1), true);
-    assert.equal(a.get('/x'), H1);
-    a.set('/x', H2);
-    assert.equal(a.get('/x'), H2);
+    assert.equal(a.set('/x', A1), true);
+    assert.deepEqual(a.get('/x'), A1);
+    a.set('/x', A2);
+    assert.deepEqual(a.get('/x'), A2);
     assert.equal(fs.readFileSync(a.file, 'utf8').includes(H1), false);
   });
 
   it('переживает пересоздание', () => {
-    new RunApprovals(path.join(base, 'ap.json')).set('/x', H1);
-    assert.equal(new RunApprovals(path.join(base, 'ap.json')).get('/x'), H1);
+    new RunApprovals(path.join(base, 'ap.json')).set('/x', A1);
+    assert.deepEqual(new RunApprovals(path.join(base, 'ap.json')).get('/x'), A1);
   });
 
   it('битый файл, не объект, плохие записи - пусто', () => {
@@ -117,11 +119,10 @@ describe('RunApprovals', () => {
       fs.writeFileSync(file, text);
       assert.equal(a.get('/x'), undefined, text);
     }
-    fs.writeFileSync(file, JSON.stringify({ '/x': 'zz', rel: H1, '/y': H1 }));
-    assert.equal(a.get('/x'), undefined);
-    assert.equal(a.get('rel'), undefined);
-    assert.equal(a.get('/y'), H1);
-    a.set('/z', H2);
+    fs.writeFileSync(file, JSON.stringify({ '/x': { sha256: 'zz', command: ['a'] }, rel: A1, '/y': A1, '/old': H1, '/nocmd': { sha256: H1, command: [] }, '/badcmd': { sha256: H1, command: [1] } }));
+    for (const key of ['/x', 'rel', '/old', '/nocmd', '/badcmd']) assert.equal(a.get(key), undefined, key);
+    assert.deepEqual(a.get('/y'), A1);
+    a.set('/z', A2);
     assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))), ['/y', '/z']);
   });
 
@@ -132,7 +133,7 @@ describe('RunApprovals', () => {
     const log = console.error;
     console.error = () => undefined;
     try {
-      assert.equal(a.set('/x', H1), false);
+      assert.equal(a.set('/x', A1), false);
     } finally {
       console.error = log;
     }
@@ -141,9 +142,9 @@ describe('RunApprovals', () => {
 
   it('предел 1000 записей вытесняет самую давнюю', () => {
     const a = new RunApprovals(path.join(base, 'ap.json'));
-    for (let i = 0; i < 1001; i++) a.set(`/f${i}`, H1);
+    for (let i = 0; i < 1001; i++) a.set(`/f${i}`, A1);
     assert.equal(a.get('/f0'), undefined);
-    assert.equal(a.get('/f1000'), H1);
+    assert.deepEqual(a.get('/f1000'), A1);
   });
 });
 
@@ -204,6 +205,14 @@ describe('findTerminal и terminalLaunch', () => {
     assert.equal(r.cmd, 'osascript');
     assert.deepEqual(r.args.slice(-6), ['-c', RUN_SCRIPT, 'cyborg-run', path.dirname(file), 'bash', file]);
     assert.equal(r.args.filter((a) => a.includes('PWNED')).length, 1);
+  });
+
+  it('darwin: обратная косая черта в каталоге или команде - отказ, linux её пропускает', () => {
+    for (const [dir, command] of [['/d', ['bash', "/d/a\\';touch PWNED;'.sh"]], ['/d\\', ['/d\\/f']], ['/d', ['/bin/sh', 'a\\b', '/d/f']]] as const) {
+      const r = terminalLaunch('darwin', {}, dir, [...command]);
+      assert.ok('error' in r && /обратной косой чертой/.test(r.error), JSON.stringify(r));
+    }
+    assert.ok('args' in terminalLaunch('linux', { PATH: '/a' }, '/d', ['/d/a\\b'], have('/a/xterm')));
   });
 
   it('x-terminal-emulator - ссылка: форма по имени цели, не по имени ссылки', () => {
@@ -389,6 +398,21 @@ describe('createRunHandlers', () => {
     await handlers().run(f);
     assert.equal(confirms.length, 2);
     assert.equal(confirms[1].changed, true);
+  });
+
+  it('хэш тот же, команда другая (после одобрения выставлен бит): спрашивает снова с новой командой', { skip: isRoot }, async () => {
+    const f = script();
+    await handlers().run(f);
+    confirms = [];
+    fs.chmodSync(f, 0o755);
+    assert.deepEqual(await handlers().run(f), { ok: true });
+    assert.equal(confirms.length, 1);
+    assert.equal(confirms[0].changed, true);
+    assert.deepEqual(confirms[0].command, [f]);
+    assert.deepEqual(approvals.get(f)?.command, [f]);
+    confirms = [];
+    await handlers().run(f);
+    assert.equal(confirms.length, 0);
   });
 
   it('отмена: ни запуска, ни файла одобрений', async () => {

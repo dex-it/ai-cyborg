@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AllowedPaths } from './allowed-paths';
+import type { Approval } from './run-approvals';
 import { shellQuote } from '../shared/shell-quote';
 import { CONTROL } from './commands';
 import { sessionEnv } from './sessions';
@@ -116,7 +117,7 @@ export function warningText(p: RunWarning): { message: string; detail: string } 
   return {
     message: 'Запустить файл в терминале?',
     detail: [
-      ...(p.changed ? ['Файл изменён с прошлого одобрения.', ''] : []),
+      ...(p.changed ? ['Файл изменён с прошлого одобрения: содержимое либо команда запуска уже не те.', ''] : []),
       `Файл: ${p.file}`,
       `Каталог: ${p.dir}`,
       `Команда: ${displayCommand(p.command)}`,
@@ -140,7 +141,7 @@ export type RunReply ={ ok: true } | { cancelled: true } | { error: string };
 
 export interface RunDeps {
   allowed: AllowedPaths;
-  approvals: { get(real: string): string | undefined; set(real: string, sha256: string): boolean };
+  approvals: { get(real: string): Approval | undefined; set(real: string, approval: Approval): boolean };
   confirm: (p: RunWarning) => Promise<boolean>;
   launch: (cmd: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ error?: string }>;
   platform?: NodeJS.Platform;
@@ -175,7 +176,7 @@ export function createRunHandlers(deps: RunDeps) {
         return { error: `Файл не прочитан: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}` };
       }
       const prev = deps.approvals.get(real);
-      if (prev !== h1) {
+      if (prev?.sha256 !== h1 || !sameCommand(prev.command, command)) {
         if (!(await deps.confirm({ file: real, dir, command, changed: prev !== undefined }))) return { cancelled: true };
         let same = false;
         try {
@@ -187,7 +188,7 @@ export function createRunHandlers(deps: RunDeps) {
           same = false;
         }
         if (!same) return { error: 'Файл изменился, пока вы решали: запуск отменён' };
-        deps.approvals.set(real, h1);
+        deps.approvals.set(real, { sha256: h1, command });
       }
       const result = await deps.launch(term.cmd, term.args, { cwd: dir, env: sessionEnv({}) });
       return result.error ? { error: result.error } : { ok: true };
