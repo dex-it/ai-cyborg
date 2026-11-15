@@ -62,6 +62,9 @@ export interface JournalFacts {
   interactive: boolean;
   /** Последний custom-title, иначе последний ai-title, иначе первый набранный запрос. */
   title: string;
+  /** Последний custom-title, иначе последний ai-title; пусто, пока Claude Code не назвал разговор. */
+  named: string;
+  firstPrompt: string;
 }
 
 export function journalFacts(head: string, tail: string): JournalFacts {
@@ -90,7 +93,7 @@ export function journalFacts(head: string, tail: string): JournalFacts {
       }
     }
   }
-  return { interactive: entrypoint === 'cli', title: oneLine(custom || ai || firstPrompt) };
+  return { interactive: entrypoint === 'cli', title: oneLine(custom || ai || firstPrompt), named: oneLine(custom || ai), firstPrompt };
 }
 
 function readEdges(file: string, size: number): [string, string] {

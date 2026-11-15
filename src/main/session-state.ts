@@ -12,6 +12,10 @@ export interface SessionEvent {
   message?: string;
   notification_type?: string;
   last_assistant_message?: string;
+  /** Текст запроса у UserPromptSubmit. */
+  prompt?: string;
+  /** Журнал разговора; у удалённой сессии - путь на хосте. */
+  transcript_path?: string;
   /** Есть у событий инструментов субагента, в том числе фонового, который работает после Stop главного хода. */
   agent_id?: string;
   background_tasks?: unknown[];
@@ -19,7 +23,11 @@ export interface SessionEvent {
 }
 
 export const HOOK_COMMAND = '{ cat; echo; } >> "$CYBORG_EVENTS"';
-export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'Notification'];
+// Упавший инструмент шлёт PostToolUseFailure, а не PostToolUse: без него ход из одних отказов выглядел бы простоем.
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'Notification'];
+
+/** Инструмент отработал, успешно или нет: сессия (или её субагент) работает. */
+export const isToolEvent = (name: string | undefined): boolean => name === 'PostToolUse' || name === 'PostToolUseFailure';
 
 /** Содержимое --settings: те же хуки у локальной сессии и у демона на хосте. */
 export function hookSettings(): { hooks: Record<string, unknown[]> } {
@@ -27,7 +35,7 @@ export function hookSettings(): { hooks: Record<string, unknown[]> } {
     hooks: Object.fromEntries(
       HOOK_EVENTS.map((event) => [
         event,
-        [{ ...(event === 'PostToolUse' ? { matcher: '*' } : {}), hooks: [{ type: 'command', command: HOOK_COMMAND }] }],
+        [{ ...(isToolEvent(event) ? { matcher: '*' } : {}), hooks: [{ type: 'command', command: HOOK_COMMAND }] }],
       ]),
     ),
   };
@@ -64,7 +72,7 @@ export function track(session: Tracked, event: SessionEvent): void {
   const name = event.hook_event_name;
   if (name === 'SessionStart') {
     if (session.state === 'starting') session.state = 'waiting';
-  } else if (name === 'UserPromptSubmit' || (name === 'PostToolUse' && !event.agent_id)) session.state = 'working';
+  } else if (name === 'UserPromptSubmit' || (isToolEvent(name) && !event.agent_id)) session.state = 'working';
   else if (name === 'Stop') {
     session.state = event.background_tasks?.length || event.session_crons?.length ? 'working' : 'waiting';
     if (typeof event.last_assistant_message === 'string') session.lastAnswer = withoutSuggestions(event.last_assistant_message);
@@ -76,4 +84,29 @@ export function track(session: Tracked, event: SessionEvent): void {
     return;
   } else return;
   session.reason = undefined;
+}
+
+/** О чём сессия: подсказка её вкладки. */
+export interface SessionContext {
+  /** Название разговора от Claude Code (ai-title или /rename). */
+  title?: string;
+  /** Первый запрос - обычно постановка задачи. */
+  first?: string;
+  last?: string;
+}
+
+const PROMPT_MAX = 300;
+
+export function clipPrompt(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > PROMPT_MAX ? `${line.slice(0, PROMPT_MAX - 1)}…` : line;
+}
+
+/** Запрос человека из UserPromptSubmit; служебная разметка (`<...>`) запросом не считается, как и в истории. */
+export function notePrompt(context: SessionContext, prompt: unknown): void {
+  if (typeof prompt !== 'string') return;
+  const text = clipPrompt(prompt);
+  if (!text || text.startsWith('<')) return;
+  context.first ??= text;
+  context.last = text;
 }
