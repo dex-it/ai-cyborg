@@ -295,8 +295,16 @@ describe('RUN_SCRIPT', () => {
       "pump('Enter'.encode())",
       'alive = os.waitpid(pid, os.WNOHANG)[0] == 0',
       "os.write(fd, b'\\n') if alive else None",
-      'time.sleep(1)',
-      'closed = os.waitpid(pid, os.WNOHANG)[0] != 0 if alive else False',
+      'closed = False',
+      'end = time.time() + 8',
+      // На macOS процесс не выйдет, пока его вывод из pty не вычитан.
+      'while alive and not closed and time.time() < end:',
+      '    if select.select([fd], [], [], 0.1)[0]:',
+      '        try:',
+      '            os.read(fd, 4096)',
+      '        except OSError:',
+      '            pass',
+      '    closed = os.waitpid(pid, os.WNOHANG)[0] != 0',
       "sys.stdout.write(out.decode('utf8', 'replace') + '\\nALIVE=%s CLOSED=%s' % (alive, closed))",
     ].join('\n');
     const r = spawnSync('python3', ['-I', '-c', probe, RUN_SCRIPT, base], { encoding: 'utf8', timeout: 30_000, env: { PATH: process.env.PATH } });
