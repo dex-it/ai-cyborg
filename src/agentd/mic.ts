@@ -122,13 +122,18 @@ export async function arecord(args: string[], env: NodeJS.ProcessEnv, own: strin
   }
   const out = target === '-' ? process.stdout : fs.createWriteStream(target);
   return new Promise((resolve) => {
-    const finish = (code: number): void => {
+    let done = false;
+    const finish = (code: number, flush = true): void => {
+      if (done) return;
+      done = true;
       socket.destroy();
-      resolve(code);
+      // Вызывающий сразу делает process.exit: файл, не дописанный до finish, теряет хвост записи или не появляется вовсе.
+      if (flush && out !== process.stdout) out.end(() => resolve(code));
+      else resolve(code);
     };
     process.once('SIGTERM', () => finish(0));
     process.once('SIGINT', () => finish(0));
-    out.on('error', () => finish(0));
+    out.on('error', () => finish(0, false));
     if (head.rest.length) out.write(head.rest);
     socket.pipe(out);
     socket.on('end', () => finish(0));

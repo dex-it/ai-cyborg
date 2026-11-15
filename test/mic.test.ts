@@ -190,8 +190,35 @@ describe('микрофон: подставной arecord', () => {
     const out = path.join(dir, 'out.raw');
     assert.equal(await arecord(['-f', 'S16_LE', '-r', '16000', '-c', '1', '-t', 'raw', '-q', out], env, dir), 0);
     assert.deepEqual(asked, ['probe', 'record']);
-    for (let i = 0; i < 50 && fs.readFileSync(out, 'utf8') !== 'PCMDATA'; i++) await new Promise((r) => setTimeout(r, 10));
     assert.equal(fs.readFileSync(out, 'utf8'), 'PCMDATA');
+  });
+
+  it('остановка записи SIGTERM: выход 0 после того, как принятое дописано в файл', async (t) => {
+    const dir = tmp(t);
+    const sock = path.join(dir, 'mic.sock');
+    const server = net.createServer((s) => void readLine(s).then(() => s.write(Buffer.concat([Buffer.from('ok\n'), Buffer.from('PCM'.repeat(4096))]))));
+    t.after(() => server.close());
+    await listen(server, sock);
+    // SIGTERM в момент первой записи: принятое ещё в буфере потока, на диск не ушло.
+    const create = fs.createWriteStream;
+    t.after(() => void (fs.createWriteStream = create));
+    let written = '';
+    fs.createWriteStream = ((...args: Parameters<typeof create>) => {
+      const stream = create(...args);
+      const write = stream.write.bind(stream) as (chunk: Buffer) => boolean;
+      stream.write = ((chunk: Buffer) => {
+        const first = !written;
+        written += chunk.toString();
+        const ok = write(chunk);
+        if (first) process.emit('SIGTERM');
+        return ok;
+      }) as typeof stream.write;
+      return stream;
+    }) as typeof create;
+    const out = path.join(dir, 'out.raw');
+    assert.equal(await arecord(['-t', 'raw', out], { CYBORG_MIC: sock, PATH: '' }, dir), 0);
+    assert.ok(written.length > 0);
+    assert.equal(fs.readFileSync(out, 'utf8'), written);
   });
 
   it('отказ без настоящего arecord - выход 1 с причиной; есть настоящий дальше по PATH - работает он', async (t) => {
