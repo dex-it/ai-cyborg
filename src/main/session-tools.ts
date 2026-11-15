@@ -18,6 +18,8 @@ export interface ToolContext {
   kind: SessionKind;
   /** Хосты проекта вызывающей: без них spawn_agent и close_agent не отдаются. */
   hosts: string[];
+  /** Вызывающую открыла другая сессия: локальной дочерней отдаётся report_done. */
+  child?: boolean;
 }
 
 /** Промпт новой сессии уходит позиционным аргументом claude, а Linux ограничивает один аргумент 128 КиБ (MAX_ARG_STRLEN). */
@@ -35,16 +37,17 @@ export const CLOSE_SELF_DELAY_MS = 1000;
 export function sessionTools(dirs: string[], context: ToolContext = { kind: 'local', hosts: [] }): McpTool[] {
   const all = localTools(dirs);
   const byName = (...names: string[]): McpTool[] => all.filter((t) => names.includes(t.name));
-  if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL), reportDoneTool()];
-  return context.hosts.length ? [...all, spawnAgentTool(dirs, context.hosts), closeAgentTool()] : all;
+  if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL), reportDoneTool('remote')];
+  const local = context.child ? [...all, reportDoneTool('local')] : all;
+  return context.hosts.length ? [...local, spawnAgentTool(dirs, context.hosts), closeAgentTool()] : local;
 }
 
-function reportDoneTool(): McpTool {
+function reportDoneTool(kind: SessionKind): McpTool {
   return {
     name: REPORT_DONE_TOOL,
     description:
       'Сдаёт итог работы: Cyborg пересылает его сессии, которая тебя запустила, либо показывает человеку уведомлением. ' +
-      'Вызывай, когда закончил, упёрся в препятствие или не справился; ветку запушь и PR открой до вызова. ' +
+      `Вызывай, когда закончил, упёрся в препятствие или не справился; ${kind === 'remote' ? 'ветку запушь и PR открой до вызова' : 'работу закоммить в свою ветку до вызова'}. ` +
       'Сессия после итога остаётся: следующее сообщение начинает новый круг работы, и итог круга сдаётся снова. ' +
       'Если ответ - ошибка связи с Cyborg, вызов не состоялся: повтори его позже.',
     inputSchema: {
@@ -139,7 +142,8 @@ function localTools(dirs: string[]): McpTool[] {
         'Открытые вкладки Cyborg в проекте этой сессии, включая её саму (self: true): номер, подпись вкладки, каталог запуска и текущий, состояние и хвост последнего ответа. ' +
         'state: starting - запускается или ждёт подтверждения доверия к каталогу; working - работает, в том числе ждёт своих фоновых задач; ' +
         'waiting - ход завершён, ждёт сообщения; asking - стоит на вопросе, разрешении или лимите и ждёт человека (причина в reason). ' +
-        'queued - сколько сообщений send_to_session ждут конца её хода. У удалённой сессии есть host, а cwd - путь на хосте.',
+        'queued - сколько сообщений send_to_session ждут конца её хода. У удалённой сессии есть host, а cwd - путь на хосте. ' +
+        'parent - номер сессии, открывшей эту инструментом; child: true - твоя дочерняя, её закрываешь ты.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
     {
@@ -166,6 +170,7 @@ function localTools(dirs: string[]): McpTool[] {
         'Закрывает вкладку Cyborg с сессией проекта - как крестик на вкладке: процесс Claude Code завершается, вкладка убирается, очередь её сообщений пропадает. ' +
         'Диалог остаётся в истории сессий проекта, его можно возобновить. ' +
         'Своя вкладка (номер с self: true в list_sessions) закрывается через секунду после ответа. ' +
+        'Свою дочернюю (child: true в list_sessions) закрывает в любом состоянии. ' +
         'Чужую вкладку в состоянии working, asking или starting инструмент не закрывает - её работа или вопрос человеку пропали бы; закрыть её всё же - force: true. ' +
         'Прежде чем закрыть соседку, прочитай её итог в list_sessions.',
       inputSchema: {
@@ -232,8 +237,8 @@ export function validateClose(value: unknown, peers: SessionInfo[], caller: numb
   if (force !== undefined && typeof force !== 'boolean') return 'force - true или false';
   const target = peers.find((p) => p.id === id);
   if (!target) return `сессии ${String(id)} нет среди открытых вкладок проекта: номера - в list_sessions`;
-  // Вызывающая сессия в своём ходу всегда working: правило о работающих к ней не относится.
-  if (force || target.id === caller || target.state === 'waiting') return { id: target.id };
+  // Вызывающая сессия в своём ходу всегда working: правило о работающих к ней не относится; свою дочернюю родитель закрывает сам.
+  if (force || target.id === caller || target.parent === caller || target.state === 'waiting') return { id: target.id };
   const busy =
     target.state === 'asking'
       ? `ждёт человека (${target.reason ?? 'вопрос'})`
@@ -335,6 +340,7 @@ export function describePeers(peers: SessionInfo[], caller: number): string {
       tab: `CC${p.id}`,
       ...(p.id === caller ? { self: true } : {}),
       ...(p.host ? { host: p.host, ...(p.link ? { link: p.link } : {}) } : {}),
+      ...(p.parent !== undefined ? { parent: p.parent, ...(p.parent === caller ? { child: true } : {}) } : {}),
       repo: p.dirs[0],
       cwd: p.cwd,
       state: p.state,
@@ -416,6 +422,10 @@ export interface SessionsPort {
   kindOf?(id: number): SessionKind | null;
   /** Хосты проекта, у которого каталоги запуска - dirs. */
   hostsOf?(dirs: string[]): string[];
+  /** Номер открывшей сессии; null - открыл человек. */
+  parentOf?(id: number): number | null;
+  /** Итог локальной дочерней; текст ответа модели. */
+  reportLocal?(id: number, report: ReportArgs): string;
 }
 
 /** Удалённая часть: проверка хоста и лимитов, итог, завершение. Тексты результатов формирует она. */
@@ -436,6 +446,7 @@ export function createSessionTools(
   const contextOf = (caller: number, dirs: string[]): ToolContext => ({
     kind: sessions.kindOf?.(caller) ?? 'local',
     hosts: remote ? (sessions.hostsOf?.(dirs) ?? []) : [],
+    child: !!sessions.reportLocal && (sessions.parentOf?.(caller) ?? null) !== null,
   });
   return {
     tools: (caller) => {
@@ -469,10 +480,15 @@ export function createSessionTools(
         setTimeout(() => close(caller), closeSelfDelayMs);
         return 'Эта вкладка закроется через секунду.';
       }
-      if (name === REPORT_DONE_TOOL && remote) {
+      if (name === REPORT_DONE_TOOL) {
         const valid = validateReport(value);
         if (typeof valid === 'string') throw new Error(valid);
-        return remote.report(caller, valid);
+        if (sessions.kindOf?.(caller) === 'remote') {
+          if (!remote) throw new Error(`инструмент ${name} недоступен этой сессии`);
+          return remote.report(caller, valid);
+        }
+        if (!sessions.reportLocal) throw new Error(`инструмент ${name} недоступен этой сессии`);
+        return sessions.reportLocal(caller, valid);
       }
       if (name === CLOSE_AGENT_TOOL && remote) {
         const valid = validateCloseAgent(value, peers);

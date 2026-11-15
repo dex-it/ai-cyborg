@@ -33,6 +33,7 @@ import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
 import { findTask, hasSources, sessionLabel, taskTooltip } from './task-model';
+import { contextTooltip, type SessionContext } from './session-context';
 import { onThemeChange, sessionColor, terminalTheme } from './theme';
 import { rootLabel as sessionRootLabel, treeRoots as sessionTreeRoots } from './roots';
 import { bindTree, replaceTree, TreeView, type TreeRoot } from './tree';
@@ -76,6 +77,8 @@ interface Session {
   jira?: JiraIssue;
   /** Номер вкладки сессии, открывшей эту через MCP; цвет у них общий. */
   parent?: number;
+  /** О чём сессия: название разговора, первый и последний запрос (session:context). */
+  context?: SessionContext;
   color: string;
   term: Terminal;
   fit: FitAddon;
@@ -500,7 +503,8 @@ treeBack.addEventListener('click', () => {
 
 function updateSessionLabels(s: Session): void {
   const label = sessionTitle(s);
-  const tooltip = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
+  const source = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
+  const tooltip = [source, contextTooltip(s.context ?? {})].filter(Boolean).join('\n');
   fillLabel(s.stripTab.querySelector('.label') as HTMLElement, s, label);
   s.stripTab.title = [tooltip, parentNote(s), s.cwd].filter(Boolean).join('\n');
   s.stripTab.classList.toggle('exited', s.exited);
@@ -1089,11 +1093,18 @@ api.on<{ id: number; event?: string }>('session:activity', ({ id, event }) => {
     const asked = findSession(id);
     if (asked) commandBars.suggest(asked.command, []);
   }
-  if (event === 'UserPromptSubmit' || event === 'PostToolUse') findSession(id)?.stripTab.classList.add('busy');
+  if (event === 'UserPromptSubmit' || event === 'PostToolUse' || event === 'PostToolUseFailure') findSession(id)?.stripTab.classList.add('busy');
   if (active?.id !== id) return;
   const session = active;
   clearTimeout(refreshTimer);
   refreshTimer = window.setTimeout(() => void renderTree(session, false), 250);
+});
+
+api.on<{ id: number } & SessionContext>('session:context', ({ id, ...context }) => {
+  const session = findSession(id);
+  if (!session) return;
+  session.context = context;
+  updateSessionLabels(session);
 });
 
 api.on<{ id: number; buttons: CommandButton[] }>('session:suggest', ({ id, buttons }) => {
@@ -1174,7 +1185,7 @@ api.on<{ id: number; reported: boolean }>('remote:state', ({ id, reported }) => 
 
 api.on<{ id: number; title: string; body: string }>('remote:report', ({ id, title, body }) => {
   const session = findSession(id);
-  notifier.waiting(id, `${title}${session ? ` · ${session.project.name}` : ''}`, body, !!session && session === active && document.hasFocus());
+  notifier.report(id, `${title}${session ? ` · ${session.project.name}` : ''}`, body, !!session && session === active && document.hasFocus());
 });
 
 api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {

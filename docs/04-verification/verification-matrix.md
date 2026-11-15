@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 200; с автотестом - 182, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 202; с автотестом - 184, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -119,6 +119,7 @@ date: 2026-10-26
 | FR-10011 | После закрытия вкладки выбирается соседняя | 10-ui-preferences | автотест | `test/neighbor.test.ts` |
 | FR-10012 | Пути и ссылки в выводе сессии открываются по клику | 10-ui-preferences | автотест | `test/term-links.test.ts` |
 | FR-10013 | Главный процесс проверяет путь и адрес, открываемые по клику | 10-ui-preferences | автотест | `test/term-links.test.ts` |
+| FR-10014 | Разделы системного меню в порядке платформы, «Справка» и «О программе» | 10-ui-preferences | автотест | `test/menu.test.ts` |
 | FR-11001 | Jira в свойствах проекта | 11-status-hub | автотест | `test/jira.test.ts` |
 | FR-11002 | Кнопка «Статус» и карточка | 11-status-hub | smoke | `scripts/smoke.mjs` |
 | FR-11003 | Сбор и обновление данных | 11-status-hub | smoke | `scripts/smoke.mjs` |
@@ -176,7 +177,8 @@ date: 2026-10-26
 | FR-15006 | list_sessions перечисляет вкладки проекта с состоянием и хвостом ответа | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
 | FR-15007 | send_to_session пишет в ждущую вкладку вставкой и Enter, не задевая чужой запрос разрешения | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
 | FR-15008 | Очередь сообщений работающей вкладке | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
-| FR-15009 | close_session закрывает вкладку проекта, не обрывая без force работу и вопрос соседки | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/mcp.test.ts` |
+| FR-15009 | close_session закрывает вкладку проекта, не обрывая без force работу и вопрос соседки | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/remote-tools.test.ts`, `test/mcp.test.ts` |
+| FR-15010 | report_done у локальной сессии, открытой другой сессией, отдаёт итог открывшей | 15-session-mcp | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/session-tools.test.ts`, `test/remote-tools.test.ts` |
 | FR-16001 | Markdown-файл открывается отрендеренным документом | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |
 | NFR-16001 | Документ из репозитория не исполняет кода, не грузит сеть и не меняет окно | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/md-links.test.ts` |
 | FR-16002 | Ссылки и картинки документа | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |

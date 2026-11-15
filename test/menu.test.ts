@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type ExtensionsTab, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, DOCS_URL, HOTKEYS_URL, ISSUES_URL, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type ExtensionsTab, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -26,6 +26,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   hostDisk() {},
   search() {},
   extensions() {},
+  openUrl() {},
   ...over,
 });
 
@@ -58,12 +59,14 @@ describe('appMenuTemplate', () => {
     });
   }
 
-  it('выход - пункт с Cmd/Ctrl+Q, который вызывает переданную функцию, а не роль quit', () => {
-    for (const platform of ['darwin', 'linux'] as const) {
+  it('выход - последний пункт первого раздела с Cmd/Ctrl+Q, вызывает переданную функцию, а не роль quit', () => {
+    for (const [platform, label] of [['darwin', 'Завершить Cyborg'], ['linux', 'Выход']] as const) {
       let calls = 0;
       const items = (appMenuTemplate(platform, () => calls++, notifications, workspaceMenu())[0].submenu ?? []) as MenuItemConstructorOptions[];
-      const quit = items.find((item) => item.accelerator === 'CmdOrCtrl+Q');
-      assert.ok(quit, `${platform}: нет пункта выхода`);
+      const quit = items.at(-1);
+      assert.equal(quit?.accelerator, 'CmdOrCtrl+Q', `${platform}: нет пункта выхода`);
+      assert.ok(quit);
+      assert.equal(quit.label, label);
       assert.equal(quit.role, undefined);
       (quit.click as () => void)();
       assert.equal(calls, 1);
@@ -81,11 +84,45 @@ describe('appMenuTemplate', () => {
   });
 
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
-    it(`${platform}: «Воркспейс» с восемью пунктами в заданном порядке`, () => {
+    it(`${platform}: «Воркспейс» - создать, открыть и недавние, затем проект, кнопки и хосты; вне macOS последним выход`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      assert.deepEqual(labels, ['Открыть…', 'Открыть в новом окне…', 'Создать…', 'Недавние', 'Новый проект', 'Свойства проекта', 'Кнопки команд…', 'Промпты кнопок…', 'Вход Claude на хостах…', 'Место на хостах…']);
+      const expected = ['Создать…', 'Открыть…', 'Открыть в новом окне…', 'Недавние', 'Новый проект…', 'Свойства проекта…', 'Кнопки команд…', 'Промпты кнопок…', 'Вход Claude на хостах…', 'Место на хостах…'];
+      assert.deepEqual(labels, platform === 'darwin' ? expected : [...expected, 'Выход']);
+    });
+
+    it(`${platform}: разделы в порядке платформы, у каждого раздела свои пункты без повторов`, () => {
+      const menu = appMenuTemplate(platform, () => {}, notifications, workspaceMenu());
+      const tail = ['Воркспейс', 'Правка', 'Вид', 'Поиск', 'Расширения', 'Окно', 'Справка'];
+      assert.deepEqual(menu.map((item) => item.label), platform === 'darwin' ? ['Cyborg', ...tail] : tail);
+      const closes = roles(menu).filter((role) => role === 'close');
+      assert.equal(closes.length, 1, '«Закрыть окно» - один пункт');
+      assert.equal(roles(menu).filter((role) => role === 'about').length, 1, '«О программе» - один пункт');
     });
   }
+
+  it('«О программе» - в меню приложения на macOS и в «Справке» на Linux', () => {
+    const helpRoles = (platform: NodeJS.Platform) => roles(submenu(appMenuTemplate(platform, () => {}, notifications, workspaceMenu()).find((item) => item.label === 'Справка')));
+    assert.ok(!helpRoles('darwin').includes('about'));
+    assert.ok(roles(submenu(appMenuTemplate('darwin', () => {}, notifications, workspaceMenu())[0])).includes('about'));
+    assert.ok(helpRoles('linux').includes('about'));
+  });
+
+  it('«Справка» открывает документацию, клавиши и трекер проблем', () => {
+    const opened: string[] = [];
+    const help = submenu(appMenuTemplate('linux', () => {}, notifications, workspaceMenu({ openUrl: (url) => opened.push(url) })).find((item) => item.label === 'Справка'));
+    for (const item of help) if (!item.role) (item.click as (() => void) | undefined)?.();
+    assert.deepEqual(opened, [DOCS_URL, HOTKEYS_URL, ISSUES_URL]);
+  });
+
+  it('адреса справки совпадают с адресом сайта и репозитория из site/site.config.mjs', () => {
+    const config = fs.readFileSync('site/site.config.mjs', 'utf8');
+    const owner = /OWNER = '([^']+)'/.exec(config)?.[1];
+    const repo = /REPO_NAME = '([^']+)'/.exec(config)?.[1];
+    assert.equal(DOCS_URL, `https://${owner}.github.io/${repo}/`);
+    assert.equal(ISSUES_URL, `https://github.com/${owner}/${repo}/issues`);
+    assert.ok(fs.existsSync('docs/guide/reference/hotkeys.md'), 'страница клавиш на месте');
+  });
+
 
   it('без выбранного проекта «Свойства проекта» недоступны, без воркспейса недоступен «Новый проект»', () => {
     const byId = (items: MenuItemConstructorOptions[], id: string) => items.find((item) => item.id === id);
@@ -192,7 +229,7 @@ describe('appMenuTemplate', () => {
     const recent = submenu(items.find((item) => item.label === 'Недавние'));
     assert.deepEqual(recent.map((item) => item.label), ['~/a.cyborg.json', '/srv/b.json']);
     (recent[1].click as () => void)();
-    assert.deepEqual(calls, ['open', 'create', 'new', 'edit', 'recent:/srv/b.json']);
+    assert.deepEqual(calls, ['create', 'open', 'new', 'edit', 'recent:/srv/b.json']);
   });
 
   it('пустые «Недавние» - один недоступный пункт «Нет недавних»', () => {

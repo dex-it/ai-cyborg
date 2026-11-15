@@ -6,6 +6,7 @@ import path from 'node:path';
 import { MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
 import { SessionManager, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
+import { hookSettings } from './session-state.ts';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 
@@ -65,12 +66,68 @@ test('SessionManager: номер разговора уходит в onChild то
   const seen: string[] = [];
   manager.onChild = (sid) => seen.push(sid);
   const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, true);
+  const child = manager.create('/a', [], 'задание', undefined, own);
   const event = (sid: string) => JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid });
   manager.ingest(own, [event('own-sid')], { replay: false });
   manager.ingest(child, [event('sid-1'), event('sid-1')], { replay: false });
   manager.ingest(child, [event('sid-2')], { replay: false });
   assert.deepEqual(seen, ['sid-1', 'sid-2']);
+});
+
+test('SessionManager: контекст вкладки - первый и последний запрос из хуков, название и постановка из журнала', (t) => {
+  const { manager, userData, events } = managerIn(t);
+  const id = manager.create('/a', []);
+  const prompt = (text: string) => JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: text });
+  manager.ingest(id, [prompt('почини\n  дерево'), prompt('<task-notification>x</task-notification>'), prompt('и тесты')], { replay: false });
+  const contexts = () => events.filter((e) => e.channel === 'session:context').map((e) => e.payload);
+  assert.deepEqual(contexts().at(-1), { id, first: 'почини дерево', last: 'и тесты' });
+  const journal = path.join(userData, 'j.jsonl');
+  fs.writeFileSync(
+    journal,
+    [JSON.stringify({ type: 'user', message: { content: 'исходная задача' } }), JSON.stringify({ type: 'ai-title', aiTitle: 'Дерево файлов' })].join('\n'),
+  );
+  const stop = JSON.stringify({ hook_event_name: 'Stop', transcript_path: journal });
+  manager.ingest(id, [stop, stop], { replay: false });
+  assert.deepEqual(contexts().at(-1), { id, title: 'Дерево файлов', first: 'исходная задача', last: 'и тесты' });
+  assert.equal(contexts().length, 3, 'без перемен событие не шлётся');
+});
+
+test('SessionManager: у удалённой вкладки spawn_agent есть parent, но разговоры в onChild не идут - их ведёт удалённая часть', (t) => {
+  const { manager } = managerIn(t);
+  const seen: string[] = [];
+  manager.onChild = (sid) => seen.push(sid);
+  const own = manager.create('/a', []);
+  const agent = manager.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote: { host: 'dev1', origin: 'tool', keep: false, spawnedBy: own, online: true } });
+  manager.ingest(agent, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'remote-sid' })], { replay: false });
+  assert.equal(manager.parentOf(agent), own);
+  assert.deepEqual(seen, []);
+});
+
+test('SessionManager: открывшая сессия - parent в перечне соседей и parentOf; у открытой человеком его нет', (t) => {
+  const { manager } = managerIn(t);
+  const own = manager.create('/a', []);
+  const child = manager.create('/a', [], 'задание', undefined, own);
+  const peers = manager.peers(own) ?? [];
+  assert.equal(peers.find((p) => p.id === child)?.parent, own);
+  assert.equal('parent' in (peers.find((p) => p.id === own) ?? {}), false);
+  assert.equal(manager.parentOf(child), own);
+  assert.equal(manager.parentOf(own), null);
+});
+
+test('SessionManager.reportLocal: итог - в очередь открывшей, один за круг; новый круг - после UserPromptSubmit; без открывшей - уведомление', (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager } = managerIn(t, events);
+  const own = manager.create('/a', []);
+  const child = manager.create('/a', [], 'задание', undefined, own);
+  assert.throws(() => manager.reportLocal(own, { status: 'ok', summary: 'x' }), /открытой другой сессией/);
+  assert.match(manager.reportLocal(child, { status: 'ok', summary: 'сделано', branch: 'feat-x' }), /Итог принят/);
+  const queued = manager.peers(own)?.find((p) => p.id === own)?.queued;
+  assert.equal(queued, 1);
+  assert.throws(() => manager.reportLocal(child, { status: 'ok', summary: 'ещё' }), /уже отправлен/);
+  manager.ingest(child, [JSON.stringify({ hook_event_name: 'UserPromptSubmit' })], { replay: false });
+  manager.kill(own);
+  assert.match(manager.reportLocal(child, { status: 'blocked', summary: 'нужен человек' }), /Итог принят/);
+  assert.deepEqual(events.find((e) => e.channel === 'remote:report')?.payload, { id: child, title: `CC${child}`, body: 'blocked: нужен человек' });
 });
 
 test('SessionManager сужает существующий каталог событий до 0700', (t) => {
@@ -298,6 +355,17 @@ test('SessionManager: инструменты фонового субагента
   await until(() => activity() === 5);
   assert.deepEqual(suggests(), [1, 0], 'без предложения лишних событий нет');
   manager.kill(id);
+});
+
+test('упавший инструмент - работа: после запроса разрешения сессия снова working, хук подписан на все инструменты', (t) => {
+  const { manager } = managerIn(t);
+  const id = manager.create('/a', []);
+  const ev = (e: object) => JSON.stringify(e);
+  manager.ingest(id, [ev({ hook_event_name: 'Notification', notification_type: 'permission_prompt' })], { replay: false });
+  assert.equal(manager.peers(id)?.[0].state, 'asking');
+  manager.ingest(id, [ev({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash' })], { replay: false });
+  assert.equal(manager.peers(id)?.[0].state, 'working');
+  assert.deepEqual(hookSettings().hooks.PostToolUseFailure, hookSettings().hooks.PostToolUse);
 });
 
 // Менеджер с pty, записывающим вызовы; throwing - pty, бросающий на каждом вызове (процесс завершился, дескриптор закрыт).

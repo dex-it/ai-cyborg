@@ -5,6 +5,7 @@ import { cleanMessage } from '../clean-text';
 import { lowSpace, readHostDisk, readPurge, type HostDisk, type PurgeResult } from '../../shared/host-disk';
 import type { Project } from '../projects';
 import { isSessionId, type HistoryEntry } from '../history';
+import { REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from '../report-text';
 import type { Limits, RemoteToolsPort, ReportArgs } from '../session-tools';
 import { parseRemote } from '../trackers';
 import { sameDirs, type SessionManager, type TermPort } from '../sessions';
@@ -148,12 +149,6 @@ const tag = (e: { id: number; sid: string; ghost?: boolean }): string => (e.ghos
 const minutes = (value: number | undefined, fallback: number): number => (value === undefined ? fallback : value * 60_000);
 
 /** Текст итога сессии вызвавшей и уведомления: одна форма для report_done и итога лимита. */
-export function reportText(id: number | string, host: string, report: { status: string; summary: string; branch?: string; pr?: string }): string {
-  return [`Итог удалённой сессии CC${id} (${host}): ${report.status}`, report.branch ? `ветка: ${report.branch}` : '', report.pr ? `PR: ${report.pr}` : '', '', report.summary]
-    .filter((line, i) => line || i === 3)
-    .join('\n');
-}
-
 export function closeText(id: number | string, host: string, result: Cleanup): string {
   const parts = [`Сессия ${id} завершена.`];
   if (result.removed.length) parts.push(`Клоны удалены: ${result.removed.join(', ')}.`);
@@ -657,19 +652,19 @@ export class RemoteSessions implements RemoteToolsPort {
   private deliver(entry: Entry, report: ReportArgs): void {
     const text = reportText(entry.id, entry.host, report);
     if (entry.spawnedBy !== undefined && this.deps.sessions.enqueue(entry.spawnedBy, text)) return;
-    this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${tag(entry)} · ${entry.host}`, body: `${report.status}: ${report.summary.slice(0, 200)}` });
+    this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${tag(entry)} · ${entry.host}`, body: reportNote(report) });
   }
 
   async report(id: number, report: ReportArgs): Promise<string> {
     const entry = this.byId.get(id);
     if (!entry) throw new Error('сессия завершена');
-    if (entry.reported) throw new Error('итог этого круга работы уже отправлен: новый круг начнётся со следующего сообщения сессии');
+    if (entry.reported) throw new Error(REPORTED_ERROR);
     const link = this.link(entry.host);
     if (link.state !== 'online') throw new Error(`нет связи с ${entry.host}: вызов не состоялся, повтори его позже`);
     await link.request({ type: 'report', sid: entry.sid });
     this.setReported(entry, true);
     this.deliver(entry, report);
-    return 'Итог принят. Сессия остаётся открытой: следующее сообщение начнёт новый круг работы, и report_done снова станет доступен.';
+    return REPORT_ACCEPTED;
   }
 
   /** Завершение по правилам close_agent; tab - снять вкладку (инструмент), а не крестик, который её уже снял; caller - сессия, вызвавшая инструмент. */

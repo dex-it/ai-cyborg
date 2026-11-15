@@ -5,7 +5,9 @@ import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
-import { hookSettings, track, waitingReason, type SessionEvent, type SessionState } from './session-state.ts';
+import { REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
+import { clipPrompt, hookSettings, isToolEvent, notePrompt, track, waitingReason, type SessionContext, type SessionEvent, type SessionState } from './session-state.ts';
+import { readJournalFacts } from './history.ts';
 
 export { waitingReason, type SessionEvent, type SessionState };
 import { writeJsonAtomic } from './jsonfile.ts';
@@ -64,14 +66,17 @@ interface Session {
   state: SessionState;
   reason?: string;
   lastAnswer?: string;
+  context: SessionContext;
   /** Сообщения других сессий, ждущие конца хода: в работающую сессию не пишем, Enter мог бы попасть в её запрос разрешения. */
   outbox: string[];
   outboxTimer?: NodeJS.Timeout;
   lastEventAt: number;
   delivering?: boolean;
-  /** Открыта другой сессией: её разговоры уходят в onChild. */
-  child?: boolean;
+  /** Открыта другой сессией (open_session, spawn_agent); у локальной разговоры уходят в onChild. */
+  parent?: number;
   childSid?: string;
+  /** Итог этого круга работы сдан report_done; круг открывает следующий UserPromptSubmit. */
+  reported?: boolean;
 }
 
 export interface SessionInfo {
@@ -86,6 +91,8 @@ export interface SessionInfo {
   /** Только у удалённой вкладки. */
   host?: string;
   link?: 'offline';
+  /** Сессия, открывшая эту инструментом. */
+  parent?: number;
 }
 
 export type SayResult = 'sent' | 'queued';
@@ -150,7 +157,7 @@ export class SessionManager {
     writeJsonAtomic(this.settingsFile, hookSettings());
   }
 
-  create(cwd: string, addDirs: string[], prompt?: string, resume?: string, child = false): number {
+  create(cwd: string, addDirs: string[], prompt?: string, resume?: string, parent?: number): number {
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     createEventsFile(eventsFile);
@@ -187,8 +194,9 @@ export class SessionManager {
       dirs: [cwd, ...addDirs],
       state: 'starting',
       outbox: [],
+      context: {},
       lastEventAt: Date.now(),
-      ...(child ? { child } : {}),
+      ...(parent !== undefined ? { parent } : {}),
       watcher: fs.watch(eventsFile, () => this.readEvents(session)),
     };
     this.sessions.set(id, session);
@@ -235,7 +243,7 @@ export class SessionManager {
     if (!own) return null;
     return [...this.sessions.values()]
       .filter((s) => sameDirs(s.dirs, own.dirs))
-      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, remote }) => ({
+      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, remote, parent }) => ({
         id,
         dirs,
         cwd,
@@ -244,6 +252,7 @@ export class SessionManager {
         lastAnswer,
         queued: outbox.length,
         ...(remote ? { host: remote.host, ...(remote.online ? {} : { link: 'offline' as const }) } : {}),
+        ...(parent !== undefined ? { parent } : {}),
       }));
   }
 
@@ -375,11 +384,13 @@ export class SessionManager {
       id,
       term: options.term,
       remote: options.remote,
+      ...(options.remote.spawnedBy !== undefined ? { parent: options.remote.spawnedBy } : {}),
       offset: 0,
       cwd: options.cwd,
       dirs: options.dirs,
       state: 'starting',
       outbox: [],
+      context: {},
       lastEventAt: Date.now(),
     });
     return id;
@@ -421,6 +432,26 @@ export class SessionManager {
     if (online) this.scheduleOutbox(session);
   }
 
+  /** Номер сессии, открывшей эту; null - открыл человек либо сессии нет. */
+  parentOf(id: number): number | null {
+    return this.sessions.get(id)?.parent ?? null;
+  }
+
+  /**
+   * Итог локальной дочерней (report_done): один за круг работы, в очередь открывшей сессии;
+   * её уже нет - уведомлением рабочего стола. Удалённую ведёт RemoteSessions.
+   */
+  reportLocal(id: number, report: { status: string; summary: string; branch?: string; pr?: string }): string {
+    const session = this.sessions.get(id);
+    if (!session || session.remote || session.parent === undefined) throw new Error('report_done есть только у сессии, открытой другой сессией');
+    if (session.reported) throw new Error(REPORTED_ERROR);
+    session.reported = true;
+    if (!this.enqueue(session.parent, reportText(id, undefined, report))) {
+      this.emit('remote:report', { id, title: `CC${id}`, body: reportNote(report) });
+    }
+    return REPORT_ACCEPTED;
+  }
+
   remoteOf(id: number): RemoteMeta | null {
     return this.sessions.get(id)?.remote ?? null;
   }
@@ -453,6 +484,21 @@ export class SessionManager {
     events.forEach((event, i) => this.apply(session, event, !replay || i === events.length - 1));
   }
 
+  /** Название и первый запрос берутся из журнала: у продолженной сессии постановка задачи была в прошлом запуске. */
+  private noteContext(session: Session, event: SessionEvent): void {
+    const context = session.context;
+    const before = JSON.stringify(context);
+    const name = event.hook_event_name;
+    if (name === 'UserPromptSubmit') notePrompt(context, event.prompt);
+    // Журнал удалённой сессии лежит на хосте.
+    if (!session.remote && event.transcript_path && (name === 'SessionStart' || name === 'Stop')) {
+      const facts = readJournalFacts(event.transcript_path);
+      if (facts?.named) context.title = facts.named;
+      if (facts?.firstPrompt) context.first = clipPrompt(facts.firstPrompt);
+    }
+    if (JSON.stringify(context) !== before) this.emit('session:context', { id: session.id, ...context });
+  }
+
   private apply(session: Session, event: SessionEvent, notify: boolean): void {
     if (event.cwd && event.cwd !== session.cwd) {
       session.cwd = event.cwd;
@@ -460,11 +506,12 @@ export class SessionManager {
     }
     if (notify) this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
     session.lastEventAt = Date.now();
-    if (session.child && event.session_id && event.session_id !== session.childSid) {
+    if (session.parent !== undefined && !session.remote && event.session_id && event.session_id !== session.childSid) {
       session.childSid = event.session_id;
       this.onChild?.(event.session_id);
     }
     track(session, event);
+    this.noteContext(session, event);
     this.scheduleOutbox(session);
     if (event.hook_event_name === 'Stop') {
       // Кнопки относятся к последнему ответу: Stop без них снимает прежние (модель проснулась после фоновой задачи и ответила текстом).
@@ -475,9 +522,10 @@ export class SessionManager {
       }
     } else if (event.hook_event_name === 'UserPromptSubmit') {
       session.suggested = false;
+      session.reported = false;
     } else if (
       session.suggested &&
-      ((event.hook_event_name === 'PostToolUse' && !event.agent_id) || (event.hook_event_name === 'Notification' && waitingReason(event)))
+      ((isToolEvent(event.hook_event_name) && !event.agent_id) || (event.hook_event_name === 'Notification' && waitingReason(event)))
     ) {
       // Модель снова работает без запроса человека либо стоит на вопросе: кнопка с submit отправила бы Enter в чужой диалог.
       this.emit('session:suggest', { id: session.id, buttons: [] });
