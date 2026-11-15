@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AllowedPaths } from './allowed-paths';
+import { shellQuote } from '../shared/shell-quote';
 import { CONTROL } from './commands';
 import { sessionEnv } from './sessions';
 import { terminalLaunch, type IsExec } from './run-terminal';
@@ -71,7 +72,37 @@ export function hashFile(file: string): Promise<string> {
 
 /** Только для показа: к исполнению эта строка отношения не имеет. */
 export function displayCommand(command: string[]): string {
-  return command.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replaceAll("'", "'\\''")}'`)).join(' ');
+  return command.map(shellQuote).join(' ');
+}
+
+/** Окно сообщений главного процесса в той части, что нужна запуску: тест подставляет свой. */
+export type Tell = (options: {
+  type: 'warning' | 'error';
+  message: string;
+  detail?: string;
+  buttons?: string[];
+  defaultId?: number;
+  cancelId?: number;
+}) => Promise<{ response: number }>;
+
+/** Порт confirm: «Отмена» - кнопка по умолчанию и по Esc, «Запустить» - единственный путь к true. */
+export function runConfirm(tell: Tell): (warning: RunWarning) => Promise<boolean> {
+  return async (warning) => {
+    const { response } = await tell({ type: 'warning', buttons: ['Отмена', 'Запустить'], defaultId: 0, cancelId: 0, ...warningText(warning) });
+    return response === 1;
+  };
+}
+
+/** Обработчик канала file:run: ошибка ответа и исключение показываются окном «Файл не запущен». */
+export function runChannel(run: (file: unknown) => Promise<RunReply>, tell: Tell): (file: unknown) => Promise<void> {
+  return async (file) => {
+    try {
+      const reply = await run(file);
+      if ('error' in reply) await tell({ type: 'error', message: 'Файл не запущен', detail: reply.error });
+    } catch (error) {
+      await tell({ type: 'error', message: 'Файл не запущен', detail: (error as Error).message });
+    }
+  };
 }
 
 export interface RunWarning {

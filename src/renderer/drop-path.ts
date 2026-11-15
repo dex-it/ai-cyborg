@@ -1,12 +1,9 @@
+import { shellQuote } from '../shared/shell-quote';
+
 /** Тип dataTransfer, которым строка дерева отдаёт свой абсолютный путь. */
 export const TREE_PATH_MIME = 'application/x-cyborg-path';
 
-const SAFE = /^[A-Za-z0-9_@%+=:,./-]+$/;
-
-/** Как shlex.quote: безопасный путь как есть, иначе в одинарных кавычках, внутренняя кавычка - '\''. */
-export function shellQuote(path: string): string {
-  return SAFE.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
-}
+export { shellQuote };
 
 const CONTROL = /[\x00-\x1f\x7f]/;
 

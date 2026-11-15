@@ -9,7 +9,7 @@ import { CommandStore } from './command-store';
 import { savePromptsText } from './prompts';
 import { PromptStore } from './prompt-store';
 import { RunApprovals } from './run-approvals';
-import { createRunHandlers, warningText } from './run-file';
+import { createRunHandlers, runChannel, runConfirm } from './run-file';
 import { launchAndWait } from './run-terminal';
 import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile, walkFiles, writeTextFile } from './files';
@@ -210,12 +210,10 @@ const allowedPaths = new AllowedPaths(() => [...projects.load().projects.flatMap
 const runs = createRunHandlers({
   allowed: allowedPaths,
   approvals: runApprovals,
-  confirm: async (warning) => {
-    const { response } = await tell({ type: 'warning', buttons: ['Отмена', 'Запустить'], defaultId: 0, cancelId: 0, ...warningText(warning) });
-    return response === 1;
-  },
+  confirm: runConfirm((options) => tell(options)),
   launch: (cmd, args, options) => (process.platform === 'darwin' ? launchAndWait(cmd, args) : launchInstance(spawn as unknown as SpawnFn, cmd, args, options)),
 });
+const runFileChannel = runChannel(runs.run, (options) => tell(options));
 const paths = createPathHandlers({
   allowed: allowedPaths,
   liveDirs: () => sessions.liveDirs(),
@@ -629,14 +627,7 @@ ipcMain.handle('hubs:change', (_event, op: unknown) => {
 });
 ipcMain.handle('hubs:fetch', (_event, id: unknown, force: unknown) => extensions.hubFetch(id, force));
 ipcMain.handle('file:runnable', (_event, file: unknown) => runs.runnable(file));
-ipcMain.handle('file:run', async (_event, file: unknown) => {
-  try {
-    const reply = await runs.run(file);
-    if ('error' in reply) await tell({ type: 'error', message: 'Файл не запущен', detail: reply.error });
-  } catch (error) {
-    await tell({ type: 'error', message: 'Файл не запущен', detail: (error as Error).message });
-  }
-});
+ipcMain.handle('file:run', (_event, file: unknown) => runFileChannel(file));
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('fs:write', (_event, request: unknown) => paths.write(request));
 ipcMain.on('edits:unsaved', (_event, count: unknown) => {

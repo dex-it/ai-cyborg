@@ -10,6 +10,7 @@ import { basename, byId, el } from './dom';
 import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
 import { moveItem } from './reorder';
+import { addRunButton } from './run-button';
 import { clickSelection, sessionsCount } from './selection';
 import { windowTitle } from './title';
 import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
@@ -609,18 +610,8 @@ function fileHeader(path: string, root: TreeRoot, actions: HTMLElement, remote =
   reveal.title = 'Открыть файл приложением системы по умолчанию';
   reveal.addEventListener('click', () => void api.openPath(path));
   header.append(el('span', 'file-root', root.label), name, actions);
-  if (!remote) {
-    header.append(reveal);
-    const run = el('button', 'file-run', '▶ Запустить в терминале');
-    run.title = 'Запустить файл в системном терминале';
-    run.addEventListener('click', () => void api.runFile(path));
-    void api.runnable(path).then(
-      (ok) => {
-        if (ok) reveal.before(run);
-      },
-      () => undefined,
-    );
-  }
+  if (!remote) header.append(reveal);
+  addRunButton<HTMLElement>(path, remote, api, reveal, (label) => el('button', 'file-run', label));
   return header;
 }
 

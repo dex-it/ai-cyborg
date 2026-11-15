@@ -109,9 +109,9 @@ export function terminalLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv
 }
 
 /** osascript живёт, пока Terminal не принял команду; отказ в разрешении на управление Terminal приходит в stderr. */
-export function launchAndWait(cmd: string, args: string[]): Promise<{ error?: string }> {
+export function launchAndWait(cmd: string, args: string[], exec: typeof execFile = execFile): Promise<{ error?: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 120_000 }, (error, _stdout, stderr) => {
+    exec(cmd, args, { timeout: 120_000 }, (error, _stdout, stderr) => {
       resolve(error ? { error: String(stderr).trim() || error.message } : {});
     });
   });

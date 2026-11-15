@@ -6,8 +6,9 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { AllowedPaths } from '../src/main/allowed-paths';
 import { RunApprovals } from '../src/main/run-approvals';
-import { createRunHandlers, displayCommand, runnableOf, warningText, type RunDeps, type RunWarning } from '../src/main/run-file';
-import { findTerminal, RUN_SCRIPT, terminalLaunch, TERMINALS } from '../src/main/run-terminal';
+import { createRunHandlers, displayCommand, runChannel, runConfirm, runnableOf, warningText, type RunReply, type Tell, type RunDeps, type RunWarning } from '../src/main/run-file';
+import { findTerminal, launchAndWait, RUN_SCRIPT, terminalLaunch, TERMINALS } from '../src/main/run-terminal';
+import { addRunButton, RUN_LABEL } from '../src/renderer/run-button';
 import { INHERITED_SESSION_VARS } from '../src/main/sessions';
 
 let base: string;
@@ -203,6 +204,19 @@ describe('findTerminal и terminalLaunch', () => {
     assert.equal(r.args.filter((a) => a.includes('PWNED')).length, 1);
   });
 
+  it('x-terminal-emulator - ссылка: форма по имени цели, не по имени ссылки', () => {
+    const bin = path.join(base, 'bin');
+    fs.mkdirSync(bin);
+    for (const [target, head] of [['kitty', []], ['wezterm', ['start', '--']], ['gnome-terminal', ['--']]] as const) {
+      const real = write(`real/${target}`, '', 0o755);
+      const link = path.join(bin, 'x-terminal-emulator');
+      fs.rmSync(link, { force: true });
+      fs.symlinkSync(real, link);
+      const r = terminalLaunch('linux', { PATH: bin, SHELL: '/bin/sh' }, '/d', ['/d/f'], (f) => f === link);
+      assert.deepEqual(r, { cmd: link, args: [...head, '/bin/sh', '-lc', RUN_SCRIPT, 'cyborg-run', '/d', '/d/f'] }, target);
+    }
+  });
+
   it('win32 - не поддерживается', () => {
     assert.ok('error' in terminalLaunch('win32', {}, '/d', ['x']));
   });
@@ -232,6 +246,40 @@ describe('RUN_SCRIPT', () => {
     const r = sh(dir, ['bash', f]);
     assert.match(r.stdout, /ran-ok/);
     assert.equal(fs.existsSync(path.join(dir, 'PWNED')), false);
+  });
+
+  it('Ctrl-C завершает файл, но не оболочку: код 130 и ожидание Enter (под pty)', { skip: spawnSync('python3', ['--version']).status !== 0 }, () => {
+    const probe = [
+      'import os, pty, select, sys, time',
+      'script, cwd = sys.argv[1], sys.argv[2]',
+      'pid, fd = pty.fork()',
+      'if pid == 0:',
+      "    os.execvp('bash', ['bash', '-c', script, 'cyborg-run', cwd, 'bash', '-c', 'echo started; sleep 30'])",
+      "out = b''",
+      'def pump(marker):',
+      '    global out',
+      '    end = time.time() + 8',
+      '    while marker not in out and time.time() < end:',
+      '        if select.select([fd], [], [], 0.1)[0]:',
+      '            try:',
+      '                chunk = os.read(fd, 4096)',
+      '            except OSError:',
+      '                return',
+      '            if not chunk:',
+      '                return',
+      '            out += chunk',
+      "pump(b'started')",
+      "os.write(fd, b'\\x03')",
+      "pump('Enter'.encode())",
+      'alive = os.waitpid(pid, os.WNOHANG)[0] == 0',
+      "os.write(fd, b'\\n') if alive else None",
+      'time.sleep(1)',
+      'closed = os.waitpid(pid, os.WNOHANG)[0] != 0 if alive else False',
+      "sys.stdout.write(out.decode('utf8', 'replace') + '\\nALIVE=%s CLOSED=%s' % (alive, closed))",
+    ].join('\n');
+    const r = spawnSync('python3', ['-I', '-c', probe, RUN_SCRIPT, base], { encoding: 'utf8', timeout: 30_000, env: { PATH: process.env.PATH } });
+    assert.match(r.stdout, /\[Код выхода 130\]/, r.stdout + r.stderr);
+    assert.match(r.stdout, /ALIVE=True CLOSED=True/);
   });
 
   it('каталога нет - сообщение, не запуск', () => {
@@ -360,17 +408,25 @@ describe('createRunHandlers', () => {
     assert.equal(fs.existsSync(approvals.file), false);
   });
 
-  it('команда изменилась, пока открыт диалог (shebang убран): отказ', async () => {
-    const f = write('repo/s', '#!/bin/sh\n');
+  it('содержимое то же, команда другая (снят бит): отказ, без запуска и одобрения', { skip: isRoot }, async () => {
+    const f = write('repo/s.sh', 'echo hi\n', 0o755);
     answer = () => {
-      fs.writeFileSync(f, '#!/bin/sh\n');
       fs.chmodSync(f, 0o644);
-      fs.renameSync(f, `${f}.x`);
-      write('repo/s', '#!/bin/bash\n');
       return true;
     };
-    assert.ok('error' in (await handlers().run(f)));
+    const r = await handlers().run(f);
+    assert.deepEqual(confirms[0].command, [f]);
+    assert.deepEqual(r, { error: 'Файл изменился, пока вы решали: запуск отменён' });
     assert.equal(launches.length, 0);
+    assert.equal(fs.existsSync(approvals.file), false);
+  });
+
+  it('бит есть, права чтения нет: «Файл не прочитан», без диалога, запуска и одобрения', { skip: isRoot }, async () => {
+    const f = write('repo/n', 'x', 0o111);
+    const r = await handlers().run(f);
+    assert.ok('error' in r && /^Файл не прочитан/.test(r.error), JSON.stringify(r));
+    assert.equal(confirms.length + launches.length, 0);
+    assert.equal(fs.existsSync(approvals.file), false);
   });
 
   it('путь вне разрешённых и ссылка наружу - отказ без диалога и запуска', async () => {
@@ -454,5 +510,96 @@ describe('createRunHandlers', () => {
     assert.equal(await h.runnable(script()), true);
     assert.equal(await h.runnable(write('repo/a.ts', 'x')), false);
     assert.equal(await h.runnable(repo), false);
+  });
+});
+
+describe('порт confirm и канал file:run', () => {
+  const warning: RunWarning = { file: '/d/a.sh', dir: '/d', command: ['bash', '/d/a.sh'], changed: false };
+  const tellWith = (response: number, calls: Parameters<Tell>[0][] = []): Tell => async (options) => {
+    calls.push(options);
+    return { response };
+  };
+
+  it('true только при «Запустить»; «Отмена» и Esc - false; по умолчанию и по Esc «Отмена»', async () => {
+    const calls: Parameters<Tell>[0][] = [];
+    assert.equal(await runConfirm(tellWith(1, calls))(warning), true);
+    assert.equal(await runConfirm(tellWith(0))(warning), false);
+    assert.equal(calls[0].type, 'warning');
+    assert.deepEqual(calls[0].buttons, ['Отмена', 'Запустить']);
+    assert.equal(calls[0].defaultId, 0);
+    assert.equal(calls[0].cancelId, 0);
+    assert.ok(calls[0].detail?.includes('/d/a.sh'));
+  });
+
+  it('ошибка ответа и исключение показываются окном, успех и отмена - нет', async () => {
+    const calls: Parameters<Tell>[0][] = [];
+    const tell = tellWith(0, calls);
+    await runChannel(async () => ({ ok: true }), tell)('/f');
+    await runChannel(async () => ({ cancelled: true }), tell)('/f');
+    assert.equal(calls.length, 0);
+    await runChannel(async (): Promise<RunReply> => ({ error: 'плохо' }), tell)('/f');
+    await runChannel(async () => {
+      throw new Error('вне');
+    }, tell)('/f');
+    assert.deepEqual(calls.map((c) => [c.type, c.message, c.detail]), [
+      ['error', 'Файл не запущен', 'плохо'],
+      ['error', 'Файл не запущен', 'вне'],
+    ]);
+  });
+});
+
+describe('launchAndWait', () => {
+  it('stderr процесса попадает в ошибку, успех - пустой ответ', async () => {
+    assert.deepEqual(await launchAndWait(process.execPath, ['-e', 'console.error("нет разрешения");process.exit(1)']), { error: 'нет разрешения' });
+    assert.deepEqual(await launchAndWait(process.execPath, ['-e', '0']), {});
+    const silent = await launchAndWait(process.execPath, ['-e', 'process.exit(3)']);
+    assert.ok(silent.error);
+  });
+});
+
+describe('кнопка запуска в шапке', () => {
+  const fake = () => {
+    const events: string[] = [];
+    const button = { title: '', label: '', listener: () => undefined as void, addEventListener(_t: 'click', l: () => void) { this.listener = l; } };
+    const reveal = { before: (b: unknown) => void events.push(b === button ? 'before-reveal' : 'other') };
+    return { events, button, reveal, make: (label: string) => ((button.label = label), button) };
+  };
+  const apiOf = (ok: boolean | Error, calls: string[] = []) => ({
+    runnable: async (f: string) => {
+      calls.push(`runnable:${f}`);
+      if (ok instanceof Error) throw ok;
+      return ok;
+    },
+    runFile: async (f: string) => void calls.push(`run:${f}`),
+  });
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('запускаемый файл локальной сессии: кнопка перед «Открыть в системе», клик запускает', async () => {
+    const f = fake();
+    const calls: string[] = [];
+    addRunButton('/a.sh', false, apiOf(true, calls), f.reveal, f.make);
+    await settle();
+    assert.deepEqual(f.events, ['before-reveal']);
+    assert.equal(f.button.label, RUN_LABEL);
+    f.button.listener();
+    assert.deepEqual(calls, ['runnable:/a.sh', 'run:/a.sh']);
+  });
+
+  it('незапускаемый файл и отказ канала: кнопки нет', async () => {
+    for (const ok of [false, new Error('вне')]) {
+      const f = fake();
+      addRunButton('/a.ts', false, apiOf(ok), f.reveal, f.make);
+      await settle();
+      assert.deepEqual(f.events, []);
+    }
+  });
+
+  it('удалённая сессия: канал не вызывается, кнопки нет', async () => {
+    const f = fake();
+    const calls: string[] = [];
+    addRunButton('/a.sh', true, apiOf(true, calls), f.reveal, f.make);
+    await settle();
+    assert.deepEqual(calls, []);
+    assert.deepEqual(f.events, []);
   });
 });
