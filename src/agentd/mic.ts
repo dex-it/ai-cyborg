@@ -122,17 +122,22 @@ export async function arecord(args: string[], env: NodeJS.ProcessEnv, own: strin
   }
   const out = target === '-' ? process.stdout : fs.createWriteStream(target);
   return new Promise((resolve) => {
+    let done = false;
+    // Файл дописывается в пуле потоков: выход раньше его 'close' (process.exit в agentd) обрезает запись.
     const finish = (code: number): void => {
+      if (done) return;
+      done = true;
       socket.destroy();
-      resolve(code);
+      if (out === process.stdout || out.closed) return resolve(code);
+      out.once('close', () => resolve(code));
+      out.end();
     };
     process.once('SIGTERM', () => finish(0));
     process.once('SIGINT', () => finish(0));
     out.on('error', () => finish(0));
     if (head.rest.length) out.write(head.rest);
     socket.pipe(out);
-    // pipe сам закрывает файл по концу потока; выход раньше close обрезал бы запись.
-    socket.on('end', () => (out === process.stdout ? finish(0) : out.once('close', () => finish(0))));
+    socket.on('end', () => finish(0));
     socket.on('error', () => finish(1));
   });
 }

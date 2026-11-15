@@ -190,7 +190,6 @@ describe('микрофон: подставной arecord', () => {
     const out = path.join(dir, 'out.raw');
     assert.equal(await arecord(['-f', 'S16_LE', '-r', '16000', '-c', '1', '-t', 'raw', '-q', out], env, dir), 0);
     assert.deepEqual(asked, ['probe', 'record']);
-    for (let i = 0; i < 50 && fs.readFileSync(out, 'utf8') !== 'PCMDATA'; i++) await new Promise((r) => setTimeout(r, 10));
     assert.equal(fs.readFileSync(out, 'utf8'), 'PCMDATA');
   });
 

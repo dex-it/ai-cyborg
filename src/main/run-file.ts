@@ -137,7 +137,7 @@ export function registerRunChannels(
   handle('file:run', (_event, file) => runFile(file));
 }
 
-export type RunReply ={ ok: true } | { cancelled: true } | { error: string };
+export type RunReply = { ok: true } | { cancelled: true } | { error: string };
 
 export interface RunDeps {
   allowed: AllowedPaths;
