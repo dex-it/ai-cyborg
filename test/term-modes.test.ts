@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DecModes } from '../src/agentd/term-modes';
 import { OSC52_USER_WINDOW_MS, osc52Allowed, osc52Text } from '../src/renderer/osc52';
+import { RemotePaste } from '../src/renderer/remote-paste';
 
 const fed = (...chunks: string[]): string => {
   const m = new DecModes();
@@ -50,5 +51,26 @@ describe('osc52Text: запись в буфер обмена из OSC 52', () =>
     assert.equal(osc52Allowed(true, 1001 + OSC52_USER_WINDOW_MS, 1000), false, 'вывод без действия человека буфер не подменяет');
     assert.equal(osc52Allowed(false, 1100, 1000), false, 'терминал не в фокусе');
     assert.equal(osc52Allowed(true, 1000, -Infinity), false, 'человек ещё ничего не нажимал');
+  });
+});
+
+describe('RemotePaste: вставка по правому клику в удалённой сессии', () => {
+  it('без выделения Claude окно вставляет само, по выделению - нет', () => {
+    const paste = new RemotePaste();
+    assert.equal(paste.rightClick(true), true);
+    paste.copied();
+    assert.equal(paste.rightClick(true), false, 'правый клик по выделению только снимает его');
+    assert.equal(paste.rightClick(true), true, 'выделение уже снято: следующий правый клик вставляет');
+  });
+
+  it('клик левой кнопкой или клавиша снимают выделение', () => {
+    const paste = new RemotePaste();
+    paste.copied();
+    paste.reset();
+    assert.equal(paste.rightClick(true), true);
+  });
+
+  it('мышь не отдана программе - правый клик ничего не вставляет', () => {
+    assert.equal(new RemotePaste().rightClick(false), false);
   });
 });
