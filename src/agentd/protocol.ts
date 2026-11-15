@@ -101,7 +101,8 @@ export interface SessionMeta {
   keep: boolean;
   spawnedBy?: number;
   branch: string;
-  clones: { name: string; path: string }[];
+  /** Пути клонов всех репозиториев проекта; при старте есть только клон выбранного, остальные агент клонирует сам по url. */
+  clones: { name: string; path: string; url?: string }[];
   /** Клон выбранного репозитория: стартовый cwd. */
   cwd: string;
   port: number;

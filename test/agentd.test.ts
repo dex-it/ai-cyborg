@@ -32,29 +32,36 @@ const spawnMsg = (over: Partial<SpawnMsg> = {}): Msg =>
     ...over,
   }) as Msg;
 
-async function open(r: Rig, over: Partial<SpawnMsg> = {}, instance = 'inst-1') {
+/** Демон клонирует только рабочий репозиторий; остальные после запуска клонирует агент - здесь он это уже сделал. */
+async function open(r: Rig, over: Partial<SpawnMsg> = {}, instance = 'inst-1', agentClones = true) {
   const c = client();
   const conn = r.daemon.connect(c);
   conn.receive({ type: 'hello', rid: 0, proto: 1, instance, fwd: undefined } as Msg);
   const before = r.spawned.length;
-  conn.receive(spawnMsg(over));
+  const msg = spawnMsg(over) as Msg & SpawnMsg;
+  conn.receive(msg);
   await until(() => r.spawned.length > before || c.of('exit').length > 0 || c.of('error').length > 0);
-  return { c, conn, sid: (over.sid ?? 'aaaaaaaa-1') as string };
+  if (agentClones && r.spawned.length > before) {
+    for (const [i, repo] of msg.repos.entries()) if (i !== msg.selected) fs.mkdirSync(path.join(r.home, '.cyborg', 'work', msg.sid, repo.name), { recursive: true });
+  }
+  return { c, conn, sid: msg.sid };
 }
 
 describe('daemon: запуск сессии', () => {
-  it('клонирует все репозитории, рабочий - на ветке, запускает script с cwd выбранного клона', async (t) => {
+  it('клонирует только выбранный репозиторий, рабочий - на ветке, запускает script с cwd его клона', async (t) => {
     const r = rig(t);
     r.answers['ls-remote'] = { code: 2 };
-    const { sid } = await open(r, { selected: 1 });
+    const { sid } = await open(r, { selected: 1 }, 'inst-1', false);
     const work = path.join(r.home, '.cyborg', 'work', sid);
     const clones = r.execs.filter((e) => e.args[0] === 'clone');
-    assert.deepEqual(clones.map((e) => e.args.slice(1)), [['--', 'git@h:o/a.git', path.join(work, 'a')], ['--', 'git@h:o/b.git', path.join(work, 'b')]]);
+    assert.deepEqual(clones.map((e) => e.args.slice(1)), [['--', 'git@h:o/b.git', path.join(work, 'b')]]);
+    assert.equal(fs.existsSync(path.join(work, 'a')), false, 'остальные репозитории демон не клонирует');
     assert.ok(r.execs.some((e) => e.args.join(' ') === 'switch -c feat/x' && e.cwd === path.join(work, 'b')), 'нет ветки в origin - switch -c в клоне выбранного');
     assert.equal(r.spawned[0].file, 'script');
     assert.equal(r.spawned[0].cwd, path.join(work, 'b'));
     const launch = fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', sid, 'launch.sh'), 'utf8');
-    assert.ok(launch.includes(`'--add-dir' '${path.join(work, 'a')}'`), 'остальные клоны - через --add-dir');
+    assert.ok(launch.includes(`'--add-dir' '${work}'`), 'каталог сессии - через --add-dir: покрывает клоны, которые агент сделает потом');
+    assert.ok(launch.includes(`a: git clone -- '\\''git@h:o/a.git'\\'' '\\''${path.join(work, 'a')}'\\''`), 'промпт называет адрес и каталог остального репозитория');
     assert.ok(launch.includes(`'задание с '\\''кавычкой'\\'''`), 'одинарная кавычка экранирована');
   });
 
@@ -73,6 +80,27 @@ describe('daemon: запуск сессии', () => {
     const argv = run.stdout.trimEnd().split('\n');
     assert.deepEqual(argv.slice(0, 4), ['--settings', 's.json', '--mcp-config', 'm.json']);
     assert.ok(argv.includes('задание с \'кавычкой\' и $HOME'));
+  });
+
+  it('--add-dir: каждый уже склонированный репозиторий отдельно (его .claude/ подключается только так), каталог сессии - пока склонированы не все', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const sid = 'aaaaaaaa-3';
+    const work = path.join(r.home, '.cyborg', 'work', sid);
+    fs.mkdirSync(path.join(work, 'b'), { recursive: true });
+    const repos = [
+      { local: '/loc/a', url: 'git@h:o/a.git', name: 'a' },
+      { local: '/loc/b', url: 'git@h:o/b.git', name: 'b' },
+      { local: '/loc/c', url: 'git@h:o/c.git', name: 'c' },
+    ];
+    const { c, conn } = await open(r, { sid, repos }, 'inst-1', false);
+    const launch = () => fs.readFileSync(path.join(sessDir(r, sid), 'launch.sh'), 'utf8');
+    assert.ok(launch().includes(`'--add-dir' '${path.join(work, 'b')}' '${work}'`), launch());
+    fs.mkdirSync(path.join(work, 'c'));
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    assert.ok(launch().includes(`'--add-dir' '${path.join(work, 'b')}' '${path.join(work, 'c')}'`), launch());
+    assert.equal(launch().includes(`'${work}'`), false, 'все склонированы - каталог сессии не нужен');
   });
 
   it('ветка есть в origin - switch <ветка>; один репозиторий - без --add-dir', async (t) => {
@@ -101,9 +129,9 @@ describe('daemon: запуск сессии', () => {
     assert.equal('CLAUDECODE' in r.spawned[0].env, false);
   });
 
-  it('ошибка clone: готовые клоны убраны, сессия получает exit с причиной, вызвавшему - ended failed', async (t) => {
+  it('ошибка clone: клон убран, сессия получает exit с причиной, вызвавшему - ended failed', async (t) => {
     const r = rig(t);
-    r.answers['b.git'] = { code: 128, stderr: 'fatal: repository not found' };
+    r.answers['a.git'] = { code: 128, stderr: 'fatal: repository not found' };
     const { c, sid } = await open(r);
     await until(() => c.of('exit').length > 0);
     assert.match(String(c.of('exit')[0].reason), /repository not found/);
@@ -348,6 +376,19 @@ describe('daemon: report и close', () => {
     assert.deepEqual((c.of('close')[0].removed as string[]).sort(), [path.join(work, 'a'), path.join(work, 'b')]);
     assert.equal(fs.existsSync(path.join(work, 'a')), false);
     assert.ok(r.killed.includes('SIGTERM'));
+  });
+
+  it('close: каталог, который агент положил не под отведённым именем, проверяется как клон и с незапушенным остаётся', async (t) => {
+    const r = rig(t);
+    const { c, conn, sid } = await open(r);
+    const stray = path.join(r.home, '.cyborg', 'work', sid, 'b-copy');
+    fs.mkdirSync(stray);
+    r.answers['rev-list'] = { stdout: '1\n' };
+    conn.receive({ type: 'close', rid: 7, sid, keep: false } as Msg);
+    await until(() => c.of('close').length === 1);
+    const kept = c.of('close')[0].kept as { path: string; reason: string }[];
+    assert.ok(kept.some((k) => k.path === stray && k.reason === 'незапушенные коммиты'), JSON.stringify(kept));
+    assert.ok(fs.existsSync(stray));
   });
 
   for (const [name, key, answer, reason] of [
@@ -759,7 +800,7 @@ describe('daemon: перезапуск', () => {
 
   it('ошибка клона при старте: итог переживает перезапуск демона до ack', async (t) => {
     const r = rig(t);
-    r.answers['clone -- git@h:o/b.git'] = { code: 128, stderr: 'fatal: repository not found' };
+    r.answers['clone -- git@h:o/a.git'] = { code: 128, stderr: 'fatal: repository not found' };
     const { sid } = await open(r);
     await until(() => !!readMeta(r, sid).ended);
     r.daemon.stop();
@@ -767,7 +808,7 @@ describe('daemon: перезапуск', () => {
     await r2.daemon.init();
     const { c } = await reattach(r2, sid);
     assert.deepEqual(c.of('error'), []);
-    assert.match(String(c.of('ended')[0].reason), /git clone b: fatal: repository not found/);
+    assert.match(String(c.of('ended')[0].reason), /git clone a: fatal: repository not found/);
     assert.equal(c.of('exit').length, 1);
   });
 
@@ -1101,6 +1142,31 @@ describe('daemon: поиск в клонах', () => {
     assert.match(String((await ask({ type: 'search', mode: 'text', request: { root: '/etc', query: 'root', options } })).error), /вне каталогов/);
     assert.match(String((await ask({ type: 'search', mode: 'text', request: { root: clone, query: 'a\nb', options } })).error), /Некорректные/);
     assert.match(String((await ask({ type: 'search', mode: 'exec', request: { root: clone, query: 'a', options } })).error), /Некорректные/);
+  });
+
+  it('отведённый, но ещё не склонированный корень: поиск и дерево отвечают пусто, а не ошибкой', async (t) => {
+    const r = rig(t);
+    const { c, conn, sid } = await open(r, {}, 'inst-1', false);
+    const missing = path.join(r.home, '.cyborg', 'work', sid, 'b');
+    let rid = 400;
+    const ask = async (msg: { type: string } & Record<string, unknown>) => {
+      const id = rid++;
+      conn.receive({ ...msg, rid: id, sid } as Msg);
+      await until(() => c.got.some((m) => m.rid === id), 10_000);
+      return c.got.find((m) => m.rid === id) as Msg;
+    };
+    const options = { regex: false, caseSensitive: false, wholeWord: false };
+    for (const mode of ['text', 'changes']) {
+      const reply = await ask({ type: 'search', mode, request: { root: missing, query: 'alpha', options } });
+      assert.deepEqual(reply.value, { hits: [], truncated: false }, mode);
+    }
+    assert.deepEqual((await ask({ type: 'fs', op: 'files', path: missing })).value, []);
+    assert.deepEqual((await ask({ type: 'fs', op: 'list', path: missing })).value, []);
+    assert.deepEqual((await ask({ type: 'fs', op: 'status', path: missing })).value, {});
+    assert.equal((await ask({ type: 'fs', op: 'branch', path: missing })).value, null);
+    assert.match(String((await ask({ type: 'fs', op: 'read', path: missing })).error), /не склонирован/);
+    const other = path.join(r.home, '.cyborg', 'work', sid, 'zzz');
+    assert.match(String((await ask({ type: 'fs', op: 'list', path: other })).error), /ENOENT/, 'не отведённый путь - прежняя ошибка');
   });
 });
 
