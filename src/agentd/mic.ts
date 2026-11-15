@@ -131,7 +131,8 @@ export async function arecord(args: string[], env: NodeJS.ProcessEnv, own: strin
     out.on('error', () => finish(0));
     if (head.rest.length) out.write(head.rest);
     socket.pipe(out);
-    socket.on('end', () => finish(0));
+    // pipe сам закрывает файл по концу потока; выход раньше close обрезал бы запись.
+    socket.on('end', () => (out === process.stdout ? finish(0) : out.once('close', () => finish(0))));
     socket.on('error', () => finish(1));
   });
 }
