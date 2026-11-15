@@ -13,7 +13,7 @@ $SHELL -lc 'exec claude --settings "$CYBORG_SETTINGS" "$@"' cyborg <аргуме
 
 ## Хуки
 
-Через `--settings` Cyborg подключает к сессии свои хуки, не трогая ваших настроек Claude Code. Файл `claude-hooks.json` лежит в [каталоге данных](/concepts/data/); события `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop` и `Notification`. Каждый хук дописывает JSON события в файл этой сессии (`$CYBORG_EVENTS`).
+Через `--settings` Cyborg подключает к сессии свои хуки, не трогая ваших настроек Claude Code. Файл `claude-hooks.json` лежит в [каталоге данных](/concepts/data/); события `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Stop` и `Notification`. Каждый хук дописывает JSON события в файл этой сессии (`$CYBORG_EVENTS`).
 
 Cyborg следит за файлом и берёт из события четыре вещи:
 

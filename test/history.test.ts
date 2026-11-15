@@ -24,9 +24,10 @@ describe('история сессий', () => {
       line({ type: 'user', isMeta: true, message: { content: 'meta' } }),
       line({ type: 'user', message: { content: [{ type: 'text', text: '  почини\n дерево  ' }] } }),
     ].join('\n');
-    assert.deepEqual(journalFacts(head, ''), { interactive: true, title: 'почини дерево' });
+    assert.deepEqual(journalFacts(head, ''), { interactive: true, title: 'почини дерево', named: '', firstPrompt: 'почини\n дерево' });
     const tail = ['{"обрезано', line({ type: 'ai-title', aiTitle: 'AI' }), line({ type: 'custom-title', customTitle: 'Моё' })].join('\n');
     assert.equal(journalFacts(head, tail).title, 'Моё');
+    assert.equal(journalFacts(head, tail).named, 'Моё');
     assert.equal(journalFacts(head, line({ type: 'ai-title', aiTitle: 'AI' })).title, 'AI');
   });
 

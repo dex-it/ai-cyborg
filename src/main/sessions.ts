@@ -5,7 +5,8 @@ import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
-import { hookSettings, track, waitingReason, type SessionEvent, type SessionState } from './session-state.ts';
+import { clipPrompt, hookSettings, isToolEvent, notePrompt, track, waitingReason, type SessionContext, type SessionEvent, type SessionState } from './session-state.ts';
+import { readJournalFacts } from './history.ts';
 
 export { waitingReason, type SessionEvent, type SessionState };
 import { writeJsonAtomic } from './jsonfile.ts';
@@ -64,6 +65,7 @@ interface Session {
   state: SessionState;
   reason?: string;
   lastAnswer?: string;
+  context: SessionContext;
   /** Сообщения других сессий, ждущие конца хода: в работающую сессию не пишем, Enter мог бы попасть в её запрос разрешения. */
   outbox: string[];
   outboxTimer?: NodeJS.Timeout;
@@ -186,6 +188,7 @@ export class SessionManager {
       dirs: [cwd, ...addDirs],
       state: 'starting',
       outbox: [],
+      context: {},
       lastEventAt: Date.now(),
       ...(child ? { child } : {}),
       watcher: fs.watch(eventsFile, () => this.readEvents(session)),
@@ -379,6 +382,7 @@ export class SessionManager {
       dirs: options.dirs,
       state: 'starting',
       outbox: [],
+      context: {},
       lastEventAt: Date.now(),
     });
     return id;
@@ -452,6 +456,21 @@ export class SessionManager {
     events.forEach((event, i) => this.apply(session, event, !replay || i === events.length - 1));
   }
 
+  /** Название и первый запрос берутся из журнала: у продолженной сессии постановка задачи была в прошлом запуске. */
+  private noteContext(session: Session, event: SessionEvent): void {
+    const context = session.context;
+    const before = JSON.stringify(context);
+    const name = event.hook_event_name;
+    if (name === 'UserPromptSubmit') notePrompt(context, event.prompt);
+    // Журнал удалённой сессии лежит на хосте.
+    if (!session.remote && event.transcript_path && (name === 'SessionStart' || name === 'Stop')) {
+      const facts = readJournalFacts(event.transcript_path);
+      if (facts?.named) context.title = facts.named;
+      if (facts?.firstPrompt) context.first = clipPrompt(facts.firstPrompt);
+    }
+    if (JSON.stringify(context) !== before) this.emit('session:context', { id: session.id, ...context });
+  }
+
   private apply(session: Session, event: SessionEvent, notify: boolean): void {
     if (event.cwd && event.cwd !== session.cwd) {
       session.cwd = event.cwd;
@@ -464,6 +483,7 @@ export class SessionManager {
       this.onChild?.(event.session_id);
     }
     track(session, event);
+    this.noteContext(session, event);
     this.scheduleOutbox(session);
     if (event.hook_event_name === 'Stop') {
       // Кнопки относятся к последнему ответу: Stop без них снимает прежние (модель проснулась после фоновой задачи и ответила текстом).
@@ -476,7 +496,7 @@ export class SessionManager {
       session.suggested = false;
     } else if (
       session.suggested &&
-      ((event.hook_event_name === 'PostToolUse' && !event.agent_id) || (event.hook_event_name === 'Notification' && waitingReason(event)))
+      ((isToolEvent(event.hook_event_name) && !event.agent_id) || (event.hook_event_name === 'Notification' && waitingReason(event)))
     ) {
       // Модель снова работает без запроса человека либо стоит на вопросе: кнопка с submit отправила бы Enter в чужой диалог.
       this.emit('session:suggest', { id: session.id, buttons: [] });
