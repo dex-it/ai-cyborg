@@ -43,7 +43,12 @@ export interface WorkspaceMenu {
   hostDisk(): void;
   search(mode: SearchMode): void;
   extensions(tab: ExtensionsTab): void;
+  openUrl(url: string): void;
 }
+
+export const DOCS_URL = 'https://dex-it.github.io/ai-cyborg/';
+export const HOTKEYS_URL = `${DOCS_URL}reference/hotkeys/`;
+export const ISSUES_URL = 'https://github.com/dex-it/ai-cyborg/issues';
 
 /**
  * Меню приложения без Reload и масштаба страницы. Перезагрузка интерфейса оставляла работающие сессии в главном процессе
@@ -52,6 +57,9 @@ export interface WorkspaceMenu {
  * окно, инструменты разработчика. Выход - не роль, а `quit`: вызывающий сначала спрашивает подтверждение, пока идут сессии.
  * Окна настроек нет, поэтому выключатель уведомлений о ждущих сессиях живёт в «Вид»; состояние галочки выставляет интерфейс.
  * Подписи заданы явно: стандартные роли Electron подписывает по-английски независимо от языка системы.
+ * Порядок разделов - по платформенным правилам (macOS HIG, GNOME, Windows): меню приложения на macOS, «Воркспейс» на месте
+ * «Файла», «Правка», «Вид», меню приложения («Поиск», «Расширения»), «Окно», «Справка». На Linux и Windows отдельного «Файла»
+ * нет: «Воркспейс» и есть он, выход - последним пунктом в нём, «О программе» - в «Справке».
  * «Воркспейс» ведёт воркспейсами и проектами («Открыть…» меняет воркспейс этого окна, завершая его сессии): проект выбирается на панели, а создаётся и правится отсюда; там же правка кнопок команд.
  */
 export function appMenuTemplate(
@@ -61,31 +69,45 @@ export function appMenuTemplate(
   workspace: WorkspaceMenu,
   notificationsEnabled = true,
 ): MenuItemConstructorOptions[] {
-  const notificationsItem: MenuItemConstructorOptions = {
-    id: NOTIFICATIONS_MENU_ID,
-    label: 'Уведомления о ждущих сессиях',
-    type: 'checkbox',
-    checked: notificationsEnabled,
-    click: (item) => toggleNotifications(item.checked),
+  const mac = platform === 'darwin';
+  const quitItem: MenuItemConstructorOptions = { label: mac ? 'Завершить Cyborg' : 'Выход', accelerator: 'CmdOrCtrl+Q', click: quit };
+  const aboutItem: MenuItemConstructorOptions = { role: 'about', label: 'О программе Cyborg' };
+  const appMenu: MenuItemConstructorOptions = {
+    label: 'Cyborg',
+    submenu: [
+      aboutItem,
+      { type: 'separator' },
+      { role: 'services', label: 'Службы' },
+      { type: 'separator' },
+      { role: 'hide', label: 'Скрыть Cyborg' },
+      { role: 'hideOthers', label: 'Скрыть остальные' },
+      { role: 'unhide', label: 'Показать все' },
+      { type: 'separator' },
+      quitItem,
+    ],
   };
-  const quitItem: MenuItemConstructorOptions = { label: 'Выход', accelerator: 'CmdOrCtrl+Q', click: quit };
-  const first: MenuItemConstructorOptions =
-    platform === 'darwin'
-      ? {
-          label: 'Cyborg',
-          submenu: [
-            { role: 'about', label: 'О программе Cyborg' },
-            { type: 'separator' },
-            { role: 'services', label: 'Службы' },
-            { type: 'separator' },
-            { role: 'hide', label: 'Скрыть Cyborg' },
-            { role: 'hideOthers', label: 'Скрыть остальные' },
-            { role: 'unhide', label: 'Показать все' },
-            { type: 'separator' },
-            quitItem,
-          ],
-        }
-      : { label: 'Файл', submenu: [{ role: 'close', label: 'Закрыть окно' }, quitItem] };
+  const recent: MenuItemConstructorOptions[] = workspace.recent.length
+    ? workspace.recent.map((file) => ({ label: recentLabel(file, workspace.home), click: () => workspace.openRecent(file) }))
+    : [{ label: 'Нет недавних', enabled: false }];
+  const workspaceMenu: MenuItemConstructorOptions = {
+    label: 'Воркспейс',
+    submenu: [
+      { label: 'Создать…', click: () => workspace.create() },
+      { label: 'Открыть…', click: () => workspace.replace() },
+      { label: 'Открыть в новом окне…', click: () => workspace.open() },
+      { label: 'Недавние', submenu: recent },
+      { type: 'separator' },
+      { id: PROJECT_NEW_MENU_ID, label: 'Новый проект…', enabled: workspace.hasWorkspace, click: () => workspace.newProject() },
+      { id: PROJECT_PROPERTIES_MENU_ID, label: 'Свойства проекта…', enabled: workspace.hasProject, click: () => workspace.editProject() },
+      { type: 'separator' },
+      { id: COMMANDS_MENU_ID, label: 'Кнопки команд…', enabled: workspace.hasWorkspace, click: () => workspace.editCommands() },
+      { id: PROMPTS_MENU_ID, label: 'Промпты кнопок…', click: () => workspace.editPrompts() },
+      { type: 'separator' },
+      { id: CLAUDE_TOKEN_MENU_ID, label: 'Вход Claude на хостах…', click: () => workspace.claudeToken() },
+      { id: HOST_DISK_MENU_ID, label: 'Место на хостах…', enabled: workspace.hasProject, click: () => workspace.hostDisk() },
+      ...(mac ? [] : [{ type: 'separator' } as MenuItemConstructorOptions, quitItem]),
+    ],
+  };
   const editMenu: MenuItemConstructorOptions = {
     role: 'editMenu',
     label: 'Правка',
@@ -99,39 +121,21 @@ export function appMenuTemplate(
       { role: 'selectAll', label: 'Выделить всё' },
     ],
   };
-  const windowMenu: MenuItemConstructorOptions = {
-    role: 'windowMenu',
-    label: 'Окно',
-    submenu: [
-      { role: 'minimize', label: 'Свернуть' },
-      ...(platform === 'darwin' ? [{ role: 'zoom', label: 'Изменить масштаб окна' } as MenuItemConstructorOptions] : []),
-      { role: 'close', label: 'Закрыть окно' },
-    ],
-  };
-  const recent: MenuItemConstructorOptions[] = workspace.recent.length
-    ? workspace.recent.map((file) => ({ label: recentLabel(file, workspace.home), click: () => workspace.openRecent(file) }))
-    : [{ label: 'Нет недавних', enabled: false }];
-  const workspaceMenu: MenuItemConstructorOptions = {
-    label: 'Воркспейс',
-    submenu: [
-      { label: 'Открыть…', click: () => workspace.replace() },
-      { label: 'Открыть в новом окне…', click: () => workspace.open() },
-      { label: 'Создать…', click: () => workspace.create() },
-      { label: 'Недавние', submenu: recent },
-      { type: 'separator' },
-      { id: PROJECT_NEW_MENU_ID, label: 'Новый проект', enabled: workspace.hasWorkspace, click: () => workspace.newProject() },
-      { id: PROJECT_PROPERTIES_MENU_ID, label: 'Свойства проекта', enabled: workspace.hasProject, click: () => workspace.editProject() },
-      { type: 'separator' },
-      { id: COMMANDS_MENU_ID, label: 'Кнопки команд…', enabled: workspace.hasWorkspace, click: () => workspace.editCommands() },
-      { id: PROMPTS_MENU_ID, label: 'Промпты кнопок…', click: () => workspace.editPrompts() },
-      { type: 'separator' },
-      { id: CLAUDE_TOKEN_MENU_ID, label: 'Вход Claude на хостах…', click: () => workspace.claudeToken() },
-      { id: HOST_DISK_MENU_ID, label: 'Место на хостах…', enabled: workspace.hasProject, click: () => workspace.hostDisk() },
-    ],
-  };
   const viewMenu: MenuItemConstructorOptions = {
     label: 'Вид',
-    submenu: [notificationsItem, { type: 'separator' }, { role: 'toggleDevTools', label: 'Инструменты разработчика' }, { role: 'togglefullscreen', label: 'Во весь экран' }],
+    submenu: [
+      {
+        id: NOTIFICATIONS_MENU_ID,
+        label: 'Уведомления о ждущих сессиях',
+        type: 'checkbox',
+        checked: notificationsEnabled,
+        click: (item) => toggleNotifications(item.checked),
+      },
+      { type: 'separator' },
+      { role: 'togglefullscreen', label: 'Во весь экран' },
+      { type: 'separator' },
+      { role: 'toggleDevTools', label: 'Инструменты разработчика' },
+    ],
   };
   // Ctrl+P в терминале Linux - клавиша readline (предыдущая команда), поэтому там окно поиска вызывается с Shift.
   const searchMenu: MenuItemConstructorOptions = {
@@ -140,7 +144,7 @@ export function appMenuTemplate(
       {
         id: SEARCH_MENU_IDS.files,
         label: 'Найти файл…',
-        accelerator: platform === 'darwin' ? 'Cmd+P' : 'Ctrl+Shift+P',
+        accelerator: mac ? 'Cmd+P' : 'Ctrl+Shift+P',
         enabled: workspace.hasProject,
         click: () => workspace.search('files'),
       },
@@ -170,5 +174,26 @@ export function appMenuTemplate(
       { id: EXTENSIONS_MENU_IDS.hubs, label: 'Хабы магазинов…', enabled: workspace.hasProject, click: () => workspace.extensions('hubs') },
     ],
   };
-  return [first, workspaceMenu, editMenu, searchMenu, extensionsMenu, viewMenu, windowMenu];
+  const windowMenu: MenuItemConstructorOptions = {
+    role: 'windowMenu',
+    label: 'Окно',
+    submenu: [
+      { role: 'minimize', label: 'Свернуть' },
+      ...(mac ? [{ role: 'zoom', label: 'Изменить масштаб окна' } as MenuItemConstructorOptions] : []),
+      { role: 'close', label: 'Закрыть окно' },
+      ...(mac ? [{ type: 'separator' } as MenuItemConstructorOptions, { role: 'front', label: 'Все окна - на передний план' } as MenuItemConstructorOptions] : []),
+    ],
+  };
+  const helpMenu: MenuItemConstructorOptions = {
+    role: 'help',
+    label: 'Справка',
+    submenu: [
+      { label: 'Документация Cyborg', click: () => workspace.openUrl(DOCS_URL) },
+      { label: 'Клавиши', click: () => workspace.openUrl(HOTKEYS_URL) },
+      { type: 'separator' },
+      { label: 'Сообщить о проблеме', click: () => workspace.openUrl(ISSUES_URL) },
+      ...(mac ? [] : [{ type: 'separator' } as MenuItemConstructorOptions, aboutItem]),
+    ],
+  };
+  return [...(mac ? [appMenu] : []), workspaceMenu, editMenu, viewMenu, searchMenu, extensionsMenu, windowMenu, helpMenu];
 }
