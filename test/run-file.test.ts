@@ -6,8 +6,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { AllowedPaths } from '../src/main/allowed-paths';
 import { RunApprovals } from '../src/main/run-approvals';
-import { createRunHandlers, displayCommand, runChannel, runConfirm, runnableOf, warningText, type RunReply, type Tell, type RunDeps, type RunWarning } from '../src/main/run-file';
-import { findTerminal, launchAndWait, RUN_SCRIPT, terminalLaunch, TERMINALS } from '../src/main/run-terminal';
+import { createRunHandlers, displayCommand, registerRunChannels, runChannel, runConfirm, runnableOf, warningText, type RunReply, type Tell, type RunDeps, type RunWarning } from '../src/main/run-file';
+import { shellQuote, shQuote } from '../src/shared/shell-quote';
+import { shQuote as agentdShQuote } from '../src/agentd/protocol';
+import { findTerminal, launcherFor, launchAndWait, RUN_SCRIPT, terminalLaunch, TERMINALS } from '../src/main/run-terminal';
 import { addRunButton, RUN_LABEL } from '../src/renderer/run-button';
 import { INHERITED_SESSION_VARS } from '../src/main/sessions';
 
@@ -601,5 +603,49 @@ describe('кнопка запуска в шапке', () => {
     await settle();
     assert.deepEqual(calls, []);
     assert.deepEqual(f.events, []);
+  });
+});
+
+describe('кавычение слова для sh в одном месте', () => {
+  it('displayCommand, shellQuote и shQuote дают одно кавычение', () => {
+    assert.equal(shQuote("it's"), "'it'\\''s'");
+    assert.equal(agentdShQuote("it's"), shQuote("it's"));
+    assert.equal(shellQuote("a b'c"), shQuote("a b'c"));
+    assert.equal(displayCommand(['bash', "/d/a b'c.sh"]), `bash ${shQuote("/d/a b'c.sh")}`);
+    assert.equal(displayCommand(['bash', '/d/a.sh']), 'bash /d/a.sh');
+  });
+});
+
+describe('launcherFor и registerRunChannels', () => {
+  const options = { cwd: '/d', env: {} };
+  it('darwin ждёт osascript и не зовёт отрыв; linux отрывает и не зовёт osascript', async () => {
+    const calls: string[] = [];
+    const detached = async (cmd: string) => (calls.push(`detached:${cmd}`), {});
+    const waited = async (cmd: string) => (calls.push(`waited:${cmd}`), { error: 'нет' });
+    assert.deepEqual(await launcherFor('darwin', detached, waited)('osascript', [], options), { error: 'нет' });
+    assert.deepEqual(await launcherFor('linux', detached, waited)('kitty', [], options), {});
+    assert.deepEqual(calls, ['waited:osascript', 'detached:kitty']);
+  });
+
+  it('регистрирует file:runnable и file:run, каждому свой обработчик с одним аргументом-путём', () => {
+    const handlers = new Map<string, (event: unknown, file: unknown) => unknown>();
+    registerRunChannels((channel, listener) => void handlers.set(channel, listener), { runnable: (f) => `runnable:${f}` }, (f) => `run:${f}`);
+    assert.deepEqual([...handlers.keys()].sort(), ['file:run', 'file:runnable']);
+    assert.equal(handlers.get('file:runnable')!({}, '/a'), 'runnable:/a');
+    assert.equal(handlers.get('file:run')!({}, '/a'), 'run:/a');
+  });
+});
+
+describe('склейка новой возможности в main и интерфейсе', () => {
+  const src = (file: string): string => fs.readFileSync(path.join(process.cwd(), file), 'utf8');
+  it('app.ts: кнопка добавляется в общей шапке с признаком remote, openFile передаёт !!s.remote', () => {
+    const app = src('src/renderer/app.ts');
+    assert.match(app, /addRunButton<HTMLElement>\(path, remote, api, reveal,/);
+    assert.match(app, /fileHeader\(path, root, file\.viewer\.actions, !!s\.remote\)/);
+  });
+  it('main.ts: каналы регистрирует registerRunChannels, платформу выбирает launcherFor', () => {
+    const main = src('src/main/main.ts');
+    assert.match(main, /registerRunChannels\(\(channel, listener\) => ipcMain\.handle\(channel, listener\), runs, runFileChannel\)/);
+    assert.match(main, /launch: launcherFor\(process\.platform,/);
   });
 });

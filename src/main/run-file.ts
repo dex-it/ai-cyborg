@@ -126,7 +126,17 @@ export function warningText(p: RunWarning): { message: string; detail: string } 
   };
 }
 
-export type RunReply = { ok: true } | { cancelled: true } | { error: string };
+/** Каналы запуска: имена и обработчики в одном месте, чтобы тест видел то же, что регистрирует main. */
+export function registerRunChannels(
+  handle: (channel: string, listener: (event: unknown, file: unknown) => unknown) => void,
+  runs: { runnable: (file: unknown) => unknown },
+  runFile: (file: unknown) => unknown,
+): void {
+  handle('file:runnable', (_event, file) => runs.runnable(file));
+  handle('file:run', (_event, file) => runFile(file));
+}
+
+export type RunReply ={ ok: true } | { cancelled: true } | { error: string };
 
 export interface RunDeps {
   allowed: AllowedPaths;

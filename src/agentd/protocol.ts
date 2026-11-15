@@ -138,7 +138,4 @@ export interface CleanupResult {
 
 export type Msg = { type: string; rid?: number } & Record<string, unknown>;
 
-/** Строка в одинарных кавычках для sh: одинарная кавычка внутри закрывает и открывает кавычки заново. */
-export function shQuote(text: string): string {
-  return `'${text.replace(/'/g, `'\\''`)}'`;
-}
+export { shQuote } from '../shared/shell-quote.ts';

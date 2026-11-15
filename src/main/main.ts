@@ -9,8 +9,8 @@ import { CommandStore } from './command-store';
 import { savePromptsText } from './prompts';
 import { PromptStore } from './prompt-store';
 import { RunApprovals } from './run-approvals';
-import { createRunHandlers, runChannel, runConfirm } from './run-file';
-import { launchAndWait } from './run-terminal';
+import { createRunHandlers, registerRunChannels, runChannel, runConfirm } from './run-file';
+import { launcherFor } from './run-terminal';
 import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile, walkFiles, writeTextFile } from './files';
 import { gitDiffSearch, gitGrep } from './git-search';
@@ -211,7 +211,7 @@ const runs = createRunHandlers({
   allowed: allowedPaths,
   approvals: runApprovals,
   confirm: runConfirm((options) => tell(options)),
-  launch: (cmd, args, options) => (process.platform === 'darwin' ? launchAndWait(cmd, args) : launchInstance(spawn as unknown as SpawnFn, cmd, args, options)),
+  launch: launcherFor(process.platform, (cmd, args, options) => launchInstance(spawn as unknown as SpawnFn, cmd, args, options)),
 });
 const runFileChannel = runChannel(runs.run, (options) => tell(options));
 const paths = createPathHandlers({
@@ -626,8 +626,7 @@ ipcMain.handle('hubs:change', (_event, op: unknown) => {
   }
 });
 ipcMain.handle('hubs:fetch', (_event, id: unknown, force: unknown) => extensions.hubFetch(id, force));
-ipcMain.handle('file:runnable', (_event, file: unknown) => runs.runnable(file));
-ipcMain.handle('file:run', (_event, file: unknown) => runFileChannel(file));
+registerRunChannels((channel, listener) => ipcMain.handle(channel, listener), runs, runFileChannel);
 ipcMain.handle('fs:read', (_event, file: unknown) => paths.read(file));
 ipcMain.handle('fs:write', (_event, request: unknown) => paths.write(request));
 ipcMain.on('edits:unsaved', (_event, count: unknown) => {
