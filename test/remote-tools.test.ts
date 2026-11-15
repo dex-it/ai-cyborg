@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { claudeArgs, REMOTE_SYSTEM_PROMPT, SESSION_PROMPT } from '../src/main/claude-args';
+import { claudeArgs, REMOTE_SYSTEM_PROMPT, remoteSystemPrompt, SESSION_PROMPT } from '../src/main/claude-args';
 import { gitOriginUrl } from '../src/main/git';
 import { McpServer, type McpBackend } from '../src/main/mcp';
 import { bundleOf, CONNECT_SH, installScript } from '../src/main/remote/install';
@@ -173,6 +173,15 @@ describe('аргументы claude', () => {
     const remote = claudeArgs(['/x'], 'задание', undefined, REMOTE_SYSTEM_PROMPT);
     assert.ok(remote.includes(REMOTE_SYSTEM_PROMPT) && !remote.includes(SESSION_PROMPT));
     assert.match(REMOTE_SYSTEM_PROMPT, /report_done/);
+  });
+
+  it('промпт удалённой сессии называет остальные репозитории адресом и каталогом; без адресов - прежний', () => {
+    const prompt = remoteSystemPrompt([{ name: 'b', path: '/w/s/b', url: 'git@h:o/b.git' }]);
+    assert.ok(prompt.startsWith(REMOTE_SYSTEM_PROMPT));
+    assert.ok(prompt.includes("b: git clone -- 'git@h:o/b.git' '/w/s/b'"));
+    assert.ok(remoteSystemPrompt([{ name: 'b', path: '/w/s/my repo', url: 'u' }]).includes("'/w/s/my repo'"), 'каталог с пробелом - одним словом оболочки');
+    assert.equal(remoteSystemPrompt([]), REMOTE_SYSTEM_PROMPT);
+    assert.equal(remoteSystemPrompt([{ name: 'b', path: '/w/s/b' }]), REMOTE_SYSTEM_PROMPT, 'запись сессии до ленивых клонов адресов не хранит');
   });
 });
 

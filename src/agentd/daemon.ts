@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { claudeArgs, REMOTE_SYSTEM_PROMPT } from '../main/claude-args.ts';
+import { claudeArgs, remoteSystemPrompt } from '../main/claude-args.ts';
 import { listDir, readTextFile, walkFiles } from '../main/files.ts';
 import { gitBranch, gitFiles, gitHeadContent, gitRoot, gitStatus } from '../main/git.ts';
 import { gitDiffSearch, gitGrep } from '../main/git-search.ts';
@@ -388,9 +388,8 @@ export class Daemon {
     }
   }
 
-  /** Клоны каталога work/<sid>: у записи без меты (оборванный запуск) - все его подкаталоги. */
-  private clonesOf(sid: string, meta: SessionMeta | null): { name: string; path: string }[] {
-    if (meta) return meta.clones.filter((c) => fs.existsSync(c.path));
+  /** Клоны каталога work/<sid> - все его подкаталоги: остальные репозитории агент клонирует сам и мог положить не туда, куда отведено. */
+  private clonesOf(sid: string): { name: string; path: string }[] {
     const work = path.join(this.root, 'work', sid);
     try {
       return fs.readdirSync(work, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => ({ name: d.name, path: path.join(work, d.name) }));
@@ -434,7 +433,7 @@ export class Daemon {
     const measure = async (item: (typeof items)[number]): Promise<void> => {
       const dirty: { path: string; reason: string }[] = [];
       if (!item.live) {
-        for (const c of this.clonesOf(item.sid, item.meta)) {
+        for (const c of this.clonesOf(item.sid)) {
           if (!open) return;
           const reason = await this.dirtyReason(c.path);
           if (reason) dirty.push({ path: c.path, reason });
@@ -470,9 +469,7 @@ export class Daemon {
         continue;
       }
       const meta = this.readMetaFile(sid);
-      const clones = this.clonesOf(sid, meta);
-      const stub = this.makeSess(meta ?? ({ sid, clones } as SessionMeta), '');
-      stub.meta = { ...stub.meta, clones };
+      const stub = this.makeSess(meta ?? ({ sid, clones: [] as SessionMeta['clones'] } as SessionMeta), '');
       results.push({ sid, ...(await this.cleanClones(stub, force)) });
     }
     return results;
@@ -496,7 +493,7 @@ export class Daemon {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.mkdirSync(work, { recursive: true, mode: 0o700 });
     const names = uniqueNames(msg.repos.map((r) => r.name));
-    const clones = names.map((name) => ({ name, path: path.join(work, name) }));
+    const clones = names.map((name, i) => ({ name, path: path.join(work, name), url: msg.repos[i].url }));
     const selected = msg.selected;
     const now = this.deps.now();
     const meta: SessionMeta = {
@@ -568,14 +565,12 @@ export class Daemon {
   }
 
   private async prepareAndStart(sess: Sess, msg: SpawnMsg, clones: { name: string; path: string }[], selected: number): Promise<void> {
-    const env = { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes', ...gitAuthEnv(sess.auth) };
-    for (let i = 0; i < msg.repos.length; i++) {
-      if (sess.closing) return;
-      this.progress(sess, `клонирую ${clones[i].name}…`);
-      const r = await this.deps.exec('git', ['clone', '--', msg.repos[i].url, clones[i].path], { cwd: path.dirname(clones[i].path), env });
-      if (r.code !== 0) throw new Error(`git clone ${clones[i].name}: ${lastLine(r.stderr)}`);
-    }
+    const env = { ...GIT_NO_PROMPT, ...gitAuthEnv(sess.auth) };
+    if (sess.closing) return;
     const cwd = clones[selected].path;
+    this.progress(sess, `клонирую ${clones[selected].name}…`);
+    const r = await this.deps.exec('git', ['clone', '--', msg.repos[selected].url, cwd], { cwd: path.dirname(cwd), env });
+    if (r.code !== 0) throw new Error(`git clone ${clones[selected].name}: ${lastLine(r.stderr)}`);
     const heads = await this.deps.exec('git', ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${msg.branch}`], { cwd, env });
     if (heads.code !== 0 && heads.code !== 2) throw new Error(`git ls-remote: ${lastLine(heads.stderr)}`);
     const sw = await this.deps.exec('git', heads.code === 0 ? ['switch', msg.branch] : ['switch', '-c', msg.branch], { cwd });
@@ -665,18 +660,22 @@ export class Daemon {
     } catch (error) {
       this.progress(sess, `каталоги клонов не отмечены доверенными: ${(error as Error).message}`);
     }
-    const addDirs = sess.meta.clones.map((c) => c.path).filter((p) => p !== sess.meta.cwd);
+    const others = sess.meta.clones.filter((c) => c.path !== sess.meta.cwd);
+    const cloned = others.filter((c) => fs.existsSync(c.path)).map((c) => c.path);
+    // Скиллы и настройки .claude/ клон даёт только своим --add-dir, каталог сессии лишь открывает доступ к тем, что агент склонирует после запуска.
+    const addDirs = cloned.length < others.length ? [...cloned, path.dirname(sess.meta.cwd)] : cloned;
+    const prompt = remoteSystemPrompt(others);
     // Номер разговора задаётся при запуске: по нему wake продолжает тот же разговор.
     // В сессию, куда ни разу не писали, claude журнала не завёл: --resume упал бы «No conversation found», разговор начинается заново под тем же номером.
     const args = opts.resume && fs.existsSync(this.journalOf(sess.meta))
-      ? claudeArgs(addDirs, undefined, sess.sid, REMOTE_SYSTEM_PROMPT)
-      : ['--session-id', sess.sid, ...claudeArgs(addDirs, opts.prompt, undefined, REMOTE_SYSTEM_PROMPT)];
+      ? claudeArgs(addDirs, undefined, sess.sid, prompt)
+      : ['--session-id', sess.sid, ...claudeArgs(addDirs, opts.prompt, undefined, prompt)];
     write(
       'launch.sh',
       `#!/bin/sh\ntty > "$CYBORG_DIR/tty"\nexec claude --settings "$CYBORG_SETTINGS" --mcp-config "$CYBORG_MCP" ${args.map(shQuote).join(' ')}\n`,
       0o700,
     );
-    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+    const env: Record<string, string> = { ...GIT_NO_PROMPT, ...(process.env as Record<string, string>) };
     for (const name of PARENT_SESSION_VARS) delete env[name];
     Object.assign(env, sess.extra.env, voice ? { PATH: `${voice.bin}:${sess.extra.env.PATH ?? env.PATH ?? ''}`, CYBORG_MIC: voice.sock } : {}, {
       TERM: 'xterm-256color',
@@ -944,7 +943,7 @@ export class Daemon {
   private markDone(sess: Sess): void {
     sess.meta.state = 'done';
     sess.meta.pgid = undefined;
-    if (sess.meta.clones.some((c) => fs.existsSync(c.path))) this.saveMeta(sess);
+    if (this.clonesOf(sess.sid).length) this.saveMeta(sess);
   }
 
   private deliverExit(sess: Sess): void {
@@ -962,7 +961,7 @@ export class Daemon {
   }
 
   private pruneDir(sess: Sess): void {
-    if (sess.meta.clones.some((c) => fs.existsSync(c.path))) return;
+    if (this.clonesOf(sess.sid).length) return;
     fs.rmSync(sess.dir, { recursive: true, force: true });
     fs.rmSync(path.join(this.root, 'work', sess.sid), { recursive: true, force: true });
   }
@@ -1004,7 +1003,7 @@ export class Daemon {
       await this.stopProc(sess);
       this.teardownIo(sess);
       fs.rmSync(path.join(sess.dir, 'mcp.json'), { force: true });
-      const result = keep ? { removed: [], kept: sess.meta.clones.filter((c) => fs.existsSync(c.path)).map((c) => ({ path: c.path, reason: 'оставлен по keep' })) } : await this.cleanClones(sess, force);
+      const result = keep ? { removed: [], kept: this.clonesOf(sess.sid).map((c) => ({ path: c.path, reason: 'оставлен по keep' })) } : await this.cleanClones(sess, force);
       sess.meta.closing = undefined;
       // Без процесса (спящая, не дошедшая до запуска) выхода не будет: запись снимается здесь.
       if (!sess.proc) {
@@ -1035,8 +1034,7 @@ export class Daemon {
 
   private async cleanClones(sess: Sess, force = false): Promise<CleanupResult> {
     const result: CleanupResult = { removed: [], kept: [] };
-    for (const clone of sess.meta.clones) {
-      if (!fs.existsSync(clone.path)) continue;
+    for (const clone of this.clonesOf(sess.sid)) {
       const reason = force ? null : await this.dirtyReason(clone.path);
       if (reason) result.kept.push({ path: clone.path, reason });
       else {
@@ -1102,10 +1100,11 @@ export class Daemon {
     fs.chmodSync(file, 0o600);
   }
 
-  /** Настоящий путь внутри каталога сессии: ссылка наружу и «..» отвергаются. */
-  private clonePath(sess: Sess, target: string): { real: string } | { error: string } {
+  /** Настоящий путь внутри каталога сессии: ссылка наружу и «..» отвергаются; missing - отведённый клон, которого агент ещё не сделал. */
+  private clonePath(sess: Sess, target: string): { real: string } | { missing: true } | { error: string } {
     const outside = { error: 'Путь вне каталогов удалённой сессии' };
     if (!path.isAbsolute(target) || target.split('/').includes('..')) return outside;
+    if (!fs.existsSync(target) && sess.meta.clones.some((c) => c.path === target)) return { missing: true };
     let work: string;
     let real: string;
     try {
@@ -1122,15 +1121,17 @@ export class Daemon {
     const request = validateSearchRequest(value);
     if ((mode !== 'text' && mode !== 'changes') || !request) return { error: 'Некорректные аргументы поиска' };
     const at = this.clonePath(sess, request.root);
+    const empty: SearchReply = { hits: [], truncated: false };
+    if ('missing' in at) return { value: empty };
     if ('error' in at) return at;
     const work = { ...request, root: at.real };
-    const empty: SearchReply = { hits: [], truncated: false };
     const run = (signal: AbortSignal) => (mode === 'text' ? gitGrep(work, signal) : gitDiffSearch(work, signal));
     return { value: await this.searches.run(`${sess.sid}:${mode}:${at.real}`, run, empty).catch((e: Error): SearchReply => ({ ...empty, error: e.message })) };
   }
 
   private async fsOp(sess: Sess, op: string, target: string): Promise<Record<string, unknown>> {
     const at = this.clonePath(sess, target);
+    if ('missing' in at) return op === 'files' || op === 'list' ? { value: [] } : op === 'status' ? { value: {} } : op === 'root' || op === 'branch' ? { value: null } : { error: 'репозиторий ещё не склонирован' };
     if ('error' in at) return at;
     const { real } = at;
     switch (op) {
@@ -1153,6 +1154,9 @@ export class Daemon {
     }
   }
 }
+
+/** git без вопросов в терминал: незнакомый ключ хоста или пароль дают ошибку, а не зависший клон. */
+const GIT_NO_PROMPT = { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' };
 
 const PARENT_SESSION_VARS = [
   'CLAUDECODE',

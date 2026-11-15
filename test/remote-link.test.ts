@@ -204,8 +204,11 @@ describe('RemoteSessions: открытие человеком', () => {
     assert.deepEqual(spawn.repos.map((x: any) => x.url), ['https://gitlab.example.com/o/a.git', 'https://github.com/o/b.git']);
     const wire = JSON.stringify(ssh.seen);
     assert.ok(!wire.includes('SECRET123') && !wire.includes('TOKENONLY'), 'секрет из адреса ушёл по каналу');
-    await until(() => r.execs.filter((e) => e.args[0] === 'clone').length === 2);
+    await until(() => r.spawned.length === 1);
+    assert.equal(r.execs.filter((e) => e.args[0] === 'clone').length, 1);
     assert.ok(r.execs.every((e) => !e.args.join(' ').includes('SECRET123') && !e.args.join(' ').includes('TOKENONLY')), 'секрет из адреса попал в аргументы git на хосте');
+    const launch = fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', spawn.sid, 'launch.sh'), 'utf8');
+    assert.ok(launch.includes('https://github.com/o/b.git') && !launch.includes('TOKENONLY'), 'промпт агента несёт адрес без секрета');
     assert.ok(info.notes?.some((n) => /\/loc\/a/.test(n) && /учётные данные/.test(n)), `нет заметки: ${JSON.stringify(info.notes)}`);
     assert.ok(info.notes?.some((n) => /\/loc\/b/.test(n) && /учётные данные/.test(n)));
   });

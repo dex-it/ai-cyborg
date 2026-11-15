@@ -1,3 +1,4 @@
+import { shQuote } from '../agentd/protocol.ts';
 import { SUGGEST_PROMPT } from './suggestions.ts';
 
 // EnterWorktree, а не git worktree add: он меняет cwd сессии, и дерево Cyborg переходит в worktree.
@@ -18,6 +19,14 @@ export const MCP_SESSION_PROMPT = `${ISOLATION_PROMPT}\n\n${PARALLEL_PROMPT}\n\n
 
 /** Удалённая сессия работает в своих клонах: изоляции нет, зато итог сдаётся веткой, PR и вызовом report_done. */
 export const REMOTE_SYSTEM_PROMPT = `${SUGGEST_PROMPT}\n\nТы работаешь на сервере разработчика в собственных клонах репозиториев. Закончив, запушь ветку и открой PR, затем вызови инструмент report_done: status (ok, failed или blocked), summary - итог одним сообщением, branch и pr, если есть. После итога сессия остаётся открытой: новое сообщение - новый круг работы со своим report_done. Незапушенная работа при уборке клона не удаляется.`;
+
+/** Промпт удалённой сессии с остальными репозиториями проекта: на старте склонирован только рабочий, остальные агент клонирует по надобности. */
+export function remoteSystemPrompt(others: { name: string; path: string; url?: string }[]): string {
+  const known = others.filter((o): o is { name: string; path: string; url: string } => !!o.url);
+  if (!known.length) return REMOTE_SYSTEM_PROMPT;
+  const list = known.map((o) => `${o.name}: git clone -- ${shQuote(o.url)} ${shQuote(o.path)}`).join('\n');
+  return `${REMOTE_SYSTEM_PROMPT}\n\nСклонирован только рабочий репозиторий. Остальные репозитории проекта клонируй, только когда они понадобятся, командой из списка; каталог уже есть - клон готов. Скиллы и настройки .claude/ склонированного репозитория подключатся со следующего запуска сессии:\n${list}`;
+}
 
 /**
  * Позиционные аргументы claude после --settings. Промпт стоит до --add-dir: тот вариадический
