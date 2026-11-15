@@ -1183,7 +1183,7 @@ api.on<{ id: number; reported: boolean }>('remote:state', ({ id, reported }) => 
 
 api.on<{ id: number; title: string; body: string }>('remote:report', ({ id, title, body }) => {
   const session = findSession(id);
-  notifier.waiting(id, `${title}${session ? ` · ${session.project.name}` : ''}`, body, !!session && session === active && document.hasFocus());
+  notifier.report(id, `${title}${session ? ` · ${session.project.name}` : ''}`, body, !!session && session === active && document.hasFocus());
 });
 
 api.on<{ id: number; exitCode: number }>('session:exit', ({ id, exitCode }) => {

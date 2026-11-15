@@ -39,6 +39,16 @@ describe('WaitNotifier', () => {
     assert.deepEqual(p.calls.slice(1), ['notify 2 CC2 ждёт']);
   });
 
+  it('итог не затирается «ждёт» той же сессии, пока её не увидели; после - снова уведомляет', () => {
+    const p = port();
+    const n = new WaitNotifier(p);
+    n.report(3, 'CC3', 'ok: сделано', false);
+    n.waiting(3, 'CC3', 'Ждёт ввода', false);
+    n.dismiss(3);
+    n.waiting(3, 'CC3', 'Ждёт ввода', false);
+    assert.deepEqual(p.calls.slice(1), ['notify 3 CC3 ok: сделано', 'unnotify 3', 'notify 3 CC3 Ждёт ввода']);
+  });
+
   it('гасит только показанное и только раз', () => {
     const p = port();
     const n = new WaitNotifier(p);

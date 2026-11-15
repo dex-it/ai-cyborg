@@ -66,7 +66,7 @@ test('SessionManager: номер разговора уходит в onChild то
   const seen: string[] = [];
   manager.onChild = (sid) => seen.push(sid);
   const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, true);
+  const child = manager.create('/a', [], 'задание', undefined, own);
   const event = (sid: string) => JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid });
   manager.ingest(own, [event('own-sid')], { replay: false });
   manager.ingest(child, [event('sid-1'), event('sid-1')], { replay: false });
@@ -90,6 +90,44 @@ test('SessionManager: контекст вкладки - первый и посл
   manager.ingest(id, [stop, stop], { replay: false });
   assert.deepEqual(contexts().at(-1), { id, title: 'Дерево файлов', first: 'исходная задача', last: 'и тесты' });
   assert.equal(contexts().length, 3, 'без перемен событие не шлётся');
+});
+
+test('SessionManager: у удалённой вкладки spawn_agent есть parent, но разговоры в onChild не идут - их ведёт удалённая часть', (t) => {
+  const { manager } = managerIn(t);
+  const seen: string[] = [];
+  manager.onChild = (sid) => seen.push(sid);
+  const own = manager.create('/a', []);
+  const agent = manager.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote: { host: 'dev1', origin: 'tool', keep: false, spawnedBy: own, online: true } });
+  manager.ingest(agent, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'remote-sid' })], { replay: false });
+  assert.equal(manager.parentOf(agent), own);
+  assert.deepEqual(seen, []);
+});
+
+test('SessionManager: открывшая сессия - parent в перечне соседей и parentOf; у открытой человеком его нет', (t) => {
+  const { manager } = managerIn(t);
+  const own = manager.create('/a', []);
+  const child = manager.create('/a', [], 'задание', undefined, own);
+  const peers = manager.peers(own) ?? [];
+  assert.equal(peers.find((p) => p.id === child)?.parent, own);
+  assert.equal('parent' in (peers.find((p) => p.id === own) ?? {}), false);
+  assert.equal(manager.parentOf(child), own);
+  assert.equal(manager.parentOf(own), null);
+});
+
+test('SessionManager.reportLocal: итог - в очередь открывшей, один за круг; новый круг - после UserPromptSubmit; без открывшей - уведомление', (t) => {
+  const events: { channel: string; payload: any }[] = [];
+  const { manager } = managerIn(t, events);
+  const own = manager.create('/a', []);
+  const child = manager.create('/a', [], 'задание', undefined, own);
+  assert.throws(() => manager.reportLocal(own, { status: 'ok', summary: 'x' }), /открытой другой сессией/);
+  assert.match(manager.reportLocal(child, { status: 'ok', summary: 'сделано', branch: 'feat-x' }), /Итог принят/);
+  const queued = manager.peers(own)?.find((p) => p.id === own)?.queued;
+  assert.equal(queued, 1);
+  assert.throws(() => manager.reportLocal(child, { status: 'ok', summary: 'ещё' }), /уже отправлен/);
+  manager.ingest(child, [JSON.stringify({ hook_event_name: 'UserPromptSubmit' })], { replay: false });
+  manager.kill(own);
+  assert.match(manager.reportLocal(child, { status: 'blocked', summary: 'нужен человек' }), /Итог принят/);
+  assert.deepEqual(events.find((e) => e.channel === 'remote:report')?.payload, { id: child, title: `CC${child}`, body: 'blocked: нужен человек' });
 });
 
 test('SessionManager сужает существующий каталог событий до 0700', (t) => {

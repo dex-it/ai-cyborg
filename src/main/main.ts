@@ -112,6 +112,8 @@ const sessionsPort: SessionsPort = {
   say: (id, text) => sessions.say(id, text),
   kindOf: (id) => (sessions.remoteOf(id) ? 'remote' : sessions.dirsOf(id) ? 'local' : null),
   hostsOf,
+  parentOf: (id) => sessions.parentOf(id),
+  reportLocal: (id, report) => sessions.reportLocal(id, report),
 };
 const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools), app.getVersion());
 // На Linux без связки ключей safeStorage шифрует постоянным ключом: такое хранение токен на диск не пускает.
@@ -393,7 +395,7 @@ ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?
     const handoff = handoffs.take(start.handoff, cwd);
     if (!handoff) throw new Error('Переданная задача не найдена или устарела');
     try {
-      const id = sessions.create(cwd as string, addDirs as string[], handoff.prompt, undefined, true);
+      const id = sessions.create(cwd as string, addDirs as string[], handoff.prompt, undefined, handoff.from);
       handoff.resolve(id);
       return id;
     } catch (error) {
