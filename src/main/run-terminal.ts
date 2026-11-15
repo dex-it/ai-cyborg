@@ -94,10 +94,15 @@ export function noTerminalMessage(env: NodeJS.ProcessEnv): string {
   return `Не найден эмулятор терминала. Искали в PATH: $TERMINAL${own}, ${TERMINALS.join(', ')}. Задайте переменную окружения TERMINAL с именем или путём вашего терминала и перезапустите Cyborg.`;
 }
 
+// RUN_SCRIPT написан на POSIX sh, а читает его логин-оболочка: эти его не разберут, и окно закрылось бы молча.
+const NOT_SH = new Set(['fish', 'tcsh', 'csh', 'nu', 'xonsh', 'elvish', 'pwsh']);
+
 export type TerminalLaunch = { cmd: string; args: string[] } | { error: string };
 
 /** Запуск внешнего терминала с командой в каталоге dir; своего pty нет. */
 export function terminalLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, dir: string, command: string[], isExec?: IsExec): TerminalLaunch {
+  const shell = path.basename(env.SHELL ?? '');
+  if (NOT_SH.has(shell)) return { error: `Логин-оболочка ${shell} не разбирает скрипт запуска (нужна оболочка семейства sh: bash, zsh, dash, ksh). Запустите файл из своего терминала.` };
   if (platform === 'darwin') {
     // quoted form of кавычит под sh, а разбирает логин-оболочка: fish читает `\'` в кавычках иначе.
     if ([dir, ...command].some((word) => word.includes('\\'))) return { error: 'Путь или команда с обратной косой чертой на macOS не запускаются' };

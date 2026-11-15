@@ -192,6 +192,17 @@ describe('findTerminal и terminalLaunch', () => {
     }
   });
 
+  it('логин-оболочка не семейства sh - отказ с её именем на обеих ОС, эмулятор не ищется', () => {
+    for (const shell of ['/usr/bin/fish', '/bin/tcsh', '/bin/csh']) {
+      for (const platform of ['linux', 'darwin'] as const) {
+        const r = terminalLaunch(platform, { PATH: '/a', SHELL: shell }, '/d', ['/d/f'], have('/a/xterm'));
+        assert.ok('error' in r && r.error.includes(`Логин-оболочка ${path.basename(shell)} `), JSON.stringify(r));
+      }
+    }
+    assert.ok('args' in terminalLaunch('darwin', { SHELL: '/bin/zsh' }, '/d', ['/d/f']));
+    assert.ok('args' in terminalLaunch('linux', { PATH: '/a', SHELL: '/usr/bin/dash' }, '/d', ['/d/f'], have('/a/xterm')));
+  });
+
   it('SHELL не задан - /bin/bash', () => {
     const r = terminalLaunch('linux', { PATH: '/a' }, '/d', ['/d/f'], have('/a/xterm'));
     assert.ok('args' in r);
