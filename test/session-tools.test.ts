@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { cleanMessage } from '../src/main/clean-text';
+import { reportText } from '../src/main/report-text';
 import type { SessionInfo } from '../src/main/sessions';
 import {
   ANSWER_TAIL,
@@ -74,6 +75,12 @@ describe('validateClose', () => {
     for (const id of [3, 4, 5]) assert.deepEqual(validateClose({ id, force: true }, peers, 1), { id });
   });
 
+  it('свою дочернюю закрывает в любом состоянии без force, чужую - нет', () => {
+    const family = [peer(1, 'working'), peer(6, 'working', { parent: 1 }), peer(7, 'asking', { parent: 1, reason: 'вопрос' }), peer(8, 'starting', { parent: 1 }), peer(9, 'working', { parent: 5 })];
+    for (const id of [6, 7, 8]) assert.deepEqual(validateClose({ id }, family, 1), { id });
+    assert.match(validateClose({ id: 9 }, family, 1) as string, /force: true/);
+  });
+
   it('отвергает номер вне проекта и force не логическим', () => {
     assert.match(validateClose({ id: 9 }, peers, 1) as string, /нет среди открытых/);
     assert.match(validateClose({ id: '2' }, peers, 1) as string, /нет среди открытых/);
@@ -92,6 +99,20 @@ describe('describePeers', () => {
     assert.equal(list[1].last_answer, `…${'x'.repeat(ANSWER_TAIL)}`);
     assert.equal('self' in list[1], false);
   });
+
+  it('parent - у сессий, открытых инструментом; child: true - только у дочерних вызывающей', () => {
+    const list = JSON.parse(describePeers([peer(1, 'working'), peer(2, 'waiting', { parent: 1 }), peer(3, 'waiting', { parent: 2 }), peer(4, 'waiting')], 1));
+    assert.deepEqual([list[1].parent, list[1].child], [1, true]);
+    assert.deepEqual([list[2].parent, 'child' in list[2]], [2, false]);
+    assert.deepEqual(['parent' in list[3], 'child' in list[3]], [false, false]);
+  });
+});
+
+describe('reportText', () => {
+  it('у локальной - без хоста, у удалённой - с хостом; ветка и PR - строками до итога', () => {
+    assert.equal(reportText(3, undefined, { status: 'ok', summary: 'сделано', branch: 'feat-x' }), 'Итог сессии CC3: ok\nветка: feat-x\n\nсделано');
+    assert.equal(reportText(4, 'dev1', { status: 'failed', summary: 'нет', pr: 'https://x/1' }), 'Итог удалённой сессии CC4 (dev1): failed\nPR: https://x/1\n\nнет');
+  });
 });
 
 describe('createSessionTools', () => {
@@ -99,18 +120,37 @@ describe('createSessionTools', () => {
     const said: [number, string][] = [];
     const requested: unknown[] = [];
     const closed: number[] = [];
+    const reported: [number, unknown][] = [];
     const backend = createSessionTools(
       {
         dirsOf: () => (peers ? DIRS : null),
         peers: () => peers,
         say: async (id, text) => (said.push([id, text]), peers?.find((p) => p.id === id)?.state === 'working' ? 'queued' : 'sent'),
+        parentOf: (id) => peers?.find((p) => p.id === id)?.parent ?? null,
+        reportLocal: (id, report) => (reported.push([id, report]), 'принят'),
       },
       { request: async (...args) => (requested.push(args), 42) },
       (id) => closed.push(id),
       10,
     );
-    return { backend, said, requested, closed };
+    return { backend, said, requested, closed, reported };
   }
+
+  it('report_done есть у локальной дочерней и уходит в reportLocal; у открытой человеком его нет', async () => {
+    const { backend, reported } = tools([peer(1, 'working'), peer(2, 'working', { parent: 1 })]);
+    assert.ok(backend.tools(2).some((t) => t.name === 'report_done'));
+    assert.ok(!backend.tools(1).some((t) => t.name === 'report_done'));
+    assert.equal(await backend.call(2, 'report_done', { status: 'ok', summary: 's', branch: 'b' }), 'принят');
+    await assert.rejects(backend.call(1, 'report_done', { status: 'ok', summary: 's' }), /недоступен этой сессии/);
+    await assert.rejects(backend.call(2, 'report_done', { status: 'done', summary: 's' }), /status/);
+    assert.deepEqual(reported, [[2, { status: 'ok', summary: 's', branch: 'b' }]]);
+  });
+
+  it('close_session закрывает работающую дочернюю без force', async () => {
+    const { backend, closed } = tools([peer(1, 'working'), peer(2, 'working', { parent: 1 })]);
+    assert.match(await backend.call(1, 'close_session', { id: 2 }), /сессии 2 закрыта/);
+    assert.deepEqual(closed, [2]);
+  });
 
   it('send_to_session пишет в ждущую сессию; о работающей говорит, что сообщение в очереди', async () => {
     const { backend, said } = tools([peer(1, 'working'), peer(2, 'waiting'), peer(3, 'working')]);

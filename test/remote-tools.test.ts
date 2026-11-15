@@ -95,9 +95,9 @@ describe('createSessionTools: удалённая часть', () => {
       close: async (id, keep) => (calls.push(['close', id, keep]), 'закрыта'),
     };
     const requested: unknown[][] = [];
-    const peers = [peer(1, 'waiting'), peer(2, 'waiting', { host: 'dev1' })];
+    const peers = [peer(1, 'waiting'), peer(2, 'waiting', { host: 'dev1' }), peer(3, 'working', { host: 'dev1', parent: 1 })];
     const backend = createSessionTools(
-      { dirsOf: () => DIRS, peers: () => peers, say: async () => 'sent', kindOf: (id) => (id === 2 ? 'remote' : kind), hostsOf: () => ['dev1'] },
+      { dirsOf: () => DIRS, peers: () => peers, say: async () => 'sent', kindOf: (id) => (id === 2 || id === 3 ? 'remote' : kind), hostsOf: () => ['dev1'] },
       { request: async (...a) => (requested.push(a), 7) },
       () => undefined,
       10,
@@ -120,7 +120,7 @@ describe('createSessionTools: удалённая часть', () => {
     assert.deepEqual(calls, []);
   });
 
-  it('удалённая сессия не вызывает open_session и close_session, а локальная - report_done', async () => {
+  it('удалённая сессия не вызывает open_session и close_session, а локальная, открытая человеком, - report_done', async () => {
     const { backend, calls, requested } = rig('remote');
     await assert.rejects(backend.call(1, 'open_session', { repo: '/repo/a', prompt: 'p' }), /недоступен этой сессии/);
     await assert.rejects(backend.call(1, 'close_session', { id: 2 }), /недоступен этой сессии/);
@@ -139,6 +139,12 @@ describe('createSessionTools: удалённая часть', () => {
       ['close', 2, true],
       ['close', 2, false],
     ]);
+  });
+
+  it('close_session над работающей удалённой дочерней без force идёт в удалённую часть и убирает клоны', async () => {
+    const { backend, calls } = rig('local');
+    assert.equal(await backend.call(1, 'close_session', { id: 3 }), 'закрыта');
+    assert.deepEqual(calls, [['close', 3, false]]);
   });
 });
 
