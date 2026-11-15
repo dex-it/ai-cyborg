@@ -48,6 +48,7 @@ import { WaitNotifier } from './notify';
 import { hasCommandKey, isClipboardKey, isMac, shortcut, type ModifierState } from './platform';
 import { osc52Allowed, osc52Text } from './osc52';
 import { OutputGate } from './output-gate';
+import { RemotePaste } from './remote-paste';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 import { initMic } from './mic';
 
@@ -727,7 +728,7 @@ for (const type of ['keydown', 'pointerup'] as const) window.addEventListener(ty
 let lastSpace = { id: -1, at: -Infinity };
 const SPACE_FRESH_MS = 2_000;
 
-function createTerminal(id: number): Terminal {
+function createTerminal(id: number, paste?: RemotePaste): Terminal {
   const term = new Terminal({
     fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
     fontSize,
@@ -742,7 +743,10 @@ function createTerminal(id: number): Terminal {
   term.parser.registerOscHandler(52, (data) => {
     const focused = document.hasFocus() && !!term.textarea && document.activeElement === term.textarea;
     const text = osc52Allowed(focused, performance.now(), lastUserAt) ? osc52Text(data) : undefined;
-    if (text !== undefined) void navigator.clipboard.writeText(text).catch(() => undefined);
+    if (text !== undefined) {
+      paste?.copied();
+      void navigator.clipboard.writeText(text).catch(() => undefined);
+    }
     return true;
   });
   term.onData((data) => {
@@ -757,6 +761,7 @@ function createTerminal(id: number): Terminal {
       return false;
     }
     if (event.type !== 'keydown') return true;
+    paste?.reset();
     if (event.code === 'Space' && !event.ctrlKey && !event.metaKey && !event.altKey) lastSpace = { id, at: performance.now() };
     // На macOS Cmd+C/V выполняют пункты меню Electron (Copy/Paste): xterm копирует выделение и принимает вставку сам.
     if (!mac && isClipboardKey(event, 'KeyC')) {
@@ -771,6 +776,17 @@ function createTerminal(id: number): Terminal {
     return true;
   });
   return term;
+}
+
+function bindRemotePaste(term: Terminal, host: HTMLElement, paste: RemotePaste): void {
+  host.addEventListener('mousedown', (event) => event.button === 0 && paste.reset(), true);
+  host.addEventListener('contextmenu', () => {
+    if (!paste.rightClick(term.modes.mouseTrackingMode !== 'none')) return;
+    void navigator.clipboard
+      .readText()
+      .then((text) => text && term.paste(text))
+      .catch(() => undefined);
+  });
 }
 
 type TrackerStart = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
@@ -819,7 +835,8 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const root = remote ? remote.cwd : ((await api.gitRoot(repo)) ?? repo);
   const parent = start && 'handoff' in start ? start.parent : undefined;
   const color = parent?.color ?? sessionColor(colorIndex++);
-  const term = createTerminal(id);
+  const paste = remote ? new RemotePaste() : undefined;
+  const term = createTerminal(id, paste);
   const fit = new FitAddon();
   term.loadAddon(fit);
 
@@ -839,6 +856,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const termPane = el('div', 'pane terminal');
   const host = el('div', 'term-host');
   termPane.append(host);
+  if (paste) bindRemotePaste(term, host, paste);
   innerPanes.append(termPane);
   if (start && 'task' in start) container.append(taskHeader(start.task, () => requestAnimationFrame(() => fitSession(session))));
   container.append(innerTabs, innerPanes);
