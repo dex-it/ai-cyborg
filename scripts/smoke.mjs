@@ -337,7 +337,7 @@ async function main() {
   // FR-11012: выбор проектов Jira в свойствах проекта - список из `jira project list`, подсказка по веткам, ручной ключ, сохранение.
   // Проекты управляются из системного меню «Воркспейс», кнопки ⋯ на панели нет.
   assert.equal(await ev('!document.querySelector("#project-menu-open") && !document.querySelector("#project-menu")'), true, 'на панели осталось меню проекта');
-  assert.equal(await clickMenu(mainEv, 'Свойства проекта'), true, '«Свойства проекта» недоступны при выбранном проекте');
+  assert.equal(await clickMenu(mainEv, 'Свойства проекта…'), true, '«Свойства проекта» недоступны при выбранном проекте');
   await waitFor('диалог проекта открыт', async () => (await ev('document.querySelector("#project-dialog").open')) === true);
   await waitFor('список проектов Jira в диалоге', async () => (await ev('document.querySelectorAll("#project-jira-list .jira-row").length')) === 2);
   assert.match(await text('#project-jira-list'), /SMK\s+Smoke/, 'в списке нет проекта SMK с названием');

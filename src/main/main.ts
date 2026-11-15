@@ -23,7 +23,7 @@ import { deleteHistory, historyExists, isSessionId, listHistory, type HistoryEnt
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate, HOST_DISK_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
+import { appMenuTemplate, DOCS_URL, HOST_DISK_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
 import { notificationKey, validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
@@ -680,6 +680,7 @@ function rebuildMenu(): void {
     hostDisk: () => win?.webContents.send('menu:host-disk'),
     search: (mode) => win?.webContents.send('menu:search', mode),
     extensions: (tab) => win?.webContents.send('menu:extensions', tab),
+    openUrl: (url) => void shell.openExternal(url),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
@@ -842,6 +843,7 @@ app.whenReady().then(() => {
   // icon у BrowserWindow на macOS не действует: в Dock остался бы значок Electron.
   app.dock?.setIcon(path.join(__dirname, 'icon.png'));
   if (!chooseStartupWorkspace()) return;
+  app.setAboutPanelOptions({ applicationName: 'Cyborg', applicationVersion: __APP_VERSION__, website: DOCS_URL, iconPath: path.join(__dirname, 'icon.png') });
   rebuildMenu();
   // Список «Недавних» общий для инстансов: другой мог изменить его, пока это окно было в фоне.
   app.on('browser-window-focus', rebuildMenu);
