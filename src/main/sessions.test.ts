@@ -573,16 +573,13 @@ test('SessionManager.say: ждущей сессии - вставкой и Enter 
   assert.equal(writes.length, 2);
 });
 
-test('SessionManager.say: работающей сессии - в очередь, по сообщению после конца хода; Stop с фоновыми задачами ход не кончает', async (t) => {
+test('SessionManager.say: работающей сессии - в очередь, по сообщению после конца хода', async (t) => {
   const quiet = 200;
   const { manager, id, writes, push, queued } = talkingManager(t, quiet);
   await push({ hook_event_name: 'UserPromptSubmit' });
   assert.equal(await manager.say(id, 'первое'), 'queued');
   assert.equal(await manager.say(id, 'второе'), 'queued');
   assert.equal(queued(), 2);
-  await push({ hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }] });
-  await sleep(quiet + SUBMIT_DELAY_MS + 50);
-  assert.deepEqual(writes, []);
   await push({ hook_event_name: 'Stop' });
   await sleep(quiet + SUBMIT_DELAY_MS + 50);
   assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r']);
@@ -594,6 +591,34 @@ test('SessionManager.say: работающей сессии - в очередь,
   await push({ hook_event_name: 'Stop' });
   await sleep(quiet + SUBMIT_DELAY_MS + 50);
   assert.deepEqual(writes.slice(2), ['\x1b[200~второе\x1b[201~', '\r']);
+  assert.equal(queued(), 0);
+});
+
+test('SessionManager.say: сессия ждёт только фоновых задач или пробуждения - сообщение уходит, когда и фоновый субагент помолчит; проснулась - снова очередь', async (t) => {
+  const quiet = 200;
+  const { manager, id, writes, push, queued } = talkingManager(t, quiet);
+  const state = () => manager.peers(id)!.find((p) => p.id === id)!.state;
+  await push({ hook_event_name: 'UserPromptSubmit' });
+  assert.equal(await manager.say(id, 'первое'), 'queued');
+  await push({ hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }] });
+  assert.equal(state(), 'working', 'пауза до фоновой задачи - working: close_session без force её не оборвёт');
+  for (let i = 0; i < 5; i++) {
+    await sleep(quiet / 2);
+    await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'a1' });
+  }
+  assert.deepEqual(writes, [], 'фоновый субагент шлёт события: его запрос разрешения мог бы опередить свой Notification');
+  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'очередь отдана в паузе после тишины');
+  await sleep(quiet + 50);
+  assert.equal(await manager.say(id, 'второе'), 'sent');
+  assert.equal(writes.length, 4);
+  await push({ hook_event_name: 'PostToolUse', tool_name: 'Read' });
+  assert.equal(await manager.say(id, 'третье'), 'queued', 'модель проснулась после фоновой задачи - снова ход');
+  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 4);
+  await push({ hook_event_name: 'Stop', session_crons: [{ id: 'c' }] });
+  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes.slice(4), ['\x1b[200~третье\x1b[201~', '\r'], 'пауза до пробуждения тоже принимает ввод');
   assert.equal(queued(), 0);
 });
 

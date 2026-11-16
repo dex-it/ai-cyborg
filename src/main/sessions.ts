@@ -66,6 +66,7 @@ interface Session {
   state: SessionState;
   reason?: string;
   lastAnswer?: string;
+  background?: boolean;
   context: SessionContext;
   /** Сообщения других сессий, ждущие конца хода: в работающую сессию не пишем, Enter мог бы попасть в её запрос разрешения. */
   outbox: string[];
@@ -127,6 +128,9 @@ export function sessionEnv(extra: Record<string, string>): Record<string, string
   for (const name of INHERITED_SESSION_VARS) delete env[name];
   return { ...env, ...extra };
 }
+
+/** Ввод Claude Code ждёт: ход кончен, а фоновые задачи и пробуждения своего хода не начинают, пока не сработают. */
+const acceptsInput = (session: Session): boolean => session.state === 'waiting' || (session.state === 'working' && session.background === true);
 
 export class SessionManager {
   private readonly sessions = new Map<number, Session>();
@@ -261,12 +265,13 @@ export class SessionManager {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`сессия ${id} завершилась`);
     const quiet = Date.now() - session.lastEventAt >= this.outboxDelayMs;
-    if (session.state === 'working' || (session.state === 'waiting' && (!quiet || session.outbox.length || session.delivering))) {
+    const open = acceptsInput(session);
+    if ((session.state === 'working' && !open) || (open && (!quiet || session.outbox.length || session.delivering))) {
       session.outbox.push(text);
       this.scheduleOutbox(session);
       return 'queued';
     }
-    if (session.state !== 'waiting') throw new Error(`сессия ${id} ${session.state === 'asking' ? `ждёт человека (${session.reason})` : 'ещё запускается'}`);
+    if (!open) throw new Error(`сессия ${id} ${session.state === 'asking' ? `ждёт человека (${session.reason})` : 'ещё запускается'}`);
     await this.deliver(session, text);
     return 'sent';
   }
@@ -276,7 +281,7 @@ export class SessionManager {
     const write = (data: string): void => {
       if (this.sessions.get(session.id) !== session) throw new Error(`сессия ${session.id} завершилась`);
       if (session.remote && !session.remote.online) throw new Error(`сессия ${session.id} без связи с хостом`);
-      if (session.state !== 'waiting') throw new Error(`сессия ${session.id} начала ход: текст вставлен в её ввод, Enter не отправлен`);
+      if (!acceptsInput(session)) throw new Error(`сессия ${session.id} начала ход: текст вставлен в её ввод, Enter не отправлен`);
       try {
         session.term.write(data);
       } catch {
@@ -301,7 +306,7 @@ export class SessionManager {
   /** Очередь отдаёт по сообщению, когда сессия ждёт и молчит outboxDelayMs: чужой Stop-хук мог продолжить ход. */
   private scheduleOutbox(session: Session): void {
     clearTimeout(session.outboxTimer);
-    if (session.state !== 'waiting' || !session.outbox.length || session.delivering || (session.remote && !session.remote.online)) return;
+    if (!acceptsInput(session) || !session.outbox.length || session.delivering || (session.remote && !session.remote.online)) return;
     session.outboxTimer = setTimeout(
       () => {
         const text = session.outbox.shift();
