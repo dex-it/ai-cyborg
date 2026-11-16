@@ -91,7 +91,10 @@ export default defineConfig({
           items: [
             { slug: 'features', label: 'Обзор' },
             'features/sessions',
+            'features/delegation',
+            'features/remote',
             'features/tree',
+            'features/run-file',
             'features/search',
             'features/extensions',
             'features/tasks-mrs',
