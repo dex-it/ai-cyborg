@@ -65,6 +65,8 @@ export interface Tracked {
   state: SessionState;
   reason?: string;
   lastAnswer?: string;
+  /** working после Stop с фоновыми задачами или пробуждениями: ход кончен, ввод Claude Code принимает. */
+  background?: boolean;
 }
 
 /** Состояние для list_sessions; фоновый субагент (agent_id) хода главной модели не меняет. */
@@ -72,15 +74,19 @@ export function track(session: Tracked, event: SessionEvent): void {
   const name = event.hook_event_name;
   if (name === 'SessionStart') {
     if (session.state === 'starting') session.state = 'waiting';
-  } else if (name === 'UserPromptSubmit' || (isToolEvent(name) && !event.agent_id)) session.state = 'working';
-  else if (name === 'Stop') {
-    session.state = event.background_tasks?.length || event.session_crons?.length ? 'working' : 'waiting';
+  } else if (name === 'UserPromptSubmit' || (isToolEvent(name) && !event.agent_id)) {
+    session.state = 'working';
+    session.background = false;
+  } else if (name === 'Stop') {
+    session.background = !!(event.background_tasks?.length || event.session_crons?.length);
+    session.state = session.background ? 'working' : 'waiting';
     if (typeof event.last_assistant_message === 'string') session.lastAnswer = withoutSuggestions(event.last_assistant_message);
   } else if (name === 'Notification') {
     const reason = waitingReason(event);
     if (!reason) return;
     session.state = 'asking';
     session.reason = reason;
+    session.background = false;
     return;
   } else return;
   session.reason = undefined;
