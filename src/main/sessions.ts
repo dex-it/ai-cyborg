@@ -510,8 +510,7 @@ export class SessionManager {
       this.emit('session:cwd', { id: session.id, cwd: event.cwd });
     }
     if (notify) this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
-    // Тишина нужна после Stop главного хода: события фонового субагента о нём не говорят и доставку не откладывают.
-    if (!event.agent_id) session.lastEventAt = Date.now();
+    session.lastEventAt = Date.now();
     if (session.parent !== undefined && !session.remote && event.session_id && event.session_id !== session.childSid) {
       session.childSid = event.session_id;
       this.onChild?.(event.session_id);

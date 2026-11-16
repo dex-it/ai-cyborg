@@ -594,7 +594,7 @@ test('SessionManager.say: работающей сессии - в очередь,
   assert.equal(queued(), 0);
 });
 
-test('SessionManager.say: сессия ждёт только фоновых задач или пробуждения - сообщение уходит, события фонового субагента его не задерживают; проснулась - снова очередь', async (t) => {
+test('SessionManager.say: сессия ждёт только фоновых задач или пробуждения - сообщение уходит, когда и фоновый субагент помолчит; проснулась - снова очередь', async (t) => {
   const quiet = 200;
   const { manager, id, writes, push, queued } = talkingManager(t, quiet);
   const state = () => manager.peers(id)!.find((p) => p.id === id)!.state;
@@ -606,7 +606,9 @@ test('SessionManager.say: сессия ждёт только фоновых за
     await sleep(quiet / 2);
     await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'a1' });
   }
-  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'очередь отдана, хотя фоновый субагент работает');
+  assert.deepEqual(writes, [], 'фоновый субагент шлёт события: его запрос разрешения мог бы опередить свой Notification');
+  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'очередь отдана в паузе после тишины');
   await sleep(quiet + 50);
   assert.equal(await manager.say(id, 'второе'), 'sent');
   assert.equal(writes.length, 4);
