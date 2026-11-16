@@ -9,7 +9,7 @@ import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { basename, byId, el } from './dom';
 import { ago } from './ago';
 import { acceptsDrop, dropIntoSession } from './drop-path';
-import { moveItem } from './reorder';
+import { childSlot, moveItem } from './reorder';
 import { addRunButton } from './run-button';
 import { clickSelection, sessionsCount } from './selection';
 import { windowTitle } from './title';
@@ -469,6 +469,11 @@ const sessionTitle = (s: Session): string =>
 const ccLabel = (s: Session): string => `CC${s.id}${s.parent ? ` ↳${s.parent}` : ''}`;
 
 /** Подсказка дочерних называет родителя: после его выхода она говорит, что он закрыт. */
+function descendsFrom(s: Session, ancestor: Session): boolean {
+  for (let id = s.parent; id; id = findSession(id)?.parent) if (id === ancestor.id) return true;
+  return false;
+}
+
 function refreshChildren(parent: number): void {
   for (const child of sessions) if (child.parent === parent) updateSessionLabels(child);
 }
@@ -873,7 +878,6 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const stripTab = makeTab('session', '', () => closeSession(session, false));
   stripTab.draggable = true;
   stripTab.style.setProperty('--session', color);
-  sessionList.append(stripTab);
   const claudeTab = makeTab('claude', 'Claude');
   innerTabs.append(claudeTab);
 
@@ -918,7 +922,9 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   claudeTab.addEventListener('click', () => showInner(session, null));
   bindPathDrop(session, termPane);
   bindPathDrop(session, claudeTab);
-  sessions.push(session);
+  const slot = parent ? childSlot(sessions, parent, (s) => descendsFrom(s, parent)) : sessions.length;
+  sessionList.insertBefore(stripTab, sessions[slot]?.stripTab ?? null);
+  sessions.splice(slot, 0, session);
   taskSessions.add(session);
   updateSessionLabels(session);
   if (remote?.size) term.resize(remote.size.cols, remote.size.rows);

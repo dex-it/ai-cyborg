@@ -21,8 +21,10 @@ import {
   openRecentWorkspace,
   openWorkspaceFile,
   parseWorkspaceArg,
+  readOpenDir,
   readRecent,
   releaseLock,
+  rememberOpenDir,
   replaceWorkspace,
   resolveStartup,
   sessionDirOf,
@@ -193,6 +195,27 @@ describe('«Недавние»', () => {
     touchRecent(dir, '/a.json');
     assert.deepEqual(readRecent(dir), ['/a.json']);
     assert.deepEqual(fs.readdirSync(dir), ['recent-workspaces.json']);
+  });
+});
+
+describe('каталог диалога открытия', () => {
+  it('где выбран прошлый файл', () => {
+    const sub = path.join(dir, 'ws');
+    fs.mkdirSync(sub);
+    rememberOpenDir(dir, path.join(sub, 'w.json'));
+    assert.equal(readOpenDir(dir), sub);
+  });
+  it('выбора не было или каталог пропал - каталог из «Недавних», пропавшие пропускаются', () => {
+    const a = path.join(dir, 'a');
+    fs.mkdirSync(a);
+    touchRecent(dir, path.join(a, 'w.json'));
+    touchRecent(dir, path.join(dir, 'нет', 'w.json'));
+    assert.equal(readOpenDir(dir), a);
+    rememberOpenDir(dir, path.join(dir, 'пропал', 'w.json'));
+    assert.equal(readOpenDir(dir), a);
+  });
+  it('ни выбора, ни «Недавних» - каталога нет', () => {
+    assert.equal(readOpenDir(dir), undefined);
   });
 });
 

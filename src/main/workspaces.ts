@@ -10,6 +10,7 @@ import { validateProjectsState } from './trackers';
 
 export const RECENT_LIMIT = 10;
 export const RECENT_FILE = 'recent-workspaces.json';
+export const OPEN_DIR_FILE = 'workspace-open-dir.json';
 export const LEGACY_FILE = 'projects.json';
 const FRESH_LOCK_MS = 2000;
 
@@ -213,6 +214,34 @@ export function forgetRecent(userData: string, file: string): string[] {
   const recent = readRecent(userData).filter((p) => p !== file);
   writeRecent(userData, recent);
   return recent;
+}
+
+const isDir = (dir: string): boolean => {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Каталог, с которого начинается выбор файла воркспейса: где выбран прошлый, иначе каталог последнего из «Недавних». */
+export function readOpenDir(userData: string): string | undefined {
+  let dir: unknown;
+  try {
+    dir = (JSON.parse(fs.readFileSync(path.join(userData, OPEN_DIR_FILE), 'utf8')) as { dir?: unknown } | null)?.dir;
+  } catch {
+    dir = undefined;
+  }
+  if (typeof dir === 'string' && path.isAbsolute(dir) && isDir(dir)) return dir;
+  return readRecent(userData).map((file) => path.dirname(file)).find(isDir);
+}
+
+export function rememberOpenDir(userData: string, file: string): void {
+  try {
+    writeJsonAtomic(path.join(userData, OPEN_DIR_FILE), { dir: path.dirname(file) });
+  } catch {
+    // Как и «Недавние» - удобство, открытие не блокирует.
+  }
 }
 
 // ---------- выбор воркспейса при старте ----------
