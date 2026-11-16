@@ -66,7 +66,9 @@ import {
   openRecentWorkspace,
   openWorkspaceFile,
   parseWorkspaceArg,
+  readOpenDir,
   readRecent,
+  rememberOpenDir,
   releaseLock,
   replaceWorkspace,
   resolveStartup,
@@ -772,8 +774,10 @@ async function chooseWorkspace(): Promise<void> {
     buttonLabel: 'Открыть',
     properties: ['openFile'],
     filters: [{ name: 'Воркспейс Cyborg', extensions: ['json'] }],
+    defaultPath: readOpenDir(userData),
   });
   if (result.canceled || !result.filePaths[0]) return;
+  rememberOpenDir(userData, result.filePaths[0]);
   await report(await openWorkspaceFile(result.filePaths[0], openDeps), result.filePaths[0]);
 }
 
@@ -784,9 +788,11 @@ async function replaceFromMenu(): Promise<void> {
     buttonLabel: 'Открыть',
     properties: ['openFile'],
     filters: [{ name: 'Воркспейс Cyborg', extensions: ['json'] }],
+    defaultPath: readOpenDir(userData),
   });
   const file = result.filePaths[0];
   if (result.canceled || !file) return;
+  rememberOpenDir(userData, file);
   const previous = heldLock;
   const outcome = replaceWorkspace(file, {
     current: current.file,
