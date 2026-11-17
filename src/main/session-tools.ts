@@ -140,9 +140,9 @@ function localTools(dirs: string[]): McpTool[] {
       name: LIST_SESSIONS_TOOL,
       description:
         'Открытые вкладки Cyborg в проекте этой сессии, включая её саму (self: true): номер, подпись вкладки, каталог запуска и текущий, состояние и хвост последнего ответа. ' +
-        'state: starting - запускается или ждёт подтверждения доверия к каталогу; working - работает, в том числе ждёт своих фоновых задач (такой сессии send_to_session отдаёт сообщение сразу); ' +
-        'waiting - ход завершён, ждёт сообщения; asking - стоит на вопросе, разрешении или лимите и ждёт человека (причина в reason). ' +
-        'queued - сколько сообщений send_to_session ждут конца её хода. У удалённой сессии есть host, а cwd - путь на хосте. ' +
+        'state: starting - запускается или ждёт подтверждения доверия к каталогу; working - работает, в том числе ждёт своих фоновых задач; ' +
+        'waiting - ход завершён, ждёт сообщения; asking - стоит на вопросе, разрешении или лимите и ждёт человека (причина в reason); exited - процесс завершился (код в exit_code), вкладка открыта, закрывает её close_session. ' +
+        'queued - сколько сообщений send_to_session ждут в очереди Cyborg. У удалённой сессии есть host, а cwd - путь на хосте. ' +
         'parent - номер сессии, открывшей эту инструментом; child: true - твоя дочерняя, её закрываешь ты.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
@@ -150,7 +150,8 @@ function localTools(dirs: string[]): McpTool[] {
       name: SEND_TO_SESSION_TOOL,
       description:
         'Отправляет сообщение в другую открытую вкладку проекта - как если бы человек набрал его там и нажал Enter. ' +
-        'Работающей сессии (working) Cyborg отдаст его, когда она закончит ход, а сессии, которая лишь ждёт своих фоновых задач, - сразу; сессиям в starting и asking не отправляет, иначе текст ушёл бы в её диалог. ' +
+        'Работающей сессии (working) Cyborg отдаёт его сразу, а Claude Code передаёт модели после текущего вызова инструмента, внутри того же хода; пока идёт вызов инструмента, сообщение ждёт его конца в очереди Cyborg, иначе Enter мог бы попасть в запрос разрешения. ' +
+        'Удалённой работающей сессии - когда она закончит ход. Сессиям в starting и asking не отправляет, иначе текст ушёл бы в её диалог, в exited - некому. ' +
         'Сообщение - обычный текст: слэш-команды и ввод с «!» или «#» не принимаются. ' +
         'Получатель не знает отправителя: если нужен ответ, назови в сообщении свой номер из list_sessions и попроси ответить через send_to_session. ' +
         'Если человек в этот момент набирает текст в той вкладке, сообщение допишется к его вводу.',
@@ -170,7 +171,7 @@ function localTools(dirs: string[]): McpTool[] {
         'Закрывает вкладку Cyborg с сессией проекта - как крестик на вкладке: процесс Claude Code завершается, вкладка убирается, очередь её сообщений пропадает. ' +
         'Диалог остаётся в истории сессий проекта, его можно возобновить. ' +
         'Своя вкладка (номер с self: true в list_sessions) закрывается через секунду после ответа. ' +
-        'Свою дочернюю (child: true в list_sessions) закрывает в любом состоянии. ' +
+        'Свою дочернюю (child: true в list_sessions) и завершённую (exited) закрывает в любом состоянии. ' +
         'Чужую вкладку в состоянии working, asking или starting инструмент не закрывает - её работа или вопрос человеку пропали бы; закрыть её всё же - force: true. ' +
         'Прежде чем закрыть соседку, прочитай её итог в list_sessions.',
       inputSchema: {
@@ -227,6 +228,7 @@ export function validateSend(value: unknown, peers: SessionInfo[], caller: numbe
   if (id === caller) return 'это номер этой же сессии';
   const target = peers.find((p) => p.id === id);
   if (!target) return `сессии ${String(id)} нет среди открытых вкладок проекта: номера - в list_sessions`;
+  if (target.state === 'exited') return `сессия ${target.id} завершилась: её вкладку закрывает close_session`;
   if (target.state === 'starting') return `сессия ${target.id} ещё запускается: повтори позже`;
   if (target.state === 'asking') return `сессия ${target.id} ждёт человека (${target.reason ?? 'вопрос'}): текст ушёл бы в её диалог, повтори после его ответа`;
   return { id: target.id, message: cleanMessage(message) };
@@ -238,7 +240,7 @@ export function validateClose(value: unknown, peers: SessionInfo[], caller: numb
   const target = peers.find((p) => p.id === id);
   if (!target) return `сессии ${String(id)} нет среди открытых вкладок проекта: номера - в list_sessions`;
   // Вызывающая сессия в своём ходу всегда working: правило о работающих к ней не относится; свою дочернюю родитель закрывает сам.
-  if (force || target.id === caller || target.parent === caller || target.state === 'waiting') return { id: target.id };
+  if (force || target.id === caller || target.parent === caller || target.state === 'waiting' || target.state === 'exited') return { id: target.id };
   const busy =
     target.state === 'asking'
       ? `ждёт человека (${target.reason ?? 'вопрос'})`
@@ -344,6 +346,7 @@ export function describePeers(peers: SessionInfo[], caller: number): string {
       repo: p.dirs[0],
       cwd: p.cwd,
       state: p.state,
+      ...(p.exitCode !== undefined ? { exit_code: p.exitCode } : {}),
       ...(p.reason ? { reason: p.reason } : {}),
       ...(p.queued ? { queued: p.queued } : {}),
       ...(p.lastAnswer ? { last_answer: tail(p.lastAnswer) } : {}),
@@ -420,12 +423,14 @@ export interface SessionsPort {
   say(id: number, text: string): Promise<SayResult>;
   /** Вид вызывающей: у удалённой другой набор инструментов. */
   kindOf?(id: number): SessionKind | null;
-  /** Хосты проекта, у которого каталоги запуска - dirs. */
-  hostsOf?(dirs: string[]): string[];
+  /** Хосты проекта вызывающей сессии. */
+  hostsOf?(caller: number): string[];
   /** Номер открывшей сессии; null - открыл человек. */
   parentOf?(id: number): number | null;
   /** Итог локальной дочерней; текст ответа модели. */
   reportLocal?(id: number, report: ReportArgs): string;
+  /** Вкладку закрывает сессия инструментом, а не человек. */
+  noteClosing?(id: number, caller: number): void;
 }
 
 /** Удалённая часть: проверка хоста и лимитов, итог, завершение. Тексты результатов формирует она. */
@@ -443,30 +448,32 @@ export function createSessionTools(
   closeSelfDelayMs = CLOSE_SELF_DELAY_MS,
   remote?: RemoteToolsPort,
 ): McpBackend {
-  const contextOf = (caller: number, dirs: string[]): ToolContext => ({
+  const contextOf = (caller: number): ToolContext => ({
     kind: sessions.kindOf?.(caller) ?? 'local',
-    hosts: remote ? (sessions.hostsOf?.(dirs) ?? []) : [],
+    hosts: remote ? (sessions.hostsOf?.(caller) ?? []) : [],
     child: !!sessions.reportLocal && (sessions.parentOf?.(caller) ?? null) !== null,
   });
   return {
     tools: (caller) => {
       const dirs = sessions.dirsOf(caller);
-      return dirs ? sessionTools(dirs, contextOf(caller, dirs)) : [];
+      return dirs ? sessionTools(dirs, contextOf(caller)) : [];
     },
     call: async (caller, name, value) => {
       const dirs = sessions.dirsOf(caller);
       const peers = sessions.peers(caller);
       if (!dirs || !peers) throw new Error('сессия завершена');
       // tools/call не обязан следовать tools/list: набор инструментов контекста - и есть право вызова.
-      if (!sessionTools(dirs, contextOf(caller, dirs)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
+      if (!sessionTools(dirs, contextOf(caller)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
       if (name === LIST_SESSIONS_TOOL) return describePeers(peers, caller);
       if (name === SEND_TO_SESSION_TOOL) {
         const valid = validateSend(value, peers, caller);
         if (typeof valid === 'string') throw new Error(valid);
         const result = await sessions.say(valid.id, valid.message);
-        return result === 'queued'
+        if (result === 'sent-working') return `Сообщение отправлено сессии ${valid.id}: она работает, Claude Code передаст его после текущего вызова инструмента.`;
+        if (result === 'sent') return `Сообщение отправлено сессии ${valid.id}.`;
+        return peers.find((p) => p.id === valid.id)?.host
           ? `Сессия ${valid.id} работает: сообщение в очереди Cyborg и уйдёт, когда она закончит ход.`
-          : `Сообщение отправлено сессии ${valid.id}.`;
+          : `Сообщение сессии ${valid.id} в очереди Cyborg: уйдёт, как только она примет ввод.`;
       }
       if (name === CLOSE_SESSION_TOOL) {
         const valid = validateClose(value, peers, caller);
@@ -474,9 +481,11 @@ export function createSessionTools(
         if (valid.id !== caller) {
           const target = peers.find((p) => p.id === valid.id);
           if (target?.host && remote) return remote.close(valid.id, false, caller);
+          sessions.noteClosing?.(valid.id, caller);
           close(valid.id);
           return `Вкладка сессии ${valid.id} закрыта.`;
         }
+        sessions.noteClosing?.(caller, caller);
         setTimeout(() => close(caller), closeSelfDelayMs);
         return 'Эта вкладка закроется через секунду.';
       }
@@ -496,7 +505,7 @@ export function createSessionTools(
         return remote.close(valid.id, valid.keep, caller);
       }
       if (name === SPAWN_AGENT_TOOL && remote) {
-        const valid = validateSpawn(value, dirs, sessions.hostsOf?.(dirs) ?? []);
+        const valid = validateSpawn(value, dirs, sessions.hostsOf?.(caller) ?? []);
         if (typeof valid === 'string') throw new Error(valid);
         await remote.prepare(valid.host, valid.repo, valid.limits);
         const id = await handoffs.request(caller, valid.repo, valid.prompt, { host: valid.host, branch: valid.branch, limits: valid.limits, keep: valid.keep });

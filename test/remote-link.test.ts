@@ -490,7 +490,7 @@ describe('HostLink: обрыв связи и подхват', () => {
 });
 
 describe('report_done, close_agent и лимиты', () => {
-  const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
+  const callerOf = (a: Side): number => a.sessions.adopt({ project: 'p', term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
   const outboxOf = (a: Side, id: number): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(id)?.outbox ?? [];
 
   const states = (a: Side): unknown[] => a.events.filter((e) => e.channel === 'remote:state').map((e) => e.payload);
@@ -742,7 +742,7 @@ describe('подхват: итог сессии, завершившейся бе
 });
 
 describe('RemoteSessions: файловый канал, запасной путь итога, сбой close', () => {
-  const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
+  const callerOf = (a: Side): number => a.sessions.adopt({ project: 'p', term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
   const entryOf = (a: Side, id: number): { closing?: boolean } | undefined => (a.remote as unknown as { byId: Map<number, { closing?: boolean }> }).byId.get(id);
 
   it('fsOp: путь вне клонов, относительный, с «..», чужая и локальная вкладка, нет связи - отказ; путь в клоне доходит до демона', async (t) => {
@@ -871,7 +871,7 @@ describe('RemoteSessions: файловый канал, запасной путь
 });
 
 describe('сон, «История» и пробуждение', () => {
-  const callerOf = (a: Side): number => a.sessions.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
+  const callerOf = (a: Side): number => a.sessions.adopt({ project: 'p', term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
   const outboxOf = (a: Side, id: number): string[] => (a.sessions as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(id)?.outbox ?? [];
   const evPosOf = (a: Side, id: number): number => (a.remote as unknown as { byId: Map<number, { evPos: number }> }).byId.get(id)?.evPos ?? 0;
 

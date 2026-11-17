@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
-import { SessionManager, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
-import { hookSettings } from './session-state.ts';
+import { SessionManager, SETTINGS_TTL_MS, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
+import { HOOK_COMMAND, hookSettings } from './session-state.ts';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 
@@ -65,8 +66,8 @@ test('SessionManager: номер разговора уходит в onChild то
   const { manager } = managerIn(t);
   const seen: string[] = [];
   manager.onChild = (sid) => seen.push(sid);
-  const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, own);
+  const own = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', [], 'задание', undefined, own);
   const event = (sid: string) => JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid });
   manager.ingest(own, [event('own-sid')], { replay: false });
   manager.ingest(child, [event('sid-1'), event('sid-1')], { replay: false });
@@ -76,7 +77,7 @@ test('SessionManager: номер разговора уходит в onChild то
 
 test('SessionManager: контекст вкладки - первый и последний запрос из хуков, название и постановка из журнала', (t) => {
   const { manager, userData, events } = managerIn(t);
-  const id = manager.create('/a', []);
+  const id = manager.create('p', '/a', []);
   const prompt = (text: string) => JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: text });
   manager.ingest(id, [prompt('почини\n  дерево'), prompt('<task-notification>x</task-notification>'), prompt('и тесты')], { replay: false });
   const contexts = () => events.filter((e) => e.channel === 'session:context').map((e) => e.payload);
@@ -96,8 +97,8 @@ test('SessionManager: у удалённой вкладки spawn_agent есть 
   const { manager } = managerIn(t);
   const seen: string[] = [];
   manager.onChild = (sid) => seen.push(sid);
-  const own = manager.create('/a', []);
-  const agent = manager.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote: { host: 'dev1', origin: 'tool', keep: false, spawnedBy: own, online: true } });
+  const own = manager.create('p', '/a', []);
+  const agent = manager.adopt({ project: 'p', term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote: { host: 'dev1', origin: 'tool', keep: false, spawnedBy: own, online: true } });
   manager.ingest(agent, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'remote-sid' })], { replay: false });
   assert.equal(manager.parentOf(agent), own);
   assert.deepEqual(seen, []);
@@ -105,8 +106,8 @@ test('SessionManager: у удалённой вкладки spawn_agent есть 
 
 test('SessionManager: открывшая сессия - parent в перечне соседей и parentOf; у открытой человеком его нет', (t) => {
   const { manager } = managerIn(t);
-  const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, own);
+  const own = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', [], 'задание', undefined, own);
   const peers = manager.peers(own) ?? [];
   assert.equal(peers.find((p) => p.id === child)?.parent, own);
   assert.equal('parent' in (peers.find((p) => p.id === own) ?? {}), false);
@@ -114,11 +115,24 @@ test('SessionManager: открывшая сессия - parent в перечне
   assert.equal(manager.parentOf(own), null);
 });
 
+test('SessionManager: проект сессии - ключ проекта; дочерняя - только в проекте открывшей, в том числе удалённая', (t) => {
+  const { manager } = managerIn(t);
+  const own = manager.create('p', '/a', ['/b']);
+  assert.equal(manager.projectOf(own), 'p');
+  assert.equal(manager.projectOf(own + 100), null);
+  const child = manager.create('p', '/a', ['/b', '/c'], 'задание', undefined, own);
+  assert.deepEqual(manager.peers(own)?.map((p) => p.id), [own, child], 'каталоги проекта поменялись, проект тот же');
+  assert.throws(() => manager.create('q', '/a', [], 'задание', undefined, own), /Проект вкладки не совпадает/);
+  const remote = { host: 'dev1', origin: 'tool' as const, keep: false, spawnedBy: own, online: true };
+  assert.throws(() => manager.adopt({ project: 'q', term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote }), /Проект вкладки не совпадает/);
+  assert.equal(manager.count(), 2);
+});
+
 test('SessionManager.reportLocal: итог - в очередь открывшей, один за круг; новый круг - после UserPromptSubmit; без открывшей - уведомление', (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager } = managerIn(t, events);
-  const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, own);
+  const own = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', [], 'задание', undefined, own);
   assert.throws(() => manager.reportLocal(own, { status: 'ok', summary: 'x' }), /открытой другой сессией/);
   assert.match(manager.reportLocal(child, { status: 'ok', summary: 'сделано', branch: 'feat-x' }), /Итог принят/);
   const queued = manager.peers(own)?.find((p) => p.id === own)?.queued;
@@ -145,7 +159,7 @@ test('SessionManager создаёт файл событий с 0600 при umask
   t.after(() => process.umask(prev));
   const { manager, eventsDir } = managerIn(t);
   assert.equal(mode(eventsDir), 0o700);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   assert.equal(mode(file), 0o600);
   fs.appendFileSync(file, '{}\n');
@@ -155,7 +169,7 @@ test('SessionManager создаёт файл событий с 0600 при umask
 test('SessionManager читает события: смена cwd, активность, удаление файла на выходе', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events);
-  const id = manager.create('/a', []);
+  const id = manager.create('p', '/a', []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'PostToolUse', cwd: '/b', tool_name: 'Edit' }) + '\n');
   for (let i = 0; i < 100 && !events.some((e) => e.channel === 'session:activity'); i++) await new Promise((r) => setTimeout(r, 20));
@@ -175,16 +189,39 @@ test('SessionManager не передаёт сессии CYBORG_CWD лаунче�
   let env: Record<string, string> = {};
   const manager = new SessionManager(userData, () => {}, ((_file: string, _args: string[], opts: { env: Record<string, string> }) => ((env = opts.env), fakePty())) as any);
   t.after(() => manager.killAll());
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal('CYBORG_CWD' in env, false);
   assert.ok(env.CYBORG_EVENTS && env.CYBORG_SETTINGS);
+});
+
+test('SessionManager: файл хуков назван по содержимому - экземпляр другой версии с тем же userData его не затирает; не тронутые неделю чужие удаляются', (t) => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const legacy = path.join(userData, 'claude-hooks.json');
+  const stale = path.join(userData, 'claude-hooks-aaaaaaaaaaaa.json');
+  const fresh = path.join(userData, 'claude-hooks-bbbbbbbbbbbb.json');
+  const old = new Date(Date.now() - SETTINGS_TTL_MS - 60_000);
+  for (const file of [legacy, stale, fresh]) fs.writeFileSync(file, '{"hooks":{}}');
+  for (const file of [legacy, stale]) fs.utimesSync(file, old, old);
+  let env: Record<string, string> = {};
+  const manager = new SessionManager(userData, () => {}, ((_file: string, _args: string[], opts: { env: Record<string, string> }) => ((env = opts.env), fakePty())) as any);
+  t.after(() => manager.killAll());
+  manager.create('p', os.tmpdir(), []);
+  assert.match(path.basename(env.CYBORG_SETTINGS), /^claude-hooks-[0-9a-f]{12}\.json$/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(env.CYBORG_SETTINGS, 'utf8')), hookSettings());
+  assert.equal(fs.readFileSync(legacy, 'utf8'), '{"hooks":{}}');
+  assert.equal(fs.existsSync(stale), false);
+  assert.ok(fs.existsSync(fresh));
+  fs.utimesSync(env.CYBORG_SETTINGS, old, old);
+  manager.create('p', os.tmpdir(), []);
+  assert.ok(fs.statSync(env.CYBORG_SETTINGS).mtimeMs > old.getTime(), 'запуск сессии освежает свой файл');
 });
 
 test('SessionManager считает только работающие сессии', (t) => {
   const { manager } = managerIn(t);
   assert.equal(manager.count(), 0);
-  const a = manager.create(os.tmpdir(), []);
-  manager.create(os.tmpdir(), []);
+  const a = manager.create('p', os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(manager.count(), 2);
   manager.kill(a);
   assert.equal(manager.count(), 1);
@@ -198,7 +235,7 @@ test('SessionManager: каталоги работающих сессий - ра�
   const tmp = os.tmpdir();
   assert.deepEqual(manager.liveDirs(), []);
   assert.equal(manager.uses(tmp), false);
-  const id = manager.create(tmp, ['/extra']);
+  const id = manager.create('p', tmp, ['/extra']);
   assert.deepEqual(manager.liveDirs(), [tmp, '/extra', tmp]);
   assert.equal(manager.uses(tmp), true);
   assert.equal(manager.uses('/extra'), true, 'дополнительный каталог тоже занят сессией');
@@ -249,7 +286,7 @@ test('SessionManager: после Stop «ждёт» объявляется, то�
   const events: { channel: string; payload: any; at?: number }[] = [];
   const delay = 150;
   const { manager, eventsDir } = managerIn(t, events, delay);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity');
@@ -273,7 +310,7 @@ test('SessionManager: после Stop «ждёт» объявляется, то�
 test('SessionManager: запрос разрешения объявляется сразу, выход сессии снимает отложенный Stop', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 150);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'разрешите Bash' }) + '\n');
   await until(() => events.some((e) => e.channel === 'session:waiting'));
@@ -288,7 +325,7 @@ test('SessionManager: запрос разрешения объявляется �
 test('SessionManager: хвост ответа на Stop с кнопками уходит событием session:suggest, без кнопок события нет', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 60_000);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity').length;
@@ -307,7 +344,7 @@ test('SessionManager: хвост ответа на Stop с кнопками ух
 test('SessionManager: предложение снимается, когда модель снова работает без запроса человека; без предложения лишних событий нет', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 60_000);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity').length;
@@ -334,7 +371,7 @@ test('SessionManager: предложение снимается, когда мо
 test('SessionManager: инструменты фонового субагента предложение не снимают, следующий Stop без кнопок снимает', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 60_000);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity').length;
@@ -359,13 +396,22 @@ test('SessionManager: инструменты фонового субагента
 
 test('упавший инструмент - работа: после запроса разрешения сессия снова working, хук подписан на все инструменты', (t) => {
   const { manager } = managerIn(t);
-  const id = manager.create('/a', []);
+  const id = manager.create('p', '/a', []);
   const ev = (e: object) => JSON.stringify(e);
   manager.ingest(id, [ev({ hook_event_name: 'Notification', notification_type: 'permission_prompt' })], { replay: false });
   assert.equal(manager.peers(id)?.[0].state, 'asking');
   manager.ingest(id, [ev({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash' })], { replay: false });
   assert.equal(manager.peers(id)?.[0].state, 'working');
   assert.deepEqual(hookSettings().hooks.PostToolUseFailure, hookSettings().hooks.PostToolUse);
+  assert.deepEqual(hookSettings().hooks.PreToolUse, hookSettings().hooks.PostToolUse);
+  assert.ok(hookSettings().hooks.SubagentStop);
+});
+
+test('хук не запрещает вызов инструмента, когда файл событий недоступен: код 2 у PreToolUse - запрет', () => {
+  for (const shell of ['/bin/sh', '/bin/bash']) {
+    const run = spawnSync(shell, ['-c', HOOK_COMMAND], { input: '{}', env: { CYBORG_EVENTS: '/nonexistent/cyborg/events.jsonl' } });
+    assert.equal(run.status, 0, shell);
+  }
 });
 
 // Менеджер с pty, записывающим вызовы; throwing - pty, бросающий на каждом вызове (процесс завершился, дескриптор закрыт).
@@ -380,7 +426,7 @@ function recordingManager(t: { after: (fn: () => void) => void }, throwing = fal
   let exit: (e: { exitCode: number }) => void = () => {};
   const spawn = () => ({ onData: () => {}, onExit: (cb: typeof exit) => (exit = cb), write: record('write'), resize: record('resize'), kill: record('kill') });
   const manager = new SessionManager(userData, () => {}, spawn as any);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   t.after(() => exit({ exitCode: 0 })); // закрывает наблюдателя файла событий
   return { manager, id, calls };
 }
@@ -445,7 +491,7 @@ test('SessionManager с MCP: конфиг сессии в файле 0600, кл�
   const log: string[] = [];
   manager.mcp = { connect: (id) => (log.push(`connect ${id}`), { token: `t${id}` }), disconnect: (id) => void log.push(`disconnect ${id}`) };
   manager.pluginDir = '/app/plugin';
-  const id = manager.create('/repo/a', ['/repo/b']);
+  const id = manager.create('p', '/repo/a', ['/repo/b']);
   assert.equal(box.call.env.CYBORG_PLUGIN, '/app/plugin');
   assert.match(box.call.args[1], /^exec claude --settings "\$CYBORG_SETTINGS" --plugin-dir "\$CYBORG_PLUGIN" --mcp-config /);
   const file = box.call.env.CYBORG_MCP;
@@ -465,7 +511,7 @@ test('SessionManager с MCP: конфиг сессии в файле 0600, кл�
 
 test('SessionManager без MCP запускает claude без --mcp-config', (t) => {
   const { manager, box } = spawningManager(t);
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" "$@"');
   assert.equal(box.call.args[4], SESSION_PROMPT);
   assert.equal('CYBORG_MCP' in box.call.env, false);
@@ -483,7 +529,7 @@ test('SessionManager без MCP и плагина не наследует их �
     }
   });
   const { manager, box } = spawningManager(t);
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal('CYBORG_MCP' in box.call.env, false);
   assert.equal('CYBORG_PLUGIN' in box.call.env, false);
 });
@@ -491,7 +537,7 @@ test('SessionManager без MCP и плагина не наследует их �
 test('SessionManager с плагином без MCP: скиллы подключены, инструкции о параллельных сессиях нет', (t) => {
   const { manager, box } = spawningManager(t);
   manager.pluginDir = '/app/plugin';
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" --plugin-dir "$CYBORG_PLUGIN" "$@"');
   assert.equal(box.call.args[4], SESSION_PROMPT);
 });
@@ -499,16 +545,16 @@ test('SessionManager с плагином без MCP: скиллы подключ
 test('SessionManager с MCP без плагина: инструкции о параллельных сессиях нет - скилла, на который она ссылается, у сессии нет', (t) => {
   const { manager, box } = spawningManager(t);
   manager.mcp = { connect: () => ({}), disconnect: () => {} };
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(box.call.args[4], SESSION_PROMPT);
 });
 
-test('SessionManager: состояние сессии и хвост ответа для list_sessions, соседи - сессии с теми же каталогами', async (t) => {
+test('SessionManager: состояние сессии и хвост ответа для list_sessions, соседи - сессии того же проекта при любых каталогах', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events);
-  const id = manager.create('/repo/a', ['/repo/b']);
-  const sibling = manager.create('/repo/b', ['/repo/a']);
-  manager.create('/other', []);
+  const id = manager.create('p', '/repo/a', ['/repo/b']);
+  const sibling = manager.create('p', '/repo/b', ['/repo/a', '/repo/c']);
+  manager.create('q', '/repo/a', ['/repo/b']);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const state = () => manager.peers(id)!.find((p) => p.id === id)!;
   const push = async (event: object) => {
@@ -534,6 +580,7 @@ test('SessionManager: состояние сессии и хвост ответа
   await push({ hook_event_name: 'PostToolUse', tool_name: 'Read', agent_id: 'bg' });
   assert.equal(state().state, 'waiting');
   manager.kill(sibling);
+  manager.release(sibling);
   assert.deepEqual(manager.peers(id)!.map((p) => p.id), [id]);
   manager.kill(id);
   assert.equal(manager.peers(id), null);
@@ -548,7 +595,7 @@ function talkingManager(t: { after: (fn: () => void) => void }, outboxDelayMs: n
   const manager = new SessionManager(userData, (_channel, payload) => void events.push(payload), (() => pty) as any);
   t.after(() => manager.killAll());
   manager.outboxDelayMs = outboxDelayMs;
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(userData, 'sessions', `${process.pid}-${id}.jsonl`);
   const push = async (event: object) => {
     const seen = events.length;
@@ -556,10 +603,22 @@ function talkingManager(t: { after: (fn: () => void) => void }, outboxDelayMs: n
     for (let i = 0; i < 100 && events.length === seen; i++) await new Promise((r) => setTimeout(r, 10));
   };
   const queued = () => manager.peers(id)!.find((p) => p.id === id)!.queued;
-  return { manager, id, writes, push, queued };
+  return { manager, id, writes, push, queued, file };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function remoteTalking(t: { after: (fn: () => void) => void }, outboxDelayMs: number) {
+  const writes: string[] = [];
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const manager = new SessionManager(userData, () => {}, (() => fakePty()) as any);
+  manager.outboxDelayMs = outboxDelayMs;
+  const term = { write: (data: string) => void writes.push(data), resize: () => {}, kill: () => {} };
+  const id = manager.adopt({ project: 'p', term, dirs: ['/h/a'], cwd: '/h/a', remote: { host: 'dev1', origin: 'human', keep: false, online: true } });
+  const push = (event: object) => manager.ingest(id, [JSON.stringify(event)], { replay: false });
+  return { manager, id, writes, push };
+}
 
 test('SessionManager.say: ждущей сессии - вставкой и Enter отдельной записью; запуск, вопрос и завершённая сессия - отказ', async (t) => {
   const { manager, id, writes, push } = talkingManager(t, 0);
@@ -573,62 +632,92 @@ test('SessionManager.say: ждущей сессии - вставкой и Enter 
   assert.equal(writes.length, 2);
 });
 
-test('SessionManager.say: работающей сессии - в очередь, по сообщению после конца хода', async (t) => {
-  const quiet = 200;
-  const { manager, id, writes, push, queued } = talkingManager(t, quiet);
+test('SessionManager.say: работающей сессии без вызова инструмента - сразу, без тишины; вызов держит очередь до своего Post*', async (t) => {
+  const { manager, id, writes, push, queued } = talkingManager(t, 60_000);
   await push({ hook_event_name: 'UserPromptSubmit' });
-  assert.equal(await manager.say(id, 'первое'), 'queued');
-  assert.equal(await manager.say(id, 'второе'), 'queued');
-  assert.equal(queued(), 2);
-  await push({ hook_event_name: 'Stop' });
-  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.equal(await manager.say(id, 'первое'), 'sent-working');
   assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r']);
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 't2' });
+  assert.equal(await manager.say(id, 'второе'), 'queued');
   assert.equal(queued(), 1);
-  // Отправленное начинает ход раньше, чем истечёт тишина после Enter: второе ждёт его конца.
-  await push({ hook_event_name: 'UserPromptSubmit' });
-  await sleep(quiet + 50);
-  assert.equal(writes.length, 2);
-  await push({ hook_event_name: 'Stop' });
-  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 2, 'второй вызов ещё идёт');
+  await push({ hook_event_name: 'PostToolUseFailure', tool_name: 'Read', tool_use_id: 't2' });
+  await sleep(SUBMIT_DELAY_MS + 50);
   assert.deepEqual(writes.slice(2), ['\x1b[200~второе\x1b[201~', '\r']);
   assert.equal(queued(), 0);
 });
 
-test('SessionManager.say: сессия ждёт только фоновых задач или пробуждения - сообщение уходит, когда и фоновый субагент помолчит; проснулась - снова очередь', async (t) => {
-  const quiet = 200;
-  const { manager, id, writes, push, queued } = talkingManager(t, quiet);
+test('SessionManager.say: вызов субагента держит очередь до его SubagentStop, внешние REPL, Poll и Agent - нет', async (t) => {
+  const { manager, id, writes, push } = talkingManager(t, 0);
+  await push({ hook_event_name: 'UserPromptSubmit' });
+  for (const [n, tool] of ['REPL', 'Poll', 'Agent'].entries()) await push({ hook_event_name: 'PreToolUse', tool_name: tool, tool_use_id: `c${n}` });
+  assert.equal(await manager.say(id, 'первое'), 'sent-working');
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'repl_1' });
+  assert.equal(await manager.say(id, 'второе'), 'queued', 'вызов внутри REPL');
+  await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'repl_1' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 4);
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 's1', agent_id: 'sub' });
+  assert.equal(await manager.say(id, 'третье'), 'queued', 'запрос разрешения субагента - в том же TUI');
+  await push({ hook_event_name: 'SubagentStop', agent_id: 'other' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 4);
+  await push({ hook_event_name: 'SubagentStop', agent_id: 'sub' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes.slice(4), ['\x1b[200~третье\x1b[201~', '\r']);
+});
+
+test('SessionManager.say: вызов без Post* (отказ в разрешении, Esc) снимает Stop, а не UserPromptSubmit - его шлют и фоновые задачи; вызов фонового субагента - только Stop без фоновых задач', async (t) => {
+  const { manager, id, writes, push } = talkingManager(t, 0);
   const state = () => manager.peers(id)!.find((p) => p.id === id)!.state;
   await push({ hook_event_name: 'UserPromptSubmit' });
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'denied' });
   assert.equal(await manager.say(id, 'первое'), 'queued');
+  await push({ hook_event_name: 'UserPromptSubmit' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, [], 'UserPromptSubmit фоновой задачи посреди вызова не открывает ввод');
   await push({ hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }] });
-  assert.equal(state(), 'working', 'пауза до фоновой задачи - working: close_session без force её не оборвёт');
-  for (let i = 0; i < 5; i++) {
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'пауза до фоновой задачи принимает ввод');
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'bg1', agent_id: 'bg' });
+  assert.equal(state(), 'working');
+  assert.equal(await manager.say(id, 'второе'), 'queued');
+  await push({ hook_event_name: 'UserPromptSubmit' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 2, 'фоновый субагент работает дальше');
+  await push({ hook_event_name: 'Stop' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes.slice(2), ['\x1b[200~второе\x1b[201~', '\r']);
+});
+
+test('SessionManager.say: удалённой - только после конца хода и тишины outboxDelayMs, вызовы инструментов не в счёт', async (t) => {
+  const quiet = 200;
+  const { manager, id, writes, push } = remoteTalking(t, quiet);
+  push({ hook_event_name: 'SessionStart' });
+  push({ hook_event_name: 'UserPromptSubmit' });
+  assert.equal(await manager.say(id, 'первое'), 'queued');
+  push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, [], 'ход не кончен');
+  push({ hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }] });
+  for (let i = 0; i < 4; i++) {
     await sleep(quiet / 2);
-    await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'a1' });
+    push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'a1' });
   }
   assert.deepEqual(writes, [], 'фоновый субагент шлёт события: его запрос разрешения мог бы опередить свой Notification');
   await sleep(quiet + SUBMIT_DELAY_MS + 50);
-  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'очередь отдана в паузе после тишины');
+  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r']);
   await sleep(quiet + 50);
-  assert.equal(await manager.say(id, 'второе'), 'sent');
-  assert.equal(writes.length, 4);
-  await push({ hook_event_name: 'PostToolUse', tool_name: 'Read' });
+  assert.equal(await manager.say(id, 'второе'), 'sent', 'пауза до фоновой задачи');
+  push({ hook_event_name: 'PostToolUse', tool_name: 'Read' });
   assert.equal(await manager.say(id, 'третье'), 'queued', 'модель проснулась после фоновой задачи - снова ход');
-  await sleep(quiet + SUBMIT_DELAY_MS + 50);
-  assert.equal(writes.length, 4);
-  await push({ hook_event_name: 'Stop', session_crons: [{ id: 'c' }] });
+  push({ hook_event_name: 'Stop', session_crons: [{ id: 'c' }] });
   await sleep(quiet + SUBMIT_DELAY_MS + 50);
   assert.deepEqual(writes.slice(4), ['\x1b[200~третье\x1b[201~', '\r'], 'пауза до пробуждения тоже принимает ввод');
-  assert.equal(queued(), 0);
-});
-
-test('SessionManager.say: после события сессия должна помолчать, иначе сообщение ждёт в очереди', async (t) => {
-  const { manager, id, writes, push } = talkingManager(t, 300);
-  await push({ hook_event_name: 'SessionStart' });
-  assert.equal(await manager.say(id, 'x'), 'queued');
-  assert.deepEqual(writes, []);
-  await sleep(300 + SUBMIT_DELAY_MS + 100);
-  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~', '\r']);
 });
 
 test('SessionManager.say: сообщение во время отправки другого ждёт в очереди, вставки не перемешиваются', async (t) => {
@@ -649,11 +738,27 @@ test('SessionManager.enqueue: текст в обход validateSend вставл
   assert.deepEqual(writes, ['\x1b[200~итог[201~\n!rm -rf ~\x1b[201~', '\r']);
 });
 
-test('SessionManager.say: сессия начала ход между вставкой и Enter - Enter не отправлен', async (t) => {
-  const { manager, id, writes, push } = talkingManager(t, 0);
-  await push({ hook_event_name: 'SessionStart' });
+test('SessionManager.say: вызов начат между вставкой и Enter - Enter ждёт его конца, следующее сообщение - за ним', async (t) => {
+  const { manager, id, writes, push, queued, file } = talkingManager(t, 0);
+  await push({ hook_event_name: 'UserPromptSubmit' });
   const pending = manager.say(id, 'x');
-  await push({ hook_event_name: 'Notification', notification_type: 'permission_prompt' });
+  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~']);
+  // Без ожидания fs.watch: Enter должен увидеть вызов и тогда, когда наблюдатель ещё не сработал.
+  fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1' }) + '\n');
+  assert.equal(await pending, 'queued');
+  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~']);
+  assert.equal(queued(), 1);
+  assert.equal(await manager.say(id, 'y'), 'queued');
+  await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~', '\r', '\x1b[200~y\x1b[201~', '\r']);
+});
+
+test('SessionManager.say: удалённая сессия начала ход между вставкой и Enter - Enter не отправлен', async (t) => {
+  const { manager, id, writes, push } = remoteTalking(t, 0);
+  push({ hook_event_name: 'SessionStart' });
+  const pending = manager.say(id, 'x');
+  push({ hook_event_name: 'Notification', notification_type: 'permission_prompt' });
   await assert.rejects(pending, /Enter не отправлен/);
   assert.deepEqual(writes, ['\x1b[200~x\x1b[201~']);
 });
@@ -668,4 +773,75 @@ test('SessionManager убирает конфиги MCP убитого экзем
   for (const name of [`${dead}-1.jsonl`, `${dead}-1.mcp.json`, `${process.pid}-9.mcp.json`]) fs.writeFileSync(path.join(dir, name), '');
   new SessionManager(userData, () => {}, (() => fakePty()) as any);
   assert.deepEqual(fs.readdirSync(dir).sort(), [`${process.pid}-9.mcp.json`]);
+});
+
+test('SessionManager: вышедшая сессия остаётся среди соседей как exited с кодом до закрытия вкладки; вкладка, закрытая до выхода, убирается с выходом', async (t) => {
+  const { manager } = managerIn(t);
+  const own = manager.create('p', '/a', []);
+  const gone = manager.create('p', '/a', []);
+  manager.kill(gone);
+  assert.deepEqual(
+    manager.peers(own)!.map((p) => [p.id, p.state, p.exitCode]),
+    [
+      [own, 'starting', undefined],
+      [gone, 'exited', 0],
+    ],
+  );
+  assert.equal(manager.count(), 1);
+  assert.equal(manager.dirsOf(gone), null, 'у завершённой инструментов нет');
+  assert.equal(manager.peers(gone), null);
+  await assert.rejects(manager.say(gone, 'x'), /завершилась/);
+  assert.equal(manager.enqueue(gone, 'x'), false);
+  manager.release(gone);
+  assert.deepEqual(manager.peers(own)!.map((p) => p.id), [own]);
+  const closing = manager.create('p', '/a', []);
+  manager.release(closing);
+  assert.deepEqual(manager.peers(own)!.map((p) => p.id), [own, closing], 'процесс ещё жив - сессия видна');
+  manager.kill(closing);
+  assert.deepEqual(manager.peers(own)!.map((p) => p.id), [own]);
+  manager.release('мусор');
+});
+
+test('SessionManager: открывшей - сообщение о выходе дочерней (сама, закрыла себя, закрыл человек, закрыла другая сессия), без сообщения - своё закрытие и killAll', async (t) => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const writes: string[] = [];
+  const manager = new SessionManager(userData, () => {}, (() => ({ ...fakePty(), write: (data: string) => void writes.push(data) })) as any);
+  t.after(() => manager.killAll());
+  const parent = manager.create('p', '/a', []);
+  const other = manager.create('p', '/a', []);
+  const child = () => manager.create('p', '/a', [], 'задание', undefined, parent);
+  const self = child();
+  manager.kill(self);
+  const byHuman = child();
+  manager.release(byHuman);
+  manager.kill(byHuman);
+  const byOther = child();
+  manager.noteClosing(byOther, other);
+  manager.release(byOther);
+  manager.kill(byOther);
+  const byItself = child();
+  manager.noteClosing(byItself, byItself);
+  manager.release(byItself);
+  manager.kill(byItself);
+  const byParent = child();
+  manager.noteClosing(byParent, parent);
+  manager.release(byParent);
+  manager.kill(byParent);
+  assert.equal(manager.peers(parent)!.find((p) => p.id === parent)!.queued, 4);
+  manager.ingest(parent, [JSON.stringify({ hook_event_name: 'SessionStart' })], { replay: false });
+  for (let i = 0; i < 200 && writes.length < 8; i++) await sleep(10);
+  assert.deepEqual(
+    writes.filter((w) => w !== '\r'),
+    [
+      `Сессия CC${self} завершилась (код 0): её вкладка открыта, закрыть - close_session.`,
+      `Вкладку сессии CC${byHuman} закрыл человек.`,
+      `Вкладку сессии CC${byOther} закрыла сессия CC${other}.`,
+      `Сессия CC${byItself} закрыла свою вкладку.`,
+    ].map((text) => `\x1b[200~${text}\x1b[201~`),
+  );
+  const last = child();
+  manager.killAll();
+  assert.equal(writes.length, 8, 'killAll гасит и открывшую: сообщать некому');
+  for (const id of [parent, other, self, last]) assert.equal(manager.projectOf(id), null, 'killAll не оставляет записей вкладок');
 });

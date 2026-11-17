@@ -259,11 +259,12 @@ export function validateListArgs(projectId: unknown, assignedToMe: unknown, trac
   return { projectId, assignedToMe, tracked: refs, recheck };
 }
 
-/** Сессия с задачей стартует только в репозиториях проектов. */
-export function sessionDirsAllowed(state: ProjectsState, cwd: unknown, addDirs: unknown): boolean {
-  if (typeof cwd !== 'string' || !Array.isArray(addDirs) || addDirs.some((d) => typeof d !== 'string')) return false;
-  const repos = new Set(state.projects.flatMap((p) => p.repos));
-  return repos.has(cwd) && addDirs.every((d) => repos.has(d));
+/** Проект сессии из интерфейса: сессия стартует только в его репозиториях. null - проекта нет или каталог не его. */
+export function sessionProject(state: ProjectsState, projectId: unknown, cwd: unknown, addDirs: unknown): Project | null {
+  const project = state.projects.find((p) => p.id === projectId);
+  if (!project || typeof cwd !== 'string' || !Array.isArray(addDirs) || addDirs.some((d) => typeof d !== 'string')) return null;
+  const repos = new Set(project.repos);
+  return repos.has(cwd) && addDirs.every((d) => repos.has(d)) ? project : null;
 }
 
 // ---------- настройки ----------

@@ -229,6 +229,7 @@ export class RemoteSessions implements RemoteToolsPort {
     const dirs = [args.repo, ...project.repos.filter((d) => d !== args.repo)];
     const entry: Entry = { id: 0, sid, host: args.host, origin: extra.origin, keep: extra.keep === true, spawnedBy: extra.spawnedBy, reported: false, outPos: 0, evPos: 0, roots: [] };
     entry.id = this.deps.sessions.adopt({
+      project: project.id,
       term: this.term(entry),
       dirs,
       cwd: args.repo,
@@ -394,7 +395,7 @@ export class RemoteSessions implements RemoteToolsPort {
       roots: (item.clones as string[]) ?? [],
     };
     const cwd = String(item.cwd);
-    entry.id = this.deps.sessions.adopt({ term: this.term(entry), dirs, cwd, remote: { host: link.host, origin: entry.origin, keep: entry.keep, online: true } });
+    entry.id = this.deps.sessions.adopt({ project: project.id, term: this.term(entry), dirs, cwd, remote: { host: link.host, origin: entry.origin, keep: entry.keep, online: true } });
     this.register(entry);
     this.deps.mcp.accept(item.token, entry.id);
     let size: TermSize | undefined;
@@ -476,7 +477,7 @@ export class RemoteSessions implements RemoteToolsPort {
     // Номер вызвавшей из прошлого сна указывал бы на чужую вкладку: разбуженную ведёт человек, и демон снимает с неё таймеры задачи.
     const entry: Entry = { id: 0, sid, host, origin: 'human', keep: item.keep === true, reported: false, outPos: 0, evPos: 0, roots: [] };
     const cwd0 = String(item.cwd);
-    entry.id = this.deps.sessions.adopt({ term: this.term(entry), dirs, cwd: cwd0, remote: { host, origin: entry.origin, keep: entry.keep, online: true } });
+    entry.id = this.deps.sessions.adopt({ project: project.id, term: this.term(entry), dirs, cwd: cwd0, remote: { host, origin: entry.origin, keep: entry.keep, online: true } });
     this.register(entry);
     try {
       const urls = new Map<string, string>();

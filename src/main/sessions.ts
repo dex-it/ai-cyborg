@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type * as pty from 'node-pty';
@@ -5,8 +6,8 @@ import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
-import { REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
-import { clipPrompt, hookSettings, isToolEvent, notePrompt, track, waitingReason, type SessionContext, type SessionEvent, type SessionState } from './session-state.ts';
+import { childExitText, REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
+import { clipPrompt, hookSettings, isToolEnd, isToolEvent, notePrompt, track, waitingReason, type SessionContext, type SessionEvent, type SessionState } from './session-state.ts';
 import { readJournalFacts } from './history.ts';
 
 export { waitingReason, type SessionEvent, type SessionState };
@@ -43,6 +44,7 @@ export interface RemoteMeta {
 }
 
 export interface AdoptOptions {
+  project: string;
   term: TermPort;
   dirs: string[];
   cwd: string;
@@ -51,6 +53,8 @@ export interface AdoptOptions {
 
 interface Session {
   id: number;
+  /** id проекта воркспейса: соседей задаёт он, а не каталоги запуска - правка репозиториев проекта сессий не разделяет. */
+  project: string;
   term: TermPort;
   remote?: RemoteMeta;
   eventsFile?: string;
@@ -68,16 +72,27 @@ interface Session {
   lastAnswer?: string;
   background?: boolean;
   context: SessionContext;
-  /** Сообщения других сессий, ждущие конца хода: в работающую сессию не пишем, Enter мог бы попасть в её запрос разрешения. */
+  /** Сообщения других сессий, ждущие, когда сессия примет ввод: Enter, пока идёт вызов инструмента, мог бы попасть в его запрос разрешения. */
   outbox: string[];
   outboxTimer?: NodeJS.Timeout;
   lastEventAt: number;
   delivering?: boolean;
+  /** Сообщение вставлено, а Enter ждёт конца вызова инструмента, начатого между вставкой и Enter. */
+  submitPending?: boolean;
+  /** Вызовы инструментов от PreToolUse до Post*: tool_use_id -> agent_id ('' - главная модель). */
+  inFlight: Map<string, string>;
   /** Открыта другой сессией (open_session, spawn_agent); у локальной разговоры уходят в onChild. */
   parent?: number;
   childSid?: string;
   /** Итог этого круга работы сдан report_done; круг открывает следующий UserPromptSubmit. */
   reported?: boolean;
+  exitCode?: number;
+  /** Вкладку закрыли: после выхода процесса запись не нужна. */
+  released?: boolean;
+  /** Сессия, закрывшая вкладку close_session; у закрытой человеком нет. */
+  closedBy?: number;
+  /** Гасится вместе со всеми (killAll). */
+  ending?: boolean;
 }
 
 export interface SessionInfo {
@@ -94,12 +109,19 @@ export interface SessionInfo {
   link?: 'offline';
   /** Сессия, открывшая эту инструментом. */
   parent?: number;
+  /** Только у завершённой (state exited). */
+  exitCode?: number;
 }
 
-export type SayResult = 'sent' | 'queued';
+/** sent-working - отправлено в работающую сессию: Claude Code передаст его модели после текущего вызова инструмента. */
+export type SayResult = 'sent' | 'sent-working' | 'queued';
 
 /** Пауза между текстом и Enter, как у кнопок команд (command-bar.ts): пакет «текст и Enter» TUI вправе принять за вставку. */
 export const SUBMIT_DELAY_MS = 150;
+
+export const SETTINGS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const EXITED_TERM: TermPort = { write: () => {}, resize: () => {}, kill: () => {} };
 
 export const sameDirs = (a: string[], b: string[]): boolean => a.length === b.length && [...a].sort().join('\0') === [...b].sort().join('\0');
 
@@ -129,13 +151,35 @@ export function sessionEnv(extra: Record<string, string>): Record<string, string
   return { ...env, ...extra };
 }
 
-/** Ввод Claude Code ждёт: ход кончен, а фоновые задачи и пробуждения своего хода не начинают, пока не сработают. */
-const acceptsInput = (session: Session): boolean => session.state === 'waiting' || (session.state === 'working' && session.background === true);
+// Внешний вызов не спрашивает человека, а вызовы внутри него дают свои PreToolUse: держать очередь на всё время REPL или субагента незачем.
+const CONTAINER_TOOLS = new Set(['REPL', 'Poll', 'Agent', 'Task']);
+
+// Диалог появляется только внутри вызова, после его PreToolUse; у удалённой события идут по ssh с задержкой - ей пишем только после хода.
+const acceptsInput = (session: Session): boolean =>
+  session.state === 'waiting' ||
+  (session.state === 'working' && (session.remote ? session.background === true : session.inFlight.size === 0));
+
+// Отказ и Esc не дают Post*: зависший вызов снимает Stop; UserPromptSubmit шлют и фоновые задачи.
+function noteCall(inFlight: Map<string, string>, event: SessionEvent): void {
+  const name = event.hook_event_name;
+  const agent = event.agent_id ?? '';
+  const key = event.tool_use_id ?? `?${agent}`;
+  if (name === 'PreToolUse') {
+    if (!CONTAINER_TOOLS.has(event.tool_name ?? '')) inFlight.set(key, agent);
+  } else if (isToolEnd(name)) inFlight.delete(key);
+  else if (name === 'SubagentStop' || name === 'Stop') {
+    // Stop без фоновых задач: не работает ни один субагент.
+    const all = name === 'Stop' && !event.background_tasks?.length;
+    const owner = name === 'SubagentStop' ? agent : '';
+    for (const [id, of] of inFlight) if (all || of === owner) inFlight.delete(id);
+  }
+}
 
 export class SessionManager {
   private readonly sessions = new Map<number, Session>();
   private nextId = 1;
   private readonly settingsFile: string;
+  private readonly settings = hookSettings();
   private readonly eventsDir: string;
   private readonly emit: Emit;
   private readonly spawn: Spawn;
@@ -156,12 +200,34 @@ export class SessionManager {
     this.eventsDir = path.join(userData, 'sessions');
     prepareEventsDir(this.eventsDir);
     this.removeOrphanedEvents();
-    this.settingsFile = path.join(userData, 'claude-hooks.json');
-    // Атомарно: соседний инстанс пишет тот же файл, а запускающийся claude не должен прочитать обрезанный.
-    writeJsonAtomic(this.settingsFile, hookSettings());
+    // Экземпляр другой версии с тем же userData не подменит сессиям набор хуков.
+    this.settingsFile = path.join(userData, `claude-hooks-${createHash('sha256').update(JSON.stringify(this.settings)).digest('hex').slice(0, 12)}.json`);
+    this.writeSettings();
+    this.removeStaleSettings(userData);
   }
 
-  create(cwd: string, addDirs: string[], prompt?: string, resume?: string, parent?: number): number {
+  // Атомарно: соседний инстанс пишет тот же файл, а запускающийся claude не должен прочитать обрезанный.
+  private writeSettings(): void {
+    writeJsonAtomic(this.settingsFile, this.settings);
+  }
+
+  // Свой файл живой экземпляр освежает перед каждой сессией: давно не тронутый - ничей.
+  private removeStaleSettings(userData: string): void {
+    const stale = Date.now() - SETTINGS_TTL_MS;
+    for (const name of fs.readdirSync(userData)) {
+      const file = path.join(userData, name);
+      if (file === this.settingsFile || !/^claude-hooks-[0-9a-f]{12}\.json$/.test(name)) continue;
+      try {
+        if (fs.statSync(file).mtimeMs < stale) fs.rmSync(file, { force: true });
+      } catch {
+        // Файл убрал соседний экземпляр.
+      }
+    }
+  }
+
+  create(project: string, cwd: string, addDirs: string[], prompt?: string, resume?: string, parent?: number): number {
+    this.checkParent(project, parent);
+    this.writeSettings();
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     createEventsFile(eventsFile);
@@ -191,6 +257,7 @@ export class SessionManager {
     });
     const session: Session = {
       id,
+      project,
       term: { write: (data) => proc.write(data), resize: (cols, rows) => proc.resize(cols, rows), kill: () => proc.kill() },
       eventsFile,
       offset: 0,
@@ -198,6 +265,7 @@ export class SessionManager {
       dirs: [cwd, ...addDirs],
       state: 'starting',
       outbox: [],
+      inFlight: new Map(),
       context: {},
       lastEventAt: Date.now(),
       ...(parent !== undefined ? { parent } : {}),
@@ -216,19 +284,45 @@ export class SessionManager {
         fs.rmSync(mcpFile, { force: true });
         mcp?.disconnect(id);
       }
-      this.sessions.delete(id);
+      this.exited(session, exitCode);
       this.emit('session:exit', { id, exitCode });
     });
     return id;
   }
 
-  /** Работающие сессии: завершившаяся убирается из набора в onExit. */
+  // Вкладка вышедшей сессии остаётся: открывшая должна её видеть и закрыть, а не счесть пропавшей.
+  private exited(session: Session, exitCode: number): void {
+    if (session.released) this.sessions.delete(session.id);
+    else {
+      Object.assign(session, { state: 'exited', exitCode, term: EXITED_TERM, outbox: [], submitPending: false, delivering: false, reason: undefined });
+      session.inFlight.clear();
+    }
+    if (session.parent === undefined || session.closedBy === session.parent || session.ending) return;
+    this.enqueue(session.parent, childExitText(session.id, { code: exitCode, released: !!session.released, closedBy: session.closedBy }));
+  }
+
+  /** Вкладку закрыли: завершённая сессия убирается сразу, работающая - когда выйдет её процесс. */
+  release(id: unknown): void {
+    const valid = validateSessionId(id);
+    const session = valid === null ? undefined : this.sessions.get(valid);
+    if (!session || session.remote) return;
+    if (session.state === 'exited') this.sessions.delete(session.id);
+    else session.released = true;
+  }
+
+  /** Вкладку закрывает сессия инструментом: открывшей, закрывшей свою дочернюю, сообщение о выходе не нужно. */
+  noteClosing(id: number, caller: number): void {
+    const session = this.sessions.get(id);
+    if (session) session.closedBy = caller;
+  }
+
+  /** Работающие сессии: у завершившейся вкладка может оставаться, но процесса нет. */
   count(): number {
     return this.local().length;
   }
 
   private local(): Session[] {
-    return [...this.sessions.values()].filter((s) => !s.remote);
+    return [...this.sessions.values()].filter((s) => !s.remote && s.state !== 'exited');
   }
 
   /** Каталоги и текущие cwd работающих сессий: интерфейсу они доступны, даже если лежат не в репозиториях проекта. */
@@ -238,81 +332,124 @@ export class SessionManager {
 
   /** Каталоги запуска сессии - её рабочий и подключённые через --add-dir; null - сессии нет. */
   dirsOf(id: number): string[] | null {
-    return this.sessions.get(id)?.dirs ?? null;
+    const session = this.sessions.get(id);
+    return session && session.state !== 'exited' ? session.dirs : null;
   }
 
-  /** Работающие сессии проекта вызывающей, она сама тоже: проект сессии - набор её каталогов запуска. null - сессии нет. */
+  // Проект приходит из недоверенного интерфейса (ADR-0002 п.5): дочерняя не уходит в чужой проект, где её не увидит открывшая.
+  private checkParent(project: string, parent: number | undefined): void {
+    const own = parent === undefined ? undefined : this.sessions.get(parent)?.project;
+    if (own !== undefined && own !== project) throw new Error('Проект вкладки не совпадает с проектом открывшей сессии');
+  }
+
+  /** id проекта сессии; null - сессии нет. */
+  projectOf(id: number): string | null {
+    return this.sessions.get(id)?.project ?? null;
+  }
+
+  /** Вкладки проекта вызывающей, она сама и завершённые тоже. null - сессии нет либо она завершена. */
   peers(id: number): SessionInfo[] | null {
     const own = this.sessions.get(id);
-    if (!own) return null;
+    if (!own || own.state === 'exited') return null;
     return [...this.sessions.values()]
-      .filter((s) => sameDirs(s.dirs, own.dirs))
-      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, remote, parent }) => ({
+      .filter((s) => s.project === own.project)
+      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, submitPending, remote, parent, exitCode }) => ({
         id,
         dirs,
         cwd,
         state,
         reason,
         lastAnswer,
-        queued: outbox.length,
+        queued: outbox.length + (submitPending ? 1 : 0),
         ...(remote ? { host: remote.host, ...(remote.online ? {} : { link: 'offline' as const }) } : {}),
         ...(parent !== undefined ? { parent } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
       }));
   }
 
-  /** Сообщение от другой сессии: ждущей - сразу, работающей - в очередь до конца её хода; на вопросе и при запуске - отказ. */
+  /** Сообщение от другой сессии: принимающей ввод - сразу, иначе в очередь; на вопросе и при запуске - отказ. */
   async say(id: number, text: string): Promise<SayResult> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`сессия ${id} завершилась`);
-    const quiet = Date.now() - session.lastEventAt >= this.outboxDelayMs;
+    if (!session || session.state === 'exited') throw new Error(`сессия ${id} завершилась`);
+    if (!session.remote) this.readEvents(session);
     const open = acceptsInput(session);
-    if ((session.state === 'working' && !open) || (open && (!quiet || session.outbox.length || session.delivering))) {
+    if (!open && session.state !== 'working') {
+      throw new Error(`сессия ${id} ${session.state === 'asking' ? `ждёт человека (${session.reason})` : 'ещё запускается'}`);
+    }
+    const quiet = !session.remote || Date.now() - session.lastEventAt >= this.outboxDelayMs;
+    if (!open || !quiet || session.outbox.length || session.delivering) {
       session.outbox.push(text);
       this.scheduleOutbox(session);
       return 'queued';
     }
-    if (!open) throw new Error(`сессия ${id} ${session.state === 'asking' ? `ждёт человека (${session.reason})` : 'ещё запускается'}`);
-    await this.deliver(session, text);
-    return 'sent';
+    const working = session.state === 'working' && !session.background;
+    const result = await this.deliver(session, text);
+    return result === 'sent' && working ? 'sent-working' : result;
   }
 
-  private async deliver(session: Session, text: string): Promise<void> {
-    // Перед каждой записью: открытый запрос разрешения принял бы Enter за «Да».
-    const write = (data: string): void => {
-      if (this.sessions.get(session.id) !== session) throw new Error(`сессия ${session.id} завершилась`);
-      if (session.remote && !session.remote.online) throw new Error(`сессия ${session.id} без связи с хостом`);
-      if (!acceptsInput(session)) throw new Error(`сессия ${session.id} начала ход: текст вставлен в её ввод, Enter не отправлен`);
-      try {
-        session.term.write(data);
-      } catch {
-        throw new Error(`сессия ${session.id} завершилась`);
-      }
-    };
+  // Локальная дочитывает события перед проверкой: вызов мог начаться после последнего чтения.
+  private put(session: Session, data: string): boolean {
+    if (this.sessions.get(session.id) !== session || session.state === 'exited') throw new Error(`сессия ${session.id} завершилась`);
+    if (session.remote && !session.remote.online) throw new Error(`сессия ${session.id} без связи с хостом`);
+    if (!session.remote) this.readEvents(session);
+    if (!acceptsInput(session)) return false;
+    try {
+      session.term.write(data);
+    } catch {
+      throw new Error(`сессия ${session.id} завершилась`);
+    }
+    return true;
+  }
+
+  private async deliver(session: Session, text: string): Promise<'sent' | 'queued'> {
     session.delivering = true;
     try {
       // Вставкой: перевод строки в тексте TUI мог бы принять за Enter и отправить сообщение по кускам.
       // Чистка у записи: в очередь попадает и текст хоста, минуя validateSend.
-      write(`\x1b[200~${cleanMessage(text)}\x1b[201~`);
+      if (!this.put(session, `\x1b[200~${cleanMessage(text)}\x1b[201~`)) {
+        session.outbox.unshift(text);
+        return 'queued';
+      }
       await new Promise((resolve) => setTimeout(resolve, SUBMIT_DELAY_MS));
-      write('\r');
+      if (this.put(session, '\r')) return 'sent';
+      if (session.remote) throw new Error(`сессия ${session.id} начала ход: текст вставлен в её ввод, Enter не отправлен`);
+      session.submitPending = true;
+      return 'queued';
     } finally {
-      session.delivering = false;
+      if (!session.submitPending) session.delivering = false;
       // Хук UserPromptSubmit приходит позже Enter: тишина отсчитывается заново.
       session.lastEventAt = Date.now();
       this.scheduleOutbox(session);
     }
   }
 
-  /** Очередь отдаёт по сообщению, когда сессия ждёт и молчит outboxDelayMs: чужой Stop-хук мог продолжить ход. */
+  private submit(session: Session): void {
+    try {
+      if (!this.put(session, '\r')) return;
+    } catch {
+      // Сессия завершилась: отправлять некуда.
+    }
+    session.submitPending = false;
+    session.delivering = false;
+    session.lastEventAt = Date.now();
+    this.scheduleOutbox(session);
+  }
+
+  /** Очередь отдаёт по сообщению, когда сессия примет ввод; удалённая - после outboxDelayMs тишины: чужой Stop-хук мог продолжить ход. */
   private scheduleOutbox(session: Session): void {
     clearTimeout(session.outboxTimer);
-    if (!acceptsInput(session) || !session.outbox.length || session.delivering || (session.remote && !session.remote.online)) return;
+    if (!acceptsInput(session) || (session.remote && !session.remote.online)) return;
+    if (session.submitPending) {
+      session.outboxTimer = setTimeout(() => this.submit(session), 0);
+      return;
+    }
+    if (!session.outbox.length || session.delivering) return;
     session.outboxTimer = setTimeout(
       () => {
         const text = session.outbox.shift();
         if (text !== undefined) this.deliver(session, text).catch(() => {});
       },
-      Math.max(0, session.lastEventAt + this.outboxDelayMs - Date.now()),
+      session.remote ? Math.max(0, session.lastEventAt + this.outboxDelayMs - Date.now()) : 0,
     );
   }
 
@@ -347,8 +484,16 @@ export class SessionManager {
     }
   }
 
+  // Вкладки уходят вместе с сессиями (смена воркспейса, выход): гаснущей открывшей сообщать незачем.
   killAll(): void {
-    for (const session of this.local()) session.term.kill();
+    for (const session of [...this.sessions.values()]) {
+      if (session.remote) continue;
+      if (session.state === 'exited') this.sessions.delete(session.id);
+      else {
+        Object.assign(session, { released: true, ending: true });
+        session.term.kill();
+      }
+    }
   }
 
   // Убитый экземпляр не доходит до onExit, и его файлы событий остаются.
@@ -384,9 +529,11 @@ export class SessionManager {
 
   /** Удалённая вкладка: порт - канал к демону; номер выдаёт Cyborg, события и вывод приходят по каналу. */
   adopt(options: AdoptOptions): number {
+    this.checkParent(options.project, options.remote.spawnedBy);
     const id = this.nextId++;
     this.sessions.set(id, {
       id,
+      project: options.project,
       term: options.term,
       remote: options.remote,
       ...(options.remote.spawnedBy !== undefined ? { parent: options.remote.spawnedBy } : {}),
@@ -395,6 +542,7 @@ export class SessionManager {
       dirs: options.dirs,
       state: 'starting',
       outbox: [],
+      inFlight: new Map(),
       context: {},
       lastEventAt: Date.now(),
     });
@@ -464,7 +612,7 @@ export class SessionManager {
   /** Сообщение в очередь сессии без отказа: уйдёт, когда она будет ждать. false - сессии нет. */
   enqueue(id: number, text: string): boolean {
     const session = this.sessions.get(id);
-    if (!session) return false;
+    if (!session || session.state === 'exited') return false;
     session.outbox.push(text);
     this.scheduleOutbox(session);
     return true;
@@ -476,7 +624,7 @@ export class SessionManager {
    */
   ingest(id: number, lines: string[], { replay }: { replay: boolean }): void {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session || session.state === 'exited') return;
     const events: SessionEvent[] = [];
     for (const line of lines) {
       if (!line.trim()) continue;
@@ -515,6 +663,7 @@ export class SessionManager {
       session.childSid = event.session_id;
       this.onChild?.(event.session_id);
     }
+    noteCall(session.inFlight, event);
     track(session, event);
     this.noteContext(session, event);
     this.scheduleOutbox(session);

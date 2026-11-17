@@ -109,6 +109,7 @@
       "invoke session:create": [
         {
           "args": [
+            "p1",
             "<repo>",
             [],
             null

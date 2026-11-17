@@ -495,7 +495,7 @@ async function main() {
 
   // FR-12009: промпты кнопок запуска сессий - действующий набор в Monaco, правка доходит до первого сообщения следующей сессии.
   const startedWith = async (key) => {
-    const id = await ev(`window.cyborg.createSession(${JSON.stringify(repo)}, [], { jira: { key: ${JSON.stringify(key)} } })`);
+    const id = await ev(`window.cyborg.createSession("p1", ${JSON.stringify(repo)}, [], { jira: { key: ${JSON.stringify(key)} } })`);
     await waitFor(`подставной claude получил аргументы сессии ${key}`, async () => existsSync(fakeArgsLog) && readFileSync(fakeArgsLog, 'utf8').includes(key));
     await ev(`window.cyborg.kill(${id}); 1`);
     return readFileSync(fakeArgsLog, 'utf8').split('\n').filter((line) => line.includes(key)).at(-1);
@@ -524,7 +524,7 @@ async function main() {
   assert.match(await startedWith('SMK-3'), /Смоук-промпт SMK-3/, 'правка промпта не дошла до первого сообщения сессии');
   // Негодная запись, правленная руками, не заменяется встроенной молча: сессия не стартует и называет причину.
   writeFileSync(promptsFile, JSON.stringify({ 'jira.start': { text: '-p {jira_key}' } }));
-  const refused = await ev(`window.cyborg.createSession(${JSON.stringify(repo)}, [], { jira: { key: "SMK-4" } }).then(() => "стартовала", (error) => String(error))`);
+  const refused = await ev(`window.cyborg.createSession("p1", ${JSON.stringify(repo)}, [], { jira: { key: "SMK-4" } }).then(() => "стартовала", (error) => String(error))`);
   assert.match(refused, /text не может начинаться с «-»/, 'негодный промпт из файла не назван');
   assert.ok(!readFileSync(fakeArgsLog, 'utf8').includes('SMK-4'), 'сессия с негодным промптом стартовала');
   writeFileSync(promptsFile, JSON.stringify(afterSave));

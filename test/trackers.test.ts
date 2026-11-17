@@ -7,7 +7,7 @@ import {
   normalizeColor,
   parseRemote,
   saveProjectsState,
-  sessionDirsAllowed,
+  sessionProject,
   splitJsonValues,
   taskPrompt,
   TrackersService,
@@ -128,12 +128,21 @@ describe('валидация аргументов каналов', () => {
     assert.ok(validateListArgs('p', true, Array(200).fill(ref), false));
     assert.equal(validateListArgs('p', true, [{ ...ref, path: '../x' }], false), null);
   });
-  it('sessionDirsAllowed: каталоги только из репозиториев проектов', () => {
-    const state = { projects: [{ id: 'p', name: 'p', description: '', repos: ['/a', '/b'], trackers: BOTH }], lastProjectId: null };
-    assert.equal(sessionDirsAllowed(state, '/a', ['/b']), true);
-    assert.equal(sessionDirsAllowed(state, '/etc', []), false);
-    assert.equal(sessionDirsAllowed(state, '/a', ['/etc']), false);
-    assert.equal(sessionDirsAllowed(state, '/a', 'x'), false);
+  it('sessionProject: проект по id, каталоги только из его репозиториев', () => {
+    const state = {
+      projects: [
+        { id: 'p', name: 'p', description: '', repos: ['/a', '/b'], trackers: BOTH },
+        { id: 'q', name: 'q', description: '', repos: ['/c'], trackers: BOTH },
+      ],
+      lastProjectId: null,
+    };
+    assert.equal(sessionProject(state, 'p', '/a', ['/b'])?.id, 'p');
+    assert.equal(sessionProject(state, 'p', '/etc', []), null);
+    assert.equal(sessionProject(state, 'p', '/a', ['/etc']), null);
+    assert.equal(sessionProject(state, 'p', '/a', ['/c']), null, 'каталог чужого проекта');
+    assert.equal(sessionProject(state, 'q', '/a', []), null);
+    assert.equal(sessionProject(state, 'x', '/a', []), null);
+    assert.equal(sessionProject(state, 'p', '/a', 'x'), null);
   });
 });
 

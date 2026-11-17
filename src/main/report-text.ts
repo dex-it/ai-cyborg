@@ -11,3 +11,10 @@ export function reportText(id: number | string, host: string | undefined, report
     .filter((line, i) => line || i === 3)
     .join('\n');
 }
+
+/** Открывшей сессии о конце дочерней: процесс вышел сам (вкладка открыта) либо вкладку закрыли - человек, другая сессия или она сама. */
+export function childExitText(id: number, exit: { code: number; released: boolean; closedBy?: number }): string {
+  if (!exit.released) return `Сессия CC${id} завершилась (код ${exit.code}): её вкладка открыта, закрыть - close_session.`;
+  if (exit.closedBy === id) return `Сессия CC${id} закрыла свою вкладку.`;
+  return exit.closedBy === undefined ? `Вкладку сессии CC${id} закрыл человек.` : `Вкладку сессии CC${id} закрыла сессия CC${exit.closedBy}.`;
+}
