@@ -31,7 +31,7 @@ import { notificationKey, validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
 import { ProjectStore } from './projects';
-import { SessionManager, sameDirs } from './sessions';
+import { SessionManager } from './sessions';
 import { McpServer } from './mcp';
 import { createSessionTools, Handoffs, type RemoteToolsPort, type SessionsPort } from './session-tools';
 import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
@@ -46,7 +46,7 @@ import { systemSsh } from './remote/ssh';
 import { createTaskHandlers, TaskDetailsService } from './task-details';
 import {
   createCliRunner,
-  sessionDirsAllowed,
+  sessionProject,
   TrackerSettingsStore,
   TrackersService,
   saveProjectsState,
@@ -110,7 +110,7 @@ const remoteTools: RemoteToolsPort = {
   report: (id, report) => remote.report(id, report),
   close: (id, keep, caller) => remote.close(id, keep, caller),
 };
-const hostsOf = (dirs: string[]): string[] => projects.load().projects.find((p) => sameDirs(p.repos, dirs))?.hosts ?? [];
+const hostsOf = (caller: number): string[] => projects.load().projects.find((p) => p.id === sessions.projectOf(caller))?.hosts ?? [];
 const sessionsPort: SessionsPort = {
   dirsOf: (id) => sessions.dirsOf(id),
   peers: (id) => sessions.peers(id),
@@ -400,15 +400,16 @@ ipcMain.handle('config:reveal', (_event, kind: unknown) => {
   if (file) return showInSystemApp(file);
 });
 ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, prompts));
-ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?: unknown) => {
-  if (!sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Каталог не входит в репозитории проектов');
-  if (start === undefined) return sessions.create(cwd as string, addDirs as string[]);
+ipcMain.handle('session:create', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, start?: unknown) => {
+  const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
+  if (!project) throw new Error('Каталог не входит в репозитории проекта');
+  if (start === undefined) return sessions.create(project, cwd as string, addDirs as string[]);
   if (typeof start === 'object' && start !== null && 'handoff' in start) {
     // Промпт передачи в канал не ходит: интерфейс знает только ключ, текст хранит главный процесс.
     const handoff = handoffs.take(start.handoff, cwd);
     if (!handoff) throw new Error('Переданная задача не найдена или устарела');
     try {
-      const id = sessions.create(cwd as string, addDirs as string[], handoff.prompt, undefined, handoff.from);
+      const id = sessions.create(project, cwd as string, addDirs as string[], handoff.prompt, undefined, handoff.from);
       handoff.resolve(id);
       return id;
     } catch (error) {
@@ -418,7 +419,7 @@ ipcMain.handle('session:create', (_event, cwd: unknown, addDirs: unknown, start?
   }
   const prompt = validateSessionStart(start, prompts.load());
   if (!prompt) throw new Error('Некорректный старт сессии');
-  return sessions.create(cwd as string, addDirs as string[], prompt);
+  return sessions.create(project, cwd as string, addDirs as string[], prompt);
 });
 // Удалённая сессия: аргументы из интерфейса проверяются против проекта; запись в клоны и смена ветки каналов не имеют (ADR-0020).
 ipcMain.handle('remote:create', async (_event, arg: unknown) => {
@@ -497,10 +498,11 @@ ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id:
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
   deleteHistory(repo, id);
 });
-ipcMain.handle('session:resume', (_event, cwd: unknown, addDirs: unknown, id: unknown) => {
-  if (!isSessionId(id) || !sessionDirsAllowed(projects.load(), cwd, addDirs)) throw new Error('Некорректное продолжение сессии');
+ipcMain.handle('session:resume', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown) => {
+  const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
+  if (!isSessionId(id) || !project) throw new Error('Некорректное продолжение сессии');
   if (!historyExists(cwd as string, id)) throw new Error('Журнал сессии не найден');
-  return sessions.create(cwd as string, addDirs as string[], undefined, id);
+  return sessions.create(project, cwd as string, addDirs as string[], undefined, id);
 });
 ipcMain.handle('trackers:status', () => trackers.status());
 ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) =>

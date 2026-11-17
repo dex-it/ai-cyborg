@@ -830,8 +830,9 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   const id = remote
     ? remote.id
     : resume
-    ? await api.resumeSession(repo, addDirs, resume)
+    ? await api.resumeSession(owner.id, repo, addDirs, resume)
     : await api.createSession(
+        owner.id,
         repo,
         addDirs,
         start &&

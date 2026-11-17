@@ -421,8 +421,8 @@ export interface SessionsPort {
   say(id: number, text: string): Promise<SayResult>;
   /** Вид вызывающей: у удалённой другой набор инструментов. */
   kindOf?(id: number): SessionKind | null;
-  /** Хосты проекта, у которого каталоги запуска - dirs. */
-  hostsOf?(dirs: string[]): string[];
+  /** Хосты проекта вызывающей сессии. */
+  hostsOf?(caller: number): string[];
   /** Номер открывшей сессии; null - открыл человек. */
   parentOf?(id: number): number | null;
   /** Итог локальной дочерней; текст ответа модели. */
@@ -444,22 +444,22 @@ export function createSessionTools(
   closeSelfDelayMs = CLOSE_SELF_DELAY_MS,
   remote?: RemoteToolsPort,
 ): McpBackend {
-  const contextOf = (caller: number, dirs: string[]): ToolContext => ({
+  const contextOf = (caller: number): ToolContext => ({
     kind: sessions.kindOf?.(caller) ?? 'local',
-    hosts: remote ? (sessions.hostsOf?.(dirs) ?? []) : [],
+    hosts: remote ? (sessions.hostsOf?.(caller) ?? []) : [],
     child: !!sessions.reportLocal && (sessions.parentOf?.(caller) ?? null) !== null,
   });
   return {
     tools: (caller) => {
       const dirs = sessions.dirsOf(caller);
-      return dirs ? sessionTools(dirs, contextOf(caller, dirs)) : [];
+      return dirs ? sessionTools(dirs, contextOf(caller)) : [];
     },
     call: async (caller, name, value) => {
       const dirs = sessions.dirsOf(caller);
       const peers = sessions.peers(caller);
       if (!dirs || !peers) throw new Error('сессия завершена');
       // tools/call не обязан следовать tools/list: набор инструментов контекста - и есть право вызова.
-      if (!sessionTools(dirs, contextOf(caller, dirs)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
+      if (!sessionTools(dirs, contextOf(caller)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
       if (name === LIST_SESSIONS_TOOL) return describePeers(peers, caller);
       if (name === SEND_TO_SESSION_TOOL) {
         const valid = validateSend(value, peers, caller);
@@ -499,7 +499,7 @@ export function createSessionTools(
         return remote.close(valid.id, valid.keep, caller);
       }
       if (name === SPAWN_AGENT_TOOL && remote) {
-        const valid = validateSpawn(value, dirs, sessions.hostsOf?.(dirs) ?? []);
+        const valid = validateSpawn(value, dirs, sessions.hostsOf?.(caller) ?? []);
         if (typeof valid === 'string') throw new Error(valid);
         await remote.prepare(valid.host, valid.repo, valid.limits);
         const id = await handoffs.request(caller, valid.repo, valid.prompt, { host: valid.host, branch: valid.branch, limits: valid.limits, keep: valid.keep });

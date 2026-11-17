@@ -48,8 +48,8 @@ const api = {
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('url:open', url),
   /** Файл кнопок (воркспейса или общий) либо промптов - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
   revealConfig: (kind: 'commands' | 'commands-global' | 'prompts'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
-  createSession: (cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
-    ipcRenderer.invoke('session:create', cwd, addDirs, start),
+  createSession: (projectId: string, cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
+    ipcRenderer.invoke('session:create', projectId, cwd, addDirs, start),
   /** Удалённая сессия: либо {projectId, host, repo, branch, prompt?}, либо {projectId, handoff, repo} по передаче от сессии. */
   createRemoteSession: (request: { projectId: string; host?: string; repo: string; branch?: string; handoff?: string }): Promise<RemoteInfo> =>
     ipcRenderer.invoke('remote:create', request),
@@ -75,8 +75,8 @@ const api = {
   clearClaudeToken: (): Promise<ClaudeTokenStatus> => ipcRenderer.invoke('remote:claude-token:clear'),
   deleteHistory: (projectId: string, repo: string, id: string): Promise<void> =>
     ipcRenderer.invoke('history:delete', projectId, repo, id),
-  resumeSession: (cwd: string, addDirs: string[], id: string): Promise<number> =>
-    ipcRenderer.invoke('session:resume', cwd, addDirs, id),
+  resumeSession: (projectId: string, cwd: string, addDirs: string[], id: string): Promise<number> =>
+    ipcRenderer.invoke('session:resume', projectId, cwd, addDirs, id),
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),
   listTasks: (projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck: boolean): Promise<TasksResult> =>
     ipcRenderer.invoke('tasks:list', projectId, assignedToMe, tracked, recheck),

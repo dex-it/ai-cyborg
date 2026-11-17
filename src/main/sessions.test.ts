@@ -65,8 +65,8 @@ test('SessionManager: номер разговора уходит в onChild то
   const { manager } = managerIn(t);
   const seen: string[] = [];
   manager.onChild = (sid) => seen.push(sid);
-  const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, own);
+  const own = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', [], 'задание', undefined, own);
   const event = (sid: string) => JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid });
   manager.ingest(own, [event('own-sid')], { replay: false });
   manager.ingest(child, [event('sid-1'), event('sid-1')], { replay: false });
@@ -76,7 +76,7 @@ test('SessionManager: номер разговора уходит в onChild то
 
 test('SessionManager: контекст вкладки - первый и последний запрос из хуков, название и постановка из журнала', (t) => {
   const { manager, userData, events } = managerIn(t);
-  const id = manager.create('/a', []);
+  const id = manager.create('p', '/a', []);
   const prompt = (text: string) => JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: text });
   manager.ingest(id, [prompt('почини\n  дерево'), prompt('<task-notification>x</task-notification>'), prompt('и тесты')], { replay: false });
   const contexts = () => events.filter((e) => e.channel === 'session:context').map((e) => e.payload);
@@ -96,8 +96,8 @@ test('SessionManager: у удалённой вкладки spawn_agent есть 
   const { manager } = managerIn(t);
   const seen: string[] = [];
   manager.onChild = (sid) => seen.push(sid);
-  const own = manager.create('/a', []);
-  const agent = manager.adopt({ term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote: { host: 'dev1', origin: 'tool', keep: false, spawnedBy: own, online: true } });
+  const own = manager.create('p', '/a', []);
+  const agent = manager.adopt({ project: 'p', term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote: { host: 'dev1', origin: 'tool', keep: false, spawnedBy: own, online: true } });
   manager.ingest(agent, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'remote-sid' })], { replay: false });
   assert.equal(manager.parentOf(agent), own);
   assert.deepEqual(seen, []);
@@ -105,8 +105,8 @@ test('SessionManager: у удалённой вкладки spawn_agent есть 
 
 test('SessionManager: открывшая сессия - parent в перечне соседей и parentOf; у открытой человеком его нет', (t) => {
   const { manager } = managerIn(t);
-  const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, own);
+  const own = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', [], 'задание', undefined, own);
   const peers = manager.peers(own) ?? [];
   assert.equal(peers.find((p) => p.id === child)?.parent, own);
   assert.equal('parent' in (peers.find((p) => p.id === own) ?? {}), false);
@@ -114,11 +114,24 @@ test('SessionManager: открывшая сессия - parent в перечне
   assert.equal(manager.parentOf(own), null);
 });
 
+test('SessionManager: проект сессии - ключ проекта; дочерняя - только в проекте открывшей, в том числе удалённая', (t) => {
+  const { manager } = managerIn(t);
+  const own = manager.create('p', '/a', ['/b']);
+  assert.equal(manager.projectOf(own), 'p');
+  assert.equal(manager.projectOf(own + 100), null);
+  const child = manager.create('p', '/a', ['/b', '/c'], 'задание', undefined, own);
+  assert.deepEqual(manager.peers(own)?.map((p) => p.id), [own, child], 'каталоги проекта поменялись, проект тот же');
+  assert.throws(() => manager.create('q', '/a', [], 'задание', undefined, own), /Проект вкладки не совпадает/);
+  const remote = { host: 'dev1', origin: 'tool' as const, keep: false, spawnedBy: own, online: true };
+  assert.throws(() => manager.adopt({ project: 'q', term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote }), /Проект вкладки не совпадает/);
+  assert.equal(manager.count(), 2);
+});
+
 test('SessionManager.reportLocal: итог - в очередь открывшей, один за круг; новый круг - после UserPromptSubmit; без открывшей - уведомление', (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager } = managerIn(t, events);
-  const own = manager.create('/a', []);
-  const child = manager.create('/a', [], 'задание', undefined, own);
+  const own = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', [], 'задание', undefined, own);
   assert.throws(() => manager.reportLocal(own, { status: 'ok', summary: 'x' }), /открытой другой сессией/);
   assert.match(manager.reportLocal(child, { status: 'ok', summary: 'сделано', branch: 'feat-x' }), /Итог принят/);
   const queued = manager.peers(own)?.find((p) => p.id === own)?.queued;
@@ -145,7 +158,7 @@ test('SessionManager создаёт файл событий с 0600 при umask
   t.after(() => process.umask(prev));
   const { manager, eventsDir } = managerIn(t);
   assert.equal(mode(eventsDir), 0o700);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   assert.equal(mode(file), 0o600);
   fs.appendFileSync(file, '{}\n');
@@ -155,7 +168,7 @@ test('SessionManager создаёт файл событий с 0600 при umask
 test('SessionManager читает события: смена cwd, активность, удаление файла на выходе', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events);
-  const id = manager.create('/a', []);
+  const id = manager.create('p', '/a', []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'PostToolUse', cwd: '/b', tool_name: 'Edit' }) + '\n');
   for (let i = 0; i < 100 && !events.some((e) => e.channel === 'session:activity'); i++) await new Promise((r) => setTimeout(r, 20));
@@ -175,7 +188,7 @@ test('SessionManager не передаёт сессии CYBORG_CWD лаунче�
   let env: Record<string, string> = {};
   const manager = new SessionManager(userData, () => {}, ((_file: string, _args: string[], opts: { env: Record<string, string> }) => ((env = opts.env), fakePty())) as any);
   t.after(() => manager.killAll());
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal('CYBORG_CWD' in env, false);
   assert.ok(env.CYBORG_EVENTS && env.CYBORG_SETTINGS);
 });
@@ -183,8 +196,8 @@ test('SessionManager не передаёт сессии CYBORG_CWD лаунче�
 test('SessionManager считает только работающие сессии', (t) => {
   const { manager } = managerIn(t);
   assert.equal(manager.count(), 0);
-  const a = manager.create(os.tmpdir(), []);
-  manager.create(os.tmpdir(), []);
+  const a = manager.create('p', os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(manager.count(), 2);
   manager.kill(a);
   assert.equal(manager.count(), 1);
@@ -198,7 +211,7 @@ test('SessionManager: каталоги работающих сессий - ра�
   const tmp = os.tmpdir();
   assert.deepEqual(manager.liveDirs(), []);
   assert.equal(manager.uses(tmp), false);
-  const id = manager.create(tmp, ['/extra']);
+  const id = manager.create('p', tmp, ['/extra']);
   assert.deepEqual(manager.liveDirs(), [tmp, '/extra', tmp]);
   assert.equal(manager.uses(tmp), true);
   assert.equal(manager.uses('/extra'), true, 'дополнительный каталог тоже занят сессией');
@@ -249,7 +262,7 @@ test('SessionManager: после Stop «ждёт» объявляется, то�
   const events: { channel: string; payload: any; at?: number }[] = [];
   const delay = 150;
   const { manager, eventsDir } = managerIn(t, events, delay);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity');
@@ -273,7 +286,7 @@ test('SessionManager: после Stop «ждёт» объявляется, то�
 test('SessionManager: запрос разрешения объявляется сразу, выход сессии снимает отложенный Stop', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 150);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'разрешите Bash' }) + '\n');
   await until(() => events.some((e) => e.channel === 'session:waiting'));
@@ -288,7 +301,7 @@ test('SessionManager: запрос разрешения объявляется �
 test('SessionManager: хвост ответа на Stop с кнопками уходит событием session:suggest, без кнопок события нет', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 60_000);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity').length;
@@ -307,7 +320,7 @@ test('SessionManager: хвост ответа на Stop с кнопками ух
 test('SessionManager: предложение снимается, когда модель снова работает без запроса человека; без предложения лишних событий нет', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 60_000);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity').length;
@@ -334,7 +347,7 @@ test('SessionManager: предложение снимается, когда мо
 test('SessionManager: инструменты фонового субагента предложение не снимают, следующий Stop без кнопок снимает', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events, 60_000);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const append = (...lines: object[]) => fs.appendFileSync(file, lines.map((e) => JSON.stringify(e) + '\n').join(''));
   const activity = () => events.filter((e) => e.channel === 'session:activity').length;
@@ -359,7 +372,7 @@ test('SessionManager: инструменты фонового субагента
 
 test('упавший инструмент - работа: после запроса разрешения сессия снова working, хук подписан на все инструменты', (t) => {
   const { manager } = managerIn(t);
-  const id = manager.create('/a', []);
+  const id = manager.create('p', '/a', []);
   const ev = (e: object) => JSON.stringify(e);
   manager.ingest(id, [ev({ hook_event_name: 'Notification', notification_type: 'permission_prompt' })], { replay: false });
   assert.equal(manager.peers(id)?.[0].state, 'asking');
@@ -382,7 +395,7 @@ function recordingManager(t: { after: (fn: () => void) => void }, throwing = fal
   let exit: (e: { exitCode: number }) => void = () => {};
   const spawn = () => ({ onData: () => {}, onExit: (cb: typeof exit) => (exit = cb), write: record('write'), resize: record('resize'), kill: record('kill') });
   const manager = new SessionManager(userData, () => {}, spawn as any);
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   t.after(() => exit({ exitCode: 0 })); // закрывает наблюдателя файла событий
   return { manager, id, calls };
 }
@@ -447,7 +460,7 @@ test('SessionManager с MCP: конфиг сессии в файле 0600, кл�
   const log: string[] = [];
   manager.mcp = { connect: (id) => (log.push(`connect ${id}`), { token: `t${id}` }), disconnect: (id) => void log.push(`disconnect ${id}`) };
   manager.pluginDir = '/app/plugin';
-  const id = manager.create('/repo/a', ['/repo/b']);
+  const id = manager.create('p', '/repo/a', ['/repo/b']);
   assert.equal(box.call.env.CYBORG_PLUGIN, '/app/plugin');
   assert.match(box.call.args[1], /^exec claude --settings "\$CYBORG_SETTINGS" --plugin-dir "\$CYBORG_PLUGIN" --mcp-config /);
   const file = box.call.env.CYBORG_MCP;
@@ -467,7 +480,7 @@ test('SessionManager с MCP: конфиг сессии в файле 0600, кл�
 
 test('SessionManager без MCP запускает claude без --mcp-config', (t) => {
   const { manager, box } = spawningManager(t);
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" "$@"');
   assert.equal(box.call.args[4], SESSION_PROMPT);
   assert.equal('CYBORG_MCP' in box.call.env, false);
@@ -485,7 +498,7 @@ test('SessionManager без MCP и плагина не наследует их �
     }
   });
   const { manager, box } = spawningManager(t);
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal('CYBORG_MCP' in box.call.env, false);
   assert.equal('CYBORG_PLUGIN' in box.call.env, false);
 });
@@ -493,7 +506,7 @@ test('SessionManager без MCP и плагина не наследует их �
 test('SessionManager с плагином без MCP: скиллы подключены, инструкции о параллельных сессиях нет', (t) => {
   const { manager, box } = spawningManager(t);
   manager.pluginDir = '/app/plugin';
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" --plugin-dir "$CYBORG_PLUGIN" "$@"');
   assert.equal(box.call.args[4], SESSION_PROMPT);
 });
@@ -501,16 +514,16 @@ test('SessionManager с плагином без MCP: скиллы подключ
 test('SessionManager с MCP без плагина: инструкции о параллельных сессиях нет - скилла, на который она ссылается, у сессии нет', (t) => {
   const { manager, box } = spawningManager(t);
   manager.mcp = { connect: () => ({}), disconnect: () => {} };
-  manager.create(os.tmpdir(), []);
+  manager.create('p', os.tmpdir(), []);
   assert.equal(box.call.args[4], SESSION_PROMPT);
 });
 
-test('SessionManager: состояние сессии и хвост ответа для list_sessions, соседи - сессии с теми же каталогами', async (t) => {
+test('SessionManager: состояние сессии и хвост ответа для list_sessions, соседи - сессии того же проекта при любых каталогах', async (t) => {
   const events: { channel: string; payload: any }[] = [];
   const { manager, eventsDir } = managerIn(t, events);
-  const id = manager.create('/repo/a', ['/repo/b']);
-  const sibling = manager.create('/repo/b', ['/repo/a']);
-  manager.create('/other', []);
+  const id = manager.create('p', '/repo/a', ['/repo/b']);
+  const sibling = manager.create('p', '/repo/b', ['/repo/a', '/repo/c']);
+  manager.create('q', '/repo/a', ['/repo/b']);
   const file = path.join(eventsDir, `${process.pid}-${id}.jsonl`);
   const state = () => manager.peers(id)!.find((p) => p.id === id)!;
   const push = async (event: object) => {
@@ -550,7 +563,7 @@ function talkingManager(t: { after: (fn: () => void) => void }, outboxDelayMs: n
   const manager = new SessionManager(userData, (_channel, payload) => void events.push(payload), (() => pty) as any);
   t.after(() => manager.killAll());
   manager.outboxDelayMs = outboxDelayMs;
-  const id = manager.create(os.tmpdir(), []);
+  const id = manager.create('p', os.tmpdir(), []);
   const file = path.join(userData, 'sessions', `${process.pid}-${id}.jsonl`);
   const push = async (event: object) => {
     const seen = events.length;
@@ -570,7 +583,7 @@ function remoteTalking(t: { after: (fn: () => void) => void }, outboxDelayMs: nu
   const manager = new SessionManager(userData, () => {}, (() => fakePty()) as any);
   manager.outboxDelayMs = outboxDelayMs;
   const term = { write: (data: string) => void writes.push(data), resize: () => {}, kill: () => {} };
-  const id = manager.adopt({ term, dirs: ['/h/a'], cwd: '/h/a', remote: { host: 'dev1', origin: 'human', keep: false, online: true } });
+  const id = manager.adopt({ project: 'p', term, dirs: ['/h/a'], cwd: '/h/a', remote: { host: 'dev1', origin: 'human', keep: false, online: true } });
   const push = (event: object) => manager.ingest(id, [JSON.stringify(event)], { replay: false });
   return { manager, id, writes, push };
 }

@@ -172,7 +172,7 @@ date: 2026-10-26
 | NFR-15001 | Сервер принимает вызовы только от сессий Cyborg по их токену | 15-session-mcp | автотест | `test/mcp.test.ts`, `src/main/sessions.test.ts` |
 | FR-15002 | Протокол: JSON-RPC в POST /mcp без потока SSE | 15-session-mcp | автотест | `test/mcp.test.ts` |
 | FR-15003 | Передача вкладки интерфейсу по одноразовому ключу | 15-session-mcp | автотест | `test/session-tools.test.ts` |
-| FR-15004 | open_session открывает вкладку в том же проекте с заданием первым сообщением | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/mcp.test.ts` |
+| FR-15004 | open_session открывает вкладку в том же проекте с заданием первым сообщением | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts`, `test/mcp.test.ts` |
 | FR-15005 | Состояние сессии для инструментов - по событиям хуков | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
 | FR-15006 | list_sessions перечисляет вкладки проекта с состоянием и хвостом ответа | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
 | FR-15007 | send_to_session пишет вставкой и Enter, когда запись не попадёт в чужой диалог | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |

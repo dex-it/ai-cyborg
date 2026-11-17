@@ -43,6 +43,7 @@ export interface RemoteMeta {
 }
 
 export interface AdoptOptions {
+  project: string;
   term: TermPort;
   dirs: string[];
   cwd: string;
@@ -51,6 +52,8 @@ export interface AdoptOptions {
 
 interface Session {
   id: number;
+  /** id проекта воркспейса: соседей задаёт он, а не каталоги запуска - правка репозиториев проекта сессий не разделяет. */
+  project: string;
   term: TermPort;
   remote?: RemoteMeta;
   eventsFile?: string;
@@ -187,7 +190,8 @@ export class SessionManager {
     writeJsonAtomic(this.settingsFile, hookSettings());
   }
 
-  create(cwd: string, addDirs: string[], prompt?: string, resume?: string, parent?: number): number {
+  create(project: string, cwd: string, addDirs: string[], prompt?: string, resume?: string, parent?: number): number {
+    this.checkParent(project, parent);
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     createEventsFile(eventsFile);
@@ -217,6 +221,7 @@ export class SessionManager {
     });
     const session: Session = {
       id,
+      project,
       term: { write: (data) => proc.write(data), resize: (cols, rows) => proc.resize(cols, rows), kill: () => proc.kill() },
       eventsFile,
       offset: 0,
@@ -268,12 +273,23 @@ export class SessionManager {
     return this.sessions.get(id)?.dirs ?? null;
   }
 
-  /** Работающие сессии проекта вызывающей, она сама тоже: проект сессии - набор её каталогов запуска. null - сессии нет. */
+  // Проект приходит из недоверенного интерфейса (ADR-0002 п.5): дочерняя не уходит в чужой проект, где её не увидит открывшая.
+  private checkParent(project: string, parent: number | undefined): void {
+    const own = parent === undefined ? undefined : this.sessions.get(parent)?.project;
+    if (own !== undefined && own !== project) throw new Error('Проект вкладки не совпадает с проектом открывшей сессии');
+  }
+
+  /** id проекта сессии; null - сессии нет. */
+  projectOf(id: number): string | null {
+    return this.sessions.get(id)?.project ?? null;
+  }
+
+  /** Работающие сессии проекта вызывающей, она сама тоже. null - сессии нет. */
   peers(id: number): SessionInfo[] | null {
     const own = this.sessions.get(id);
     if (!own) return null;
     return [...this.sessions.values()]
-      .filter((s) => sameDirs(s.dirs, own.dirs))
+      .filter((s) => s.project === own.project)
       .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, submitPending, remote, parent }) => ({
         id,
         dirs,
@@ -441,9 +457,11 @@ export class SessionManager {
 
   /** Удалённая вкладка: порт - канал к демону; номер выдаёт Cyborg, события и вывод приходят по каналу. */
   adopt(options: AdoptOptions): number {
+    this.checkParent(options.project, options.remote.spawnedBy);
     const id = this.nextId++;
     this.sessions.set(id, {
       id,
+      project: options.project,
       term: options.term,
       remote: options.remote,
       ...(options.remote.spawnedBy !== undefined ? { parent: options.remote.spawnedBy } : {}),
