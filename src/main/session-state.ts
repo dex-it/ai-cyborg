@@ -24,7 +24,8 @@ export interface SessionEvent {
   session_crons?: unknown[];
 }
 
-export const HOOK_COMMAND = '{ cat; echo; } >> "$CYBORG_EVENTS"';
+// Код 2 у PreToolUse запрещает вызов: недоступный файл событий не должен останавливать сессию.
+export const HOOK_COMMAND = '{ cat; echo; } >> "$CYBORG_EVENTS" || true';
 // Упавший инструмент шлёт PostToolUseFailure, а не PostToolUse: без него ход из одних отказов выглядел бы простоем.
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStop', 'Stop', 'Notification'];
 

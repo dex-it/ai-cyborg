@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type * as pty from 'node-pty';
@@ -196,9 +197,11 @@ export class SessionManager {
     this.eventsDir = path.join(userData, 'sessions');
     prepareEventsDir(this.eventsDir);
     this.removeOrphanedEvents();
-    this.settingsFile = path.join(userData, 'claude-hooks.json');
+    const settings = hookSettings();
+    // Экземпляр другой версии с тем же userData не подменит сессиям набор хуков.
+    this.settingsFile = path.join(userData, `claude-hooks-${createHash('sha256').update(JSON.stringify(settings)).digest('hex').slice(0, 12)}.json`);
     // Атомарно: соседний инстанс пишет тот же файл, а запускающийся claude не должен прочитать обрезанный.
-    writeJsonAtomic(this.settingsFile, hookSettings());
+    writeJsonAtomic(this.settingsFile, settings);
   }
 
   create(project: string, cwd: string, addDirs: string[], prompt?: string, resume?: string, parent?: number): number {

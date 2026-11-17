@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
 import { SessionManager, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
-import { hookSettings } from './session-state.ts';
+import { HOOK_COMMAND, hookSettings } from './session-state.ts';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 
@@ -191,6 +192,20 @@ test('SessionManager не передаёт сессии CYBORG_CWD лаунче�
   manager.create('p', os.tmpdir(), []);
   assert.equal('CYBORG_CWD' in env, false);
   assert.ok(env.CYBORG_EVENTS && env.CYBORG_SETTINGS);
+});
+
+test('SessionManager: файл хуков назван по содержимому - экземпляр другой версии с тем же userData его не затирает', (t) => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const legacy = path.join(userData, 'claude-hooks.json');
+  fs.writeFileSync(legacy, '{"hooks":{}}');
+  let env: Record<string, string> = {};
+  const manager = new SessionManager(userData, () => {}, ((_file: string, _args: string[], opts: { env: Record<string, string> }) => ((env = opts.env), fakePty())) as any);
+  t.after(() => manager.killAll());
+  manager.create('p', os.tmpdir(), []);
+  assert.match(path.basename(env.CYBORG_SETTINGS), /^claude-hooks-[0-9a-f]{12}\.json$/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(env.CYBORG_SETTINGS, 'utf8')), hookSettings());
+  assert.equal(fs.readFileSync(legacy, 'utf8'), '{"hooks":{}}');
 });
 
 test('SessionManager считает только работающие сессии', (t) => {
@@ -381,6 +396,13 @@ test('упавший инструмент - работа: после запро�
   assert.deepEqual(hookSettings().hooks.PostToolUseFailure, hookSettings().hooks.PostToolUse);
   assert.deepEqual(hookSettings().hooks.PreToolUse, hookSettings().hooks.PostToolUse);
   assert.ok(hookSettings().hooks.SubagentStop);
+});
+
+test('хук не запрещает вызов инструмента, когда файл событий недоступен: код 2 у PreToolUse - запрет', () => {
+  for (const shell of ['/bin/sh', '/bin/bash']) {
+    const run = spawnSync(shell, ['-c', HOOK_COMMAND], { input: '{}', env: { CYBORG_EVENTS: '/nonexistent/cyborg/events.jsonl' } });
+    assert.equal(run.status, 0, shell);
+  }
 });
 
 // Менеджер с pty, записывающим вызовы; throwing - pty, бросающий на каждом вызове (процесс завершился, дескриптор закрыт).
@@ -768,7 +790,7 @@ test('SessionManager: вышедшая сессия остаётся среди 
   manager.release('мусор');
 });
 
-test('SessionManager: открывшей - сообщение о выходе дочерней (сама, закрыл человек, закрыла другая сессия), без сообщения - своё закрытие и killAll', async (t) => {
+test('SessionManager: открывшей - сообщение о выходе дочерней (сама, закрыла себя, закрыл человек, закрыла другая сессия), без сообщения - своё закрытие и killAll', async (t) => {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
   const writes: string[] = [];
@@ -786,23 +808,28 @@ test('SessionManager: открывшей - сообщение о выходе д
   manager.noteClosing(byOther, other);
   manager.release(byOther);
   manager.kill(byOther);
+  const byItself = child();
+  manager.noteClosing(byItself, byItself);
+  manager.release(byItself);
+  manager.kill(byItself);
   const byParent = child();
   manager.noteClosing(byParent, parent);
   manager.release(byParent);
   manager.kill(byParent);
-  assert.equal(manager.peers(parent)!.find((p) => p.id === parent)!.queued, 3);
+  assert.equal(manager.peers(parent)!.find((p) => p.id === parent)!.queued, 4);
   manager.ingest(parent, [JSON.stringify({ hook_event_name: 'SessionStart' })], { replay: false });
-  for (let i = 0; i < 200 && writes.length < 6; i++) await sleep(10);
+  for (let i = 0; i < 200 && writes.length < 8; i++) await sleep(10);
   assert.deepEqual(
     writes.filter((w) => w !== '\r'),
     [
       `Сессия CC${self} завершилась (код 0): её вкладка открыта, закрыть - close_session.`,
       `Вкладку сессии CC${byHuman} закрыл человек.`,
       `Вкладку сессии CC${byOther} закрыла сессия CC${other}.`,
+      `Сессия CC${byItself} закрыла свою вкладку.`,
     ].map((text) => `\x1b[200~${text}\x1b[201~`),
   );
   const last = child();
   manager.killAll();
-  assert.equal(writes.length, 6, 'killAll гасит и открывшую: сообщать некому');
+  assert.equal(writes.length, 8, 'killAll гасит и открывшую: сообщать некому');
   for (const id of [parent, other, self, last]) assert.equal(manager.projectOf(id), null, 'killAll не оставляет записей вкладок');
 });

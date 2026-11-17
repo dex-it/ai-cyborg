@@ -125,10 +125,11 @@ describe('reportText', () => {
     assert.equal(reportText(4, 'dev1', { status: 'failed', summary: 'нет', pr: 'https://x/1' }), 'Итог удалённой сессии CC4 (dev1): failed\nPR: https://x/1\n\nнет');
   });
 
-  it('childExitText: вышла сама - код и как закрыть вкладку; вкладку закрыли - кто', () => {
+  it('childExitText: вышла сама - код и как закрыть вкладку; вкладку закрыли - кто, в том числе она сама', () => {
     assert.equal(childExitText(8, { code: 1, released: false }), 'Сессия CC8 завершилась (код 1): её вкладка открыта, закрыть - close_session.');
     assert.equal(childExitText(8, { code: 0, released: true }), 'Вкладку сессии CC8 закрыл человек.');
     assert.equal(childExitText(8, { code: 0, released: true, closedBy: 5 }), 'Вкладку сессии CC8 закрыла сессия CC5.');
+    assert.equal(childExitText(8, { code: 0, released: true, closedBy: 8 }), 'Сессия CC8 закрыла свою вкладку.');
   });
 });
 
@@ -182,6 +183,13 @@ describe('createSessionTools', () => {
     assert.deepEqual(order, ['note 2 by 1', 'close 2']);
   });
 
+  it('close_session своей вкладки отмечает закрывающей её саму: открывшей не скажут, что вкладку закрыл человек', async () => {
+    const { backend, order } = tools([peer(1, 'working'), peer(2, 'working', { parent: 1 })]);
+    assert.equal(await backend.call(2, 'close_session', { id: 2 }), 'Эта вкладка закроется через секунду.');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(order, ['note 2 by 2', 'close 2']);
+  });
+
   it('send_to_session: ответ говорит, отправлено ли сообщение, передаст ли его Claude Code посреди хода или оно ждёт в очереди', async () => {
     const { backend, said } = tools([peer(1, 'working'), peer(2, 'waiting'), peer(3, 'working'), peer(4, 'working', { queued: 1 }), peer(5, 'working', { host: 'dev1' })]);
     assert.equal(await backend.call(1, 'send_to_session', { id: 2, message: 'привет' }), 'Сообщение отправлено сессии 2.');
@@ -191,7 +199,7 @@ describe('createSessionTools', () => {
     );
     assert.equal(
       await backend.call(1, 'send_to_session', { id: 4, message: 'и ещё' }),
-      'Сессия 4 выполняет инструмент или ждёт человека: сообщение в очереди Cyborg и уйдёт, когда вызов закончится.',
+      'Сообщение сессии 4 в очереди Cyborg: уйдёт, как только она примет ввод.',
     );
     assert.equal(await backend.call(1, 'send_to_session', { id: 5, message: 'хосту' }), 'Сессия 5 работает: сообщение в очереди Cyborg и уйдёт, когда она закончит ход.');
     assert.deepEqual(said, [

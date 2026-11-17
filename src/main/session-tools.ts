@@ -473,7 +473,7 @@ export function createSessionTools(
         if (result === 'sent') return `Сообщение отправлено сессии ${valid.id}.`;
         return peers.find((p) => p.id === valid.id)?.host
           ? `Сессия ${valid.id} работает: сообщение в очереди Cyborg и уйдёт, когда она закончит ход.`
-          : `Сессия ${valid.id} выполняет инструмент или ждёт человека: сообщение в очереди Cyborg и уйдёт, когда вызов закончится.`;
+          : `Сообщение сессии ${valid.id} в очереди Cyborg: уйдёт, как только она примет ввод.`;
       }
       if (name === CLOSE_SESSION_TOOL) {
         const valid = validateClose(value, peers, caller);
@@ -485,6 +485,7 @@ export function createSessionTools(
           close(valid.id);
           return `Вкладка сессии ${valid.id} закрыта.`;
         }
+        sessions.noteClosing?.(caller, caller);
         setTimeout(() => close(caller), closeSelfDelayMs);
         return 'Эта вкладка закроется через секунду.';
       }
