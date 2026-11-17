@@ -6,7 +6,7 @@ import { claudeArgs, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
 import { REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
-import { clipPrompt, hookSettings, isToolEvent, notePrompt, track, waitingReason, type SessionContext, type SessionEvent, type SessionState } from './session-state.ts';
+import { clipPrompt, hookSettings, isToolEnd, isToolEvent, notePrompt, track, waitingReason, type SessionContext, type SessionEvent, type SessionState } from './session-state.ts';
 import { readJournalFacts } from './history.ts';
 
 export { waitingReason, type SessionEvent, type SessionState };
@@ -68,11 +68,15 @@ interface Session {
   lastAnswer?: string;
   background?: boolean;
   context: SessionContext;
-  /** Сообщения других сессий, ждущие конца хода: в работающую сессию не пишем, Enter мог бы попасть в её запрос разрешения. */
+  /** Сообщения других сессий, ждущие, когда сессия примет ввод: Enter, пока идёт вызов инструмента, мог бы попасть в его запрос разрешения. */
   outbox: string[];
   outboxTimer?: NodeJS.Timeout;
   lastEventAt: number;
   delivering?: boolean;
+  /** Сообщение вставлено, а Enter ждёт конца вызова инструмента, начатого между вставкой и Enter. */
+  submitPending?: boolean;
+  /** Вызовы инструментов от PreToolUse до Post*: tool_use_id -> agent_id ('' - главная модель). */
+  inFlight: Map<string, string>;
   /** Открыта другой сессией (open_session, spawn_agent); у локальной разговоры уходят в onChild. */
   parent?: number;
   childSid?: string;
@@ -96,7 +100,8 @@ export interface SessionInfo {
   parent?: number;
 }
 
-export type SayResult = 'sent' | 'queued';
+/** sent-working - отправлено в работающую сессию: Claude Code передаст его модели после текущего вызова инструмента. */
+export type SayResult = 'sent' | 'sent-working' | 'queued';
 
 /** Пауза между текстом и Enter, как у кнопок команд (command-bar.ts): пакет «текст и Enter» TUI вправе принять за вставку. */
 export const SUBMIT_DELAY_MS = 150;
@@ -129,8 +134,29 @@ export function sessionEnv(extra: Record<string, string>): Record<string, string
   return { ...env, ...extra };
 }
 
-/** Ввод Claude Code ждёт: ход кончен, а фоновые задачи и пробуждения своего хода не начинают, пока не сработают. */
-const acceptsInput = (session: Session): boolean => session.state === 'waiting' || (session.state === 'working' && session.background === true);
+// Внешний вызов не спрашивает человека, а вызовы внутри него дают свои PreToolUse: держать очередь на всё время REPL или субагента незачем.
+const CONTAINER_TOOLS = new Set(['REPL', 'Poll', 'Agent', 'Task']);
+
+// Диалог появляется только внутри вызова, после его PreToolUse; у удалённой события идут по ssh с задержкой - ей пишем только после хода.
+const acceptsInput = (session: Session): boolean =>
+  session.state === 'waiting' ||
+  (session.state === 'working' && (session.remote ? session.background === true : session.inFlight.size === 0));
+
+// Отказ в разрешении и Esc не дают Post*: зависший вызов снимают Stop, UserPromptSubmit и SubagentStop его агента.
+function noteCall(inFlight: Map<string, string>, event: SessionEvent): void {
+  const name = event.hook_event_name;
+  const agent = event.agent_id ?? '';
+  const key = event.tool_use_id ?? `?${agent}`;
+  if (name === 'PreToolUse') {
+    if (!CONTAINER_TOOLS.has(event.tool_name ?? '')) inFlight.set(key, agent);
+  } else if (isToolEnd(name)) inFlight.delete(key);
+  else if (name === 'SubagentStop' || name === 'Stop' || name === 'UserPromptSubmit') {
+    // Stop без фоновых задач: не работает ни один субагент.
+    const all = name === 'Stop' && !event.background_tasks?.length;
+    const owner = name === 'SubagentStop' ? agent : '';
+    for (const [id, of] of inFlight) if (all || of === owner) inFlight.delete(id);
+  }
+}
 
 export class SessionManager {
   private readonly sessions = new Map<number, Session>();
@@ -198,6 +224,7 @@ export class SessionManager {
       dirs: [cwd, ...addDirs],
       state: 'starting',
       outbox: [],
+      inFlight: new Map(),
       context: {},
       lastEventAt: Date.now(),
       ...(parent !== undefined ? { parent } : {}),
@@ -247,72 +274,102 @@ export class SessionManager {
     if (!own) return null;
     return [...this.sessions.values()]
       .filter((s) => sameDirs(s.dirs, own.dirs))
-      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, remote, parent }) => ({
+      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, submitPending, remote, parent }) => ({
         id,
         dirs,
         cwd,
         state,
         reason,
         lastAnswer,
-        queued: outbox.length,
+        queued: outbox.length + (submitPending ? 1 : 0),
         ...(remote ? { host: remote.host, ...(remote.online ? {} : { link: 'offline' as const }) } : {}),
         ...(parent !== undefined ? { parent } : {}),
       }));
   }
 
-  /** Сообщение от другой сессии: ждущей - сразу, работающей - в очередь до конца её хода; на вопросе и при запуске - отказ. */
+  /** Сообщение от другой сессии: принимающей ввод - сразу, иначе в очередь; на вопросе и при запуске - отказ. */
   async say(id: number, text: string): Promise<SayResult> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`сессия ${id} завершилась`);
-    const quiet = Date.now() - session.lastEventAt >= this.outboxDelayMs;
+    if (!session.remote) this.readEvents(session);
     const open = acceptsInput(session);
-    if ((session.state === 'working' && !open) || (open && (!quiet || session.outbox.length || session.delivering))) {
+    if (!open && session.state !== 'working') {
+      throw new Error(`сессия ${id} ${session.state === 'asking' ? `ждёт человека (${session.reason})` : 'ещё запускается'}`);
+    }
+    const quiet = !session.remote || Date.now() - session.lastEventAt >= this.outboxDelayMs;
+    if (!open || !quiet || session.outbox.length || session.delivering) {
       session.outbox.push(text);
       this.scheduleOutbox(session);
       return 'queued';
     }
-    if (!open) throw new Error(`сессия ${id} ${session.state === 'asking' ? `ждёт человека (${session.reason})` : 'ещё запускается'}`);
-    await this.deliver(session, text);
-    return 'sent';
+    const working = session.state === 'working' && !session.background;
+    const result = await this.deliver(session, text);
+    return result === 'sent' && working ? 'sent-working' : result;
   }
 
-  private async deliver(session: Session, text: string): Promise<void> {
-    // Перед каждой записью: открытый запрос разрешения принял бы Enter за «Да».
-    const write = (data: string): void => {
-      if (this.sessions.get(session.id) !== session) throw new Error(`сессия ${session.id} завершилась`);
-      if (session.remote && !session.remote.online) throw new Error(`сессия ${session.id} без связи с хостом`);
-      if (!acceptsInput(session)) throw new Error(`сессия ${session.id} начала ход: текст вставлен в её ввод, Enter не отправлен`);
-      try {
-        session.term.write(data);
-      } catch {
-        throw new Error(`сессия ${session.id} завершилась`);
-      }
-    };
+  // Локальная дочитывает события перед проверкой: вызов мог начаться после последнего чтения.
+  private put(session: Session, data: string): boolean {
+    if (this.sessions.get(session.id) !== session) throw new Error(`сессия ${session.id} завершилась`);
+    if (session.remote && !session.remote.online) throw new Error(`сессия ${session.id} без связи с хостом`);
+    if (!session.remote) this.readEvents(session);
+    if (!acceptsInput(session)) return false;
+    try {
+      session.term.write(data);
+    } catch {
+      throw new Error(`сессия ${session.id} завершилась`);
+    }
+    return true;
+  }
+
+  private async deliver(session: Session, text: string): Promise<'sent' | 'queued'> {
     session.delivering = true;
     try {
       // Вставкой: перевод строки в тексте TUI мог бы принять за Enter и отправить сообщение по кускам.
       // Чистка у записи: в очередь попадает и текст хоста, минуя validateSend.
-      write(`\x1b[200~${cleanMessage(text)}\x1b[201~`);
+      if (!this.put(session, `\x1b[200~${cleanMessage(text)}\x1b[201~`)) {
+        session.outbox.unshift(text);
+        return 'queued';
+      }
       await new Promise((resolve) => setTimeout(resolve, SUBMIT_DELAY_MS));
-      write('\r');
+      if (this.put(session, '\r')) return 'sent';
+      if (session.remote) throw new Error(`сессия ${session.id} начала ход: текст вставлен в её ввод, Enter не отправлен`);
+      session.submitPending = true;
+      return 'queued';
     } finally {
-      session.delivering = false;
+      if (!session.submitPending) session.delivering = false;
       // Хук UserPromptSubmit приходит позже Enter: тишина отсчитывается заново.
       session.lastEventAt = Date.now();
       this.scheduleOutbox(session);
     }
   }
 
-  /** Очередь отдаёт по сообщению, когда сессия ждёт и молчит outboxDelayMs: чужой Stop-хук мог продолжить ход. */
+  private submit(session: Session): void {
+    try {
+      if (!this.put(session, '\r')) return;
+    } catch {
+      // Сессия завершилась: отправлять некуда.
+    }
+    session.submitPending = false;
+    session.delivering = false;
+    session.lastEventAt = Date.now();
+    this.scheduleOutbox(session);
+  }
+
+  /** Очередь отдаёт по сообщению, когда сессия примет ввод; удалённая - после outboxDelayMs тишины: чужой Stop-хук мог продолжить ход. */
   private scheduleOutbox(session: Session): void {
     clearTimeout(session.outboxTimer);
-    if (!acceptsInput(session) || !session.outbox.length || session.delivering || (session.remote && !session.remote.online)) return;
+    if (!acceptsInput(session) || (session.remote && !session.remote.online)) return;
+    if (session.submitPending) {
+      session.outboxTimer = setTimeout(() => this.submit(session), 0);
+      return;
+    }
+    if (!session.outbox.length || session.delivering) return;
     session.outboxTimer = setTimeout(
       () => {
         const text = session.outbox.shift();
         if (text !== undefined) this.deliver(session, text).catch(() => {});
       },
-      Math.max(0, session.lastEventAt + this.outboxDelayMs - Date.now()),
+      session.remote ? Math.max(0, session.lastEventAt + this.outboxDelayMs - Date.now()) : 0,
     );
   }
 
@@ -395,6 +452,7 @@ export class SessionManager {
       dirs: options.dirs,
       state: 'starting',
       outbox: [],
+      inFlight: new Map(),
       context: {},
       lastEventAt: Date.now(),
     });
@@ -515,6 +573,7 @@ export class SessionManager {
       session.childSid = event.session_id;
       this.onChild?.(event.session_id);
     }
+    noteCall(session.inFlight, event);
     track(session, event);
     this.noteContext(session, event);
     this.scheduleOutbox(session);

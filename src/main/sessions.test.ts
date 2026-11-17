@@ -366,6 +366,8 @@ test('упавший инструмент - работа: после запро�
   manager.ingest(id, [ev({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash' })], { replay: false });
   assert.equal(manager.peers(id)?.[0].state, 'working');
   assert.deepEqual(hookSettings().hooks.PostToolUseFailure, hookSettings().hooks.PostToolUse);
+  assert.deepEqual(hookSettings().hooks.PreToolUse, hookSettings().hooks.PostToolUse);
+  assert.ok(hookSettings().hooks.SubagentStop);
 });
 
 // Менеджер с pty, записывающим вызовы; throwing - pty, бросающий на каждом вызове (процесс завершился, дескриптор закрыт).
@@ -556,10 +558,22 @@ function talkingManager(t: { after: (fn: () => void) => void }, outboxDelayMs: n
     for (let i = 0; i < 100 && events.length === seen; i++) await new Promise((r) => setTimeout(r, 10));
   };
   const queued = () => manager.peers(id)!.find((p) => p.id === id)!.queued;
-  return { manager, id, writes, push, queued };
+  return { manager, id, writes, push, queued, file };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function remoteTalking(t: { after: (fn: () => void) => void }, outboxDelayMs: number) {
+  const writes: string[] = [];
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const manager = new SessionManager(userData, () => {}, (() => fakePty()) as any);
+  manager.outboxDelayMs = outboxDelayMs;
+  const term = { write: (data: string) => void writes.push(data), resize: () => {}, kill: () => {} };
+  const id = manager.adopt({ term, dirs: ['/h/a'], cwd: '/h/a', remote: { host: 'dev1', origin: 'human', keep: false, online: true } });
+  const push = (event: object) => manager.ingest(id, [JSON.stringify(event)], { replay: false });
+  return { manager, id, writes, push };
+}
 
 test('SessionManager.say: ждущей сессии - вставкой и Enter отдельной записью; запуск, вопрос и завершённая сессия - отказ', async (t) => {
   const { manager, id, writes, push } = talkingManager(t, 0);
@@ -573,62 +587,89 @@ test('SessionManager.say: ждущей сессии - вставкой и Enter 
   assert.equal(writes.length, 2);
 });
 
-test('SessionManager.say: работающей сессии - в очередь, по сообщению после конца хода', async (t) => {
-  const quiet = 200;
-  const { manager, id, writes, push, queued } = talkingManager(t, quiet);
+test('SessionManager.say: работающей сессии без вызова инструмента - сразу, без тишины; вызов держит очередь до своего Post*', async (t) => {
+  const { manager, id, writes, push, queued } = talkingManager(t, 60_000);
   await push({ hook_event_name: 'UserPromptSubmit' });
-  assert.equal(await manager.say(id, 'первое'), 'queued');
-  assert.equal(await manager.say(id, 'второе'), 'queued');
-  assert.equal(queued(), 2);
-  await push({ hook_event_name: 'Stop' });
-  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.equal(await manager.say(id, 'первое'), 'sent-working');
   assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r']);
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 't2' });
+  assert.equal(await manager.say(id, 'второе'), 'queued');
   assert.equal(queued(), 1);
-  // Отправленное начинает ход раньше, чем истечёт тишина после Enter: второе ждёт его конца.
-  await push({ hook_event_name: 'UserPromptSubmit' });
-  await sleep(quiet + 50);
-  assert.equal(writes.length, 2);
-  await push({ hook_event_name: 'Stop' });
-  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 2, 'второй вызов ещё идёт');
+  await push({ hook_event_name: 'PostToolUseFailure', tool_name: 'Read', tool_use_id: 't2' });
+  await sleep(SUBMIT_DELAY_MS + 50);
   assert.deepEqual(writes.slice(2), ['\x1b[200~второе\x1b[201~', '\r']);
   assert.equal(queued(), 0);
 });
 
-test('SessionManager.say: сессия ждёт только фоновых задач или пробуждения - сообщение уходит, когда и фоновый субагент помолчит; проснулась - снова очередь', async (t) => {
-  const quiet = 200;
-  const { manager, id, writes, push, queued } = talkingManager(t, quiet);
+test('SessionManager.say: вызов субагента держит очередь до его SubagentStop, внешние REPL, Poll и Agent - нет', async (t) => {
+  const { manager, id, writes, push } = talkingManager(t, 0);
+  await push({ hook_event_name: 'UserPromptSubmit' });
+  for (const [n, tool] of ['REPL', 'Poll', 'Agent'].entries()) await push({ hook_event_name: 'PreToolUse', tool_name: tool, tool_use_id: `c${n}` });
+  assert.equal(await manager.say(id, 'первое'), 'sent-working');
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'repl_1' });
+  assert.equal(await manager.say(id, 'второе'), 'queued', 'вызов внутри REPL');
+  await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'repl_1' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 4);
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 's1', agent_id: 'sub' });
+  assert.equal(await manager.say(id, 'третье'), 'queued', 'запрос разрешения субагента - в том же TUI');
+  await push({ hook_event_name: 'SubagentStop', agent_id: 'other' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 4);
+  await push({ hook_event_name: 'SubagentStop', agent_id: 'sub' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes.slice(4), ['\x1b[200~третье\x1b[201~', '\r']);
+});
+
+test('SessionManager.say: вызов без Post* (отказ в разрешении, Esc) снимают Stop и UserPromptSubmit, вызов фонового субагента - только Stop без фоновых задач', async (t) => {
+  const { manager, id, writes, push } = talkingManager(t, 0);
   const state = () => manager.peers(id)!.find((p) => p.id === id)!.state;
   await push({ hook_event_name: 'UserPromptSubmit' });
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'denied' });
   assert.equal(await manager.say(id, 'первое'), 'queued');
   await push({ hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }] });
-  assert.equal(state(), 'working', 'пауза до фоновой задачи - working: close_session без force её не оборвёт');
-  for (let i = 0; i < 5; i++) {
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'пауза до фоновой задачи принимает ввод');
+  await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'bg1', agent_id: 'bg' });
+  assert.equal(state(), 'working');
+  assert.equal(await manager.say(id, 'второе'), 'queued');
+  await push({ hook_event_name: 'UserPromptSubmit' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.equal(writes.length, 2, 'фоновый субагент работает дальше');
+  await push({ hook_event_name: 'Stop' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes.slice(2), ['\x1b[200~второе\x1b[201~', '\r']);
+});
+
+test('SessionManager.say: удалённой - только после конца хода и тишины outboxDelayMs, вызовы инструментов не в счёт', async (t) => {
+  const quiet = 200;
+  const { manager, id, writes, push } = remoteTalking(t, quiet);
+  push({ hook_event_name: 'SessionStart' });
+  push({ hook_event_name: 'UserPromptSubmit' });
+  assert.equal(await manager.say(id, 'первое'), 'queued');
+  push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await sleep(quiet + SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, [], 'ход не кончен');
+  push({ hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }] });
+  for (let i = 0; i < 4; i++) {
     await sleep(quiet / 2);
-    await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'a1' });
+    push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', agent_id: 'a1' });
   }
   assert.deepEqual(writes, [], 'фоновый субагент шлёт события: его запрос разрешения мог бы опередить свой Notification');
   await sleep(quiet + SUBMIT_DELAY_MS + 50);
-  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'очередь отдана в паузе после тишины');
+  assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r']);
   await sleep(quiet + 50);
-  assert.equal(await manager.say(id, 'второе'), 'sent');
-  assert.equal(writes.length, 4);
-  await push({ hook_event_name: 'PostToolUse', tool_name: 'Read' });
+  assert.equal(await manager.say(id, 'второе'), 'sent', 'пауза до фоновой задачи');
+  push({ hook_event_name: 'PostToolUse', tool_name: 'Read' });
   assert.equal(await manager.say(id, 'третье'), 'queued', 'модель проснулась после фоновой задачи - снова ход');
-  await sleep(quiet + SUBMIT_DELAY_MS + 50);
-  assert.equal(writes.length, 4);
-  await push({ hook_event_name: 'Stop', session_crons: [{ id: 'c' }] });
+  push({ hook_event_name: 'Stop', session_crons: [{ id: 'c' }] });
   await sleep(quiet + SUBMIT_DELAY_MS + 50);
   assert.deepEqual(writes.slice(4), ['\x1b[200~третье\x1b[201~', '\r'], 'пауза до пробуждения тоже принимает ввод');
-  assert.equal(queued(), 0);
-});
-
-test('SessionManager.say: после события сессия должна помолчать, иначе сообщение ждёт в очереди', async (t) => {
-  const { manager, id, writes, push } = talkingManager(t, 300);
-  await push({ hook_event_name: 'SessionStart' });
-  assert.equal(await manager.say(id, 'x'), 'queued');
-  assert.deepEqual(writes, []);
-  await sleep(300 + SUBMIT_DELAY_MS + 100);
-  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~', '\r']);
 });
 
 test('SessionManager.say: сообщение во время отправки другого ждёт в очереди, вставки не перемешиваются', async (t) => {
@@ -649,11 +690,27 @@ test('SessionManager.enqueue: текст в обход validateSend вставл
   assert.deepEqual(writes, ['\x1b[200~итог[201~\n!rm -rf ~\x1b[201~', '\r']);
 });
 
-test('SessionManager.say: сессия начала ход между вставкой и Enter - Enter не отправлен', async (t) => {
-  const { manager, id, writes, push } = talkingManager(t, 0);
-  await push({ hook_event_name: 'SessionStart' });
+test('SessionManager.say: вызов начат между вставкой и Enter - Enter ждёт его конца, следующее сообщение - за ним', async (t) => {
+  const { manager, id, writes, push, queued, file } = talkingManager(t, 0);
+  await push({ hook_event_name: 'UserPromptSubmit' });
   const pending = manager.say(id, 'x');
-  await push({ hook_event_name: 'Notification', notification_type: 'permission_prompt' });
+  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~']);
+  // Без ожидания fs.watch: Enter должен увидеть вызов и тогда, когда наблюдатель ещё не сработал.
+  fs.appendFileSync(file, JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1' }) + '\n');
+  assert.equal(await pending, 'queued');
+  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~']);
+  assert.equal(queued(), 1);
+  assert.equal(await manager.say(id, 'y'), 'queued');
+  await push({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 't1' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, ['\x1b[200~x\x1b[201~', '\r', '\x1b[200~y\x1b[201~', '\r']);
+});
+
+test('SessionManager.say: удалённая сессия начала ход между вставкой и Enter - Enter не отправлен', async (t) => {
+  const { manager, id, writes, push } = remoteTalking(t, 0);
+  push({ hook_event_name: 'SessionStart' });
+  const pending = manager.say(id, 'x');
+  push({ hook_event_name: 'Notification', notification_type: 'permission_prompt' });
   await assert.rejects(pending, /Enter не отправлен/);
   assert.deepEqual(writes, ['\x1b[200~x\x1b[201~']);
 });

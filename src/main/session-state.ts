@@ -18,16 +18,21 @@ export interface SessionEvent {
   transcript_path?: string;
   /** Есть у событий инструментов субагента, в том числе фонового, который работает после Stop главного хода. */
   agent_id?: string;
+  /** Связывает PreToolUse вызова с его PostToolUse или PostToolUseFailure. */
+  tool_use_id?: string;
   background_tasks?: unknown[];
   session_crons?: unknown[];
 }
 
 export const HOOK_COMMAND = '{ cat; echo; } >> "$CYBORG_EVENTS"';
 // Упавший инструмент шлёт PostToolUseFailure, а не PostToolUse: без него ход из одних отказов выглядел бы простоем.
-export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'Notification'];
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStop', 'Stop', 'Notification'];
 
-/** Инструмент отработал, успешно или нет: сессия (или её субагент) работает. */
-export const isToolEvent = (name: string | undefined): boolean => name === 'PostToolUse' || name === 'PostToolUseFailure';
+/** Вызов инструмента закончен, успешно или нет. */
+export const isToolEnd = (name: string | undefined): boolean => name === 'PostToolUse' || name === 'PostToolUseFailure';
+
+/** Вызов инструмента начат или закончен: сессия (или её субагент) работает. */
+export const isToolEvent = (name: string | undefined): boolean => name === 'PreToolUse' || isToolEnd(name);
 
 /** Содержимое --settings: те же хуки у локальной сессии и у демона на хосте. */
 export function hookSettings(): { hooks: Record<string, unknown[]> } {

@@ -125,7 +125,12 @@ describe('createSessionTools', () => {
       {
         dirsOf: () => (peers ? DIRS : null),
         peers: () => peers,
-        say: async (id, text) => (said.push([id, text]), peers?.find((p) => p.id === id)?.state === 'working' ? 'queued' : 'sent'),
+        say: async (id, text) => {
+          said.push([id, text]);
+          const target = peers?.find((p) => p.id === id);
+          if (target?.state !== 'working') return 'sent';
+          return target.queued || target.host ? 'queued' : 'sent-working';
+        },
         parentOf: (id) => peers?.find((p) => p.id === id)?.parent ?? null,
         reportLocal: (id, report) => (reported.push([id, report]), 'принят'),
       },
@@ -152,13 +157,23 @@ describe('createSessionTools', () => {
     assert.deepEqual(closed, [2]);
   });
 
-  it('send_to_session пишет в ждущую сессию; о работающей говорит, что сообщение в очереди', async () => {
-    const { backend, said } = tools([peer(1, 'working'), peer(2, 'waiting'), peer(3, 'working')]);
-    assert.match(await backend.call(1, 'send_to_session', { id: 2, message: 'привет' }), /отправлено сессии 2/);
-    assert.match(await backend.call(1, 'send_to_session', { id: 3, message: 'ещё' }), /в очереди Cyborg/);
+  it('send_to_session: ответ говорит, отправлено ли сообщение, передаст ли его Claude Code посреди хода или оно ждёт в очереди', async () => {
+    const { backend, said } = tools([peer(1, 'working'), peer(2, 'waiting'), peer(3, 'working'), peer(4, 'working', { queued: 1 }), peer(5, 'working', { host: 'dev1' })]);
+    assert.equal(await backend.call(1, 'send_to_session', { id: 2, message: 'привет' }), 'Сообщение отправлено сессии 2.');
+    assert.equal(
+      await backend.call(1, 'send_to_session', { id: 3, message: 'ещё' }),
+      'Сообщение отправлено сессии 3: она работает, Claude Code передаст его после текущего вызова инструмента.',
+    );
+    assert.equal(
+      await backend.call(1, 'send_to_session', { id: 4, message: 'и ещё' }),
+      'Сессия 4 выполняет инструмент или ждёт человека: сообщение в очереди Cyborg и уйдёт, когда вызов закончится.',
+    );
+    assert.equal(await backend.call(1, 'send_to_session', { id: 5, message: 'хосту' }), 'Сессия 5 работает: сообщение в очереди Cyborg и уйдёт, когда она закончит ход.');
     assert.deepEqual(said, [
       [2, 'привет'],
       [3, 'ещё'],
+      [4, 'и ещё'],
+      [5, 'хосту'],
     ]);
     await assert.rejects(backend.call(1, 'send_to_session', { id: 1, message: 'x' }), /этой же/);
   });

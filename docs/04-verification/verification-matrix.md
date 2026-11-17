@@ -175,7 +175,7 @@ date: 2026-10-26
 | FR-15004 | open_session открывает вкладку в том же проекте с заданием первым сообщением | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/mcp.test.ts` |
 | FR-15005 | Состояние сессии для инструментов - по событиям хуков | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
 | FR-15006 | list_sessions перечисляет вкладки проекта с состоянием и хвостом ответа | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
-| FR-15007 | send_to_session пишет в ждущую вкладку вставкой и Enter, не задевая чужой запрос разрешения | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
+| FR-15007 | send_to_session пишет вставкой и Enter, когда запись не попадёт в чужой диалог | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts` |
 | FR-15008 | Очередь сообщений работающей вкладке | 15-session-mcp | автотест | `src/main/sessions.test.ts` |
 | FR-15009 | close_session закрывает вкладку проекта, не обрывая без force работу и вопрос соседки | 15-session-mcp | автотест | `test/session-tools.test.ts`, `test/remote-tools.test.ts`, `test/mcp.test.ts` |
 | FR-15010 | report_done у локальной сессии, открытой другой сессией, отдаёт итог открывшей | 15-session-mcp | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/session-tools.test.ts`, `test/remote-tools.test.ts` |
