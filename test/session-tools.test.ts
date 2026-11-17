@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { cleanMessage } from '../src/main/clean-text';
-import { reportText } from '../src/main/report-text';
+import { childExitText, reportText } from '../src/main/report-text';
 import type { SessionInfo } from '../src/main/sessions';
 import {
   ANSWER_TAIL,
@@ -43,7 +43,7 @@ describe('validateSend', () => {
     assert.deepEqual(validateSend({ id: 5, message: 'посмотри /tmp/x' }, peers, 1), { id: 5, message: 'посмотри /tmp/x' });
   });
 
-  it('отвергает себя, чужую сессию, стоящую на вопросе и запускающуюся, пустое, с «!», «/» и «#»', () => {
+  it('отвергает себя, чужую сессию, стоящую на вопросе, запускающуюся и завершённую, пустое, с «!», «/» и «#»', () => {
     assert.match(validateSend({ id: 2, message: ' /permissions' }, peers, 1) as string, /«\/» или «#»/);
     assert.match(validateSend({ id: 2, message: '\x1b# запомни' }, peers, 1) as string, /«\/» или «#»/);
     assert.match(validateSend({ id: 1, message: 'x' }, peers, 1) as string, /этой же/);
@@ -51,6 +51,7 @@ describe('validateSend', () => {
     assert.match(validateSend({ id: '2', message: 'x' }, peers, 1) as string, /нет среди/);
     assert.match(validateSend({ id: 3, message: 'x' }, peers, 1) as string, /Просит разрешение/);
     assert.match(validateSend({ id: 4, message: 'x' }, peers, 1) as string, /запускается/);
+    assert.match(validateSend({ id: 6, message: 'x' }, [...peers, peer(6, 'exited', { exitCode: 0 })], 1) as string, /^сессия 6 завершилась: её вкладку закрывает close_session$/);
     assert.match(validateSend({ id: 2, message: '\x1b \n' }, peers, 1) as string, /непустая/);
     assert.match(validateSend({ id: 2, message: '\x07!ls' }, peers, 1) as string, /«!»/);
   });
@@ -73,6 +74,10 @@ describe('validateClose', () => {
     assert.match(validateClose({ id: 3 }, peers, 1) as string, /ждёт человека \(Просит разрешение\)/);
     assert.match(validateClose({ id: 4 }, peers, 1) as string, /запускается/);
     for (const id of [3, 4, 5]) assert.deepEqual(validateClose({ id, force: true }, peers, 1), { id });
+  });
+
+  it('завершённую соседку закрывает без force', () => {
+    assert.deepEqual(validateClose({ id: 6 }, [...peers, peer(6, 'exited', { exitCode: 1 })], 1), { id: 6 });
   });
 
   it('свою дочернюю закрывает в любом состоянии без force, чужую - нет', () => {
@@ -106,12 +111,24 @@ describe('describePeers', () => {
     assert.deepEqual([list[2].parent, 'child' in list[2]], [2, false]);
     assert.deepEqual(['parent' in list[3], 'child' in list[3]], [false, false]);
   });
+
+  it('exit_code - только у завершённой', () => {
+    const list = JSON.parse(describePeers([peer(1, 'working'), peer(2, 'exited', { exitCode: 0 })], 1));
+    assert.deepEqual([list[1].state, list[1].exit_code], ['exited', 0]);
+    assert.equal('exit_code' in list[0], false);
+  });
 });
 
 describe('reportText', () => {
   it('у локальной - без хоста, у удалённой - с хостом; ветка и PR - строками до итога', () => {
     assert.equal(reportText(3, undefined, { status: 'ok', summary: 'сделано', branch: 'feat-x' }), 'Итог сессии CC3: ok\nветка: feat-x\n\nсделано');
     assert.equal(reportText(4, 'dev1', { status: 'failed', summary: 'нет', pr: 'https://x/1' }), 'Итог удалённой сессии CC4 (dev1): failed\nPR: https://x/1\n\nнет');
+  });
+
+  it('childExitText: вышла сама - код и как закрыть вкладку; вкладку закрыли - кто', () => {
+    assert.equal(childExitText(8, { code: 1, released: false }), 'Сессия CC8 завершилась (код 1): её вкладка открыта, закрыть - close_session.');
+    assert.equal(childExitText(8, { code: 0, released: true }), 'Вкладку сессии CC8 закрыл человек.');
+    assert.equal(childExitText(8, { code: 0, released: true, closedBy: 5 }), 'Вкладку сессии CC8 закрыла сессия CC5.');
   });
 });
 
@@ -121,6 +138,7 @@ describe('createSessionTools', () => {
     const requested: unknown[] = [];
     const closed: number[] = [];
     const reported: [number, unknown][] = [];
+    const order: string[] = [];
     const backend = createSessionTools(
       {
         dirsOf: () => (peers ? DIRS : null),
@@ -133,12 +151,13 @@ describe('createSessionTools', () => {
         },
         parentOf: (id) => peers?.find((p) => p.id === id)?.parent ?? null,
         reportLocal: (id, report) => (reported.push([id, report]), 'принят'),
+        noteClosing: (id, caller) => void order.push(`note ${id} by ${caller}`),
       },
       { request: async (...args) => (requested.push(args), 42) },
-      (id) => closed.push(id),
+      (id) => (closed.push(id), order.push(`close ${id}`)),
       10,
     );
-    return { backend, said, requested, closed, reported };
+    return { backend, said, requested, closed, reported, order };
   }
 
   it('report_done есть у локальной дочерней и уходит в reportLocal; у открытой человеком его нет', async () => {
@@ -155,6 +174,12 @@ describe('createSessionTools', () => {
     const { backend, closed } = tools([peer(1, 'working'), peer(2, 'working', { parent: 1 })]);
     assert.match(await backend.call(1, 'close_session', { id: 2 }), /сессии 2 закрыта/);
     assert.deepEqual(closed, [2]);
+  });
+
+  it('close_session называет закрывающую сессию до закрытия вкладки: открывшей о выходе дочерней не сообщат зря', async () => {
+    const { backend, order } = tools([peer(1, 'working'), peer(2, 'exited', { exitCode: 0, parent: 3 }), peer(3, 'working')]);
+    assert.match(await backend.call(1, 'close_session', { id: 2 }), /сессии 2 закрыта/);
+    assert.deepEqual(order, ['note 2 by 1', 'close 2']);
   });
 
   it('send_to_session: ответ говорит, отправлено ли сообщение, передаст ли его Claude Code посреди хода или оно ждёт в очереди', async () => {

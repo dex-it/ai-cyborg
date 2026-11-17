@@ -997,6 +997,7 @@ function closeSession(s: Session, force: boolean): void {
     if (!confirm(`Завершить удалённую сессию на ${s.remote.host} и убрать её клоны? Клоны с незапушенной работой останутся на хосте.`)) return;
   } else if (!s.exited && !force && !confirm('Сессия Claude Code ещё работает. Завершить её?')) return;
   if (!s.exited) api.kill(s.id);
+  api.release(s.id);
   notifier.dismiss(s.id);
   commandBars.detach(s.command);
   output.drop(s);
@@ -1146,7 +1147,10 @@ api.on<{ hid: string; from: number; repo: string; host?: string }>('session:hand
 api.on<{ id: number }>('session:close', ({ id }) => {
   const session = findSession(id);
   if (session) closeSession(session, true);
-  else api.kill(id);
+  else {
+    api.kill(id);
+    api.release(id);
+  }
 });
 
 api.on<{ id: number }>('session:reveal', ({ id }) => {

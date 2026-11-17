@@ -549,6 +549,7 @@ test('SessionManager: состояние сессии и хвост ответа
   await push({ hook_event_name: 'PostToolUse', tool_name: 'Read', agent_id: 'bg' });
   assert.equal(state().state, 'waiting');
   manager.kill(sibling);
+  manager.release(sibling);
   assert.deepEqual(manager.peers(id)!.map((p) => p.id), [id]);
   manager.kill(id);
   assert.equal(manager.peers(id), null);
@@ -738,4 +739,70 @@ test('SessionManager убирает конфиги MCP убитого экзем
   for (const name of [`${dead}-1.jsonl`, `${dead}-1.mcp.json`, `${process.pid}-9.mcp.json`]) fs.writeFileSync(path.join(dir, name), '');
   new SessionManager(userData, () => {}, (() => fakePty()) as any);
   assert.deepEqual(fs.readdirSync(dir).sort(), [`${process.pid}-9.mcp.json`]);
+});
+
+test('SessionManager: вышедшая сессия остаётся среди соседей как exited с кодом до закрытия вкладки; вкладка, закрытая до выхода, убирается с выходом', async (t) => {
+  const { manager } = managerIn(t);
+  const own = manager.create('p', '/a', []);
+  const gone = manager.create('p', '/a', []);
+  manager.kill(gone);
+  assert.deepEqual(
+    manager.peers(own)!.map((p) => [p.id, p.state, p.exitCode]),
+    [
+      [own, 'starting', undefined],
+      [gone, 'exited', 0],
+    ],
+  );
+  assert.equal(manager.count(), 1);
+  assert.equal(manager.dirsOf(gone), null, 'у завершённой инструментов нет');
+  assert.equal(manager.peers(gone), null);
+  await assert.rejects(manager.say(gone, 'x'), /завершилась/);
+  assert.equal(manager.enqueue(gone, 'x'), false);
+  manager.release(gone);
+  assert.deepEqual(manager.peers(own)!.map((p) => p.id), [own]);
+  const closing = manager.create('p', '/a', []);
+  manager.release(closing);
+  assert.deepEqual(manager.peers(own)!.map((p) => p.id), [own, closing], 'процесс ещё жив - сессия видна');
+  manager.kill(closing);
+  assert.deepEqual(manager.peers(own)!.map((p) => p.id), [own]);
+  manager.release('мусор');
+});
+
+test('SessionManager: открывшей - сообщение о выходе дочерней (сама, закрыл человек, закрыла другая сессия), без сообщения - своё закрытие и killAll', async (t) => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const writes: string[] = [];
+  const manager = new SessionManager(userData, () => {}, (() => ({ ...fakePty(), write: (data: string) => void writes.push(data) })) as any);
+  t.after(() => manager.killAll());
+  const parent = manager.create('p', '/a', []);
+  const other = manager.create('p', '/a', []);
+  const child = () => manager.create('p', '/a', [], 'задание', undefined, parent);
+  const self = child();
+  manager.kill(self);
+  const byHuman = child();
+  manager.release(byHuman);
+  manager.kill(byHuman);
+  const byOther = child();
+  manager.noteClosing(byOther, other);
+  manager.release(byOther);
+  manager.kill(byOther);
+  const byParent = child();
+  manager.noteClosing(byParent, parent);
+  manager.release(byParent);
+  manager.kill(byParent);
+  assert.equal(manager.peers(parent)!.find((p) => p.id === parent)!.queued, 3);
+  manager.ingest(parent, [JSON.stringify({ hook_event_name: 'SessionStart' })], { replay: false });
+  for (let i = 0; i < 200 && writes.length < 6; i++) await sleep(10);
+  assert.deepEqual(
+    writes.filter((w) => w !== '\r'),
+    [
+      `Сессия CC${self} завершилась (код 0): её вкладка открыта, закрыть - close_session.`,
+      `Вкладку сессии CC${byHuman} закрыл человек.`,
+      `Вкладку сессии CC${byOther} закрыла сессия CC${other}.`,
+    ].map((text) => `\x1b[200~${text}\x1b[201~`),
+  );
+  const last = child();
+  manager.killAll();
+  assert.equal(writes.length, 6, 'killAll гасит и открывшую: сообщать некому');
+  for (const id of [parent, other, self, last]) assert.equal(manager.projectOf(id), null, 'killAll не оставляет записей вкладок');
 });

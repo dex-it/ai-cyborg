@@ -5,7 +5,7 @@ import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
-import { REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
+import { childExitText, REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
 import { clipPrompt, hookSettings, isToolEnd, isToolEvent, notePrompt, track, waitingReason, type SessionContext, type SessionEvent, type SessionState } from './session-state.ts';
 import { readJournalFacts } from './history.ts';
 
@@ -85,6 +85,13 @@ interface Session {
   childSid?: string;
   /** Итог этого круга работы сдан report_done; круг открывает следующий UserPromptSubmit. */
   reported?: boolean;
+  exitCode?: number;
+  /** Вкладку закрыли: после выхода процесса запись не нужна. */
+  released?: boolean;
+  /** Сессия, закрывшая вкладку close_session; у закрытой человеком нет. */
+  closedBy?: number;
+  /** Гасится вместе со всеми (killAll). */
+  ending?: boolean;
 }
 
 export interface SessionInfo {
@@ -101,6 +108,8 @@ export interface SessionInfo {
   link?: 'offline';
   /** Сессия, открывшая эту инструментом. */
   parent?: number;
+  /** Только у завершённой (state exited). */
+  exitCode?: number;
 }
 
 /** sent-working - отправлено в работающую сессию: Claude Code передаст его модели после текущего вызова инструмента. */
@@ -108,6 +117,8 @@ export type SayResult = 'sent' | 'sent-working' | 'queued';
 
 /** Пауза между текстом и Enter, как у кнопок команд (command-bar.ts): пакет «текст и Enter» TUI вправе принять за вставку. */
 export const SUBMIT_DELAY_MS = 150;
+
+const EXITED_TERM: TermPort = { write: () => {}, resize: () => {}, kill: () => {} };
 
 export const sameDirs = (a: string[], b: string[]): boolean => a.length === b.length && [...a].sort().join('\0') === [...b].sort().join('\0');
 
@@ -248,19 +259,45 @@ export class SessionManager {
         fs.rmSync(mcpFile, { force: true });
         mcp?.disconnect(id);
       }
-      this.sessions.delete(id);
+      this.exited(session, exitCode);
       this.emit('session:exit', { id, exitCode });
     });
     return id;
   }
 
-  /** Работающие сессии: завершившаяся убирается из набора в onExit. */
+  // Вкладка вышедшей сессии остаётся: открывшая должна её видеть и закрыть, а не счесть пропавшей.
+  private exited(session: Session, exitCode: number): void {
+    if (session.released) this.sessions.delete(session.id);
+    else {
+      Object.assign(session, { state: 'exited', exitCode, term: EXITED_TERM, outbox: [], submitPending: false, delivering: false, reason: undefined });
+      session.inFlight.clear();
+    }
+    if (session.parent === undefined || session.closedBy === session.parent || session.ending) return;
+    this.enqueue(session.parent, childExitText(session.id, { code: exitCode, released: !!session.released, closedBy: session.closedBy }));
+  }
+
+  /** Вкладку закрыли: завершённая сессия убирается сразу, работающая - когда выйдет её процесс. */
+  release(id: unknown): void {
+    const valid = validateSessionId(id);
+    const session = valid === null ? undefined : this.sessions.get(valid);
+    if (!session || session.remote) return;
+    if (session.state === 'exited') this.sessions.delete(session.id);
+    else session.released = true;
+  }
+
+  /** Вкладку закрывает сессия инструментом: открывшей, закрывшей свою дочернюю, сообщение о выходе не нужно. */
+  noteClosing(id: number, caller: number): void {
+    const session = this.sessions.get(id);
+    if (session) session.closedBy = caller;
+  }
+
+  /** Работающие сессии: у завершившейся вкладка может оставаться, но процесса нет. */
   count(): number {
     return this.local().length;
   }
 
   private local(): Session[] {
-    return [...this.sessions.values()].filter((s) => !s.remote);
+    return [...this.sessions.values()].filter((s) => !s.remote && s.state !== 'exited');
   }
 
   /** Каталоги и текущие cwd работающих сессий: интерфейсу они доступны, даже если лежат не в репозиториях проекта. */
@@ -270,7 +307,8 @@ export class SessionManager {
 
   /** Каталоги запуска сессии - её рабочий и подключённые через --add-dir; null - сессии нет. */
   dirsOf(id: number): string[] | null {
-    return this.sessions.get(id)?.dirs ?? null;
+    const session = this.sessions.get(id);
+    return session && session.state !== 'exited' ? session.dirs : null;
   }
 
   // Проект приходит из недоверенного интерфейса (ADR-0002 п.5): дочерняя не уходит в чужой проект, где её не увидит открывшая.
@@ -284,13 +322,13 @@ export class SessionManager {
     return this.sessions.get(id)?.project ?? null;
   }
 
-  /** Работающие сессии проекта вызывающей, она сама тоже. null - сессии нет. */
+  /** Вкладки проекта вызывающей, она сама и завершённые тоже. null - сессии нет либо она завершена. */
   peers(id: number): SessionInfo[] | null {
     const own = this.sessions.get(id);
-    if (!own) return null;
+    if (!own || own.state === 'exited') return null;
     return [...this.sessions.values()]
       .filter((s) => s.project === own.project)
-      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, submitPending, remote, parent }) => ({
+      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, submitPending, remote, parent, exitCode }) => ({
         id,
         dirs,
         cwd,
@@ -300,13 +338,14 @@ export class SessionManager {
         queued: outbox.length + (submitPending ? 1 : 0),
         ...(remote ? { host: remote.host, ...(remote.online ? {} : { link: 'offline' as const }) } : {}),
         ...(parent !== undefined ? { parent } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
       }));
   }
 
   /** Сообщение от другой сессии: принимающей ввод - сразу, иначе в очередь; на вопросе и при запуске - отказ. */
   async say(id: number, text: string): Promise<SayResult> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`сессия ${id} завершилась`);
+    if (!session || session.state === 'exited') throw new Error(`сессия ${id} завершилась`);
     if (!session.remote) this.readEvents(session);
     const open = acceptsInput(session);
     if (!open && session.state !== 'working') {
@@ -325,7 +364,7 @@ export class SessionManager {
 
   // Локальная дочитывает события перед проверкой: вызов мог начаться после последнего чтения.
   private put(session: Session, data: string): boolean {
-    if (this.sessions.get(session.id) !== session) throw new Error(`сессия ${session.id} завершилась`);
+    if (this.sessions.get(session.id) !== session || session.state === 'exited') throw new Error(`сессия ${session.id} завершилась`);
     if (session.remote && !session.remote.online) throw new Error(`сессия ${session.id} без связи с хостом`);
     if (!session.remote) this.readEvents(session);
     if (!acceptsInput(session)) return false;
@@ -420,8 +459,16 @@ export class SessionManager {
     }
   }
 
+  // Вкладки уходят вместе с сессиями (смена воркспейса, выход): гаснущей открывшей сообщать незачем.
   killAll(): void {
-    for (const session of this.local()) session.term.kill();
+    for (const session of [...this.sessions.values()]) {
+      if (session.remote) continue;
+      if (session.state === 'exited') this.sessions.delete(session.id);
+      else {
+        Object.assign(session, { released: true, ending: true });
+        session.term.kill();
+      }
+    }
   }
 
   // Убитый экземпляр не доходит до onExit, и его файлы событий остаются.
@@ -540,7 +587,7 @@ export class SessionManager {
   /** Сообщение в очередь сессии без отказа: уйдёт, когда она будет ждать. false - сессии нет. */
   enqueue(id: number, text: string): boolean {
     const session = this.sessions.get(id);
-    if (!session) return false;
+    if (!session || session.state === 'exited') return false;
     session.outbox.push(text);
     this.scheduleOutbox(session);
     return true;
@@ -552,7 +599,7 @@ export class SessionManager {
    */
   ingest(id: number, lines: string[], { replay }: { replay: boolean }): void {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session || session.state === 'exited') return;
     const events: SessionEvent[] = [];
     for (const line of lines) {
       if (!line.trim()) continue;

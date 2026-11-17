@@ -1,7 +1,7 @@
 import { withoutSuggestions } from './suggestions.ts';
 
 /** starting - SessionStart ещё не пришёл (CC грузится или стоит на доверии к каталогу); asking - ждёт человека на вопросе, разрешении или лимите. */
-export type SessionState = 'starting' | 'working' | 'waiting' | 'asking';
+export type SessionState = 'starting' | 'working' | 'waiting' | 'asking' | 'exited';
 
 export interface SessionEvent {
   hook_event_name?: string;

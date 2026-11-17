@@ -102,7 +102,10 @@ const handoffs = new Handoffs((request) => {
 // Вкладку убирает интерфейс тем же путём, что крестик; без окна убирать нечего, и процесс завершается здесь.
 const closeSession = (id: number): void => {
   if (win && !win.isDestroyed()) win.webContents.send('session:close', { id });
-  else sessions.kill(id);
+  else {
+    sessions.kill(id);
+    sessions.release(id);
+  }
 };
 // Удалённая часть строится после MCP-сервера, которому нужны её инструменты: обращения идут через замыкания.
 const remoteTools: RemoteToolsPort = {
@@ -119,6 +122,7 @@ const sessionsPort: SessionsPort = {
   hostsOf,
   parentOf: (id) => sessions.parentOf(id),
   reportLocal: (id, report) => sessions.reportLocal(id, report),
+  noteClosing: (id, caller) => sessions.noteClosing(id, caller),
 };
 const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools), app.getVersion());
 // На Linux без связки ключей safeStorage шифрует постоянным ключом: такое хранение токен на диск не пускает.
@@ -564,6 +568,7 @@ ipcMain.handle('mrs:details', (_event, id: unknown) => {
 ipcMain.on('session:input', (_event, id: unknown, data: unknown) => sessions.write(id, data));
 ipcMain.on('session:resize', (_event, id: unknown, cols: unknown, rows: unknown) => sessions.resize(id, cols, rows));
 ipcMain.on('session:kill', (_event, id: unknown) => sessions.kill(id));
+ipcMain.on('session:release', (_event, id: unknown) => sessions.release(id));
 ipcMain.on('session:handoffFailed', (_event, hid: unknown, reason: unknown) => handoffs.fail(hid, reason));
 
 // Без ссылки уведомление собирает GC, и клик по нему уже некому обработать.
