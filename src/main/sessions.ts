@@ -119,6 +119,8 @@ export type SayResult = 'sent' | 'sent-working' | 'queued';
 /** Пауза между текстом и Enter, как у кнопок команд (command-bar.ts): пакет «текст и Enter» TUI вправе принять за вставку. */
 export const SUBMIT_DELAY_MS = 150;
 
+export const SETTINGS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 const EXITED_TERM: TermPort = { write: () => {}, resize: () => {}, kill: () => {} };
 
 export const sameDirs = (a: string[], b: string[]): boolean => a.length === b.length && [...a].sort().join('\0') === [...b].sort().join('\0');
@@ -157,7 +159,7 @@ const acceptsInput = (session: Session): boolean =>
   session.state === 'waiting' ||
   (session.state === 'working' && (session.remote ? session.background === true : session.inFlight.size === 0));
 
-// Отказ в разрешении и Esc не дают Post*: зависший вызов снимают Stop, UserPromptSubmit и SubagentStop его агента.
+// Отказ и Esc не дают Post*: зависший вызов снимает Stop; UserPromptSubmit шлют и фоновые задачи.
 function noteCall(inFlight: Map<string, string>, event: SessionEvent): void {
   const name = event.hook_event_name;
   const agent = event.agent_id ?? '';
@@ -165,7 +167,7 @@ function noteCall(inFlight: Map<string, string>, event: SessionEvent): void {
   if (name === 'PreToolUse') {
     if (!CONTAINER_TOOLS.has(event.tool_name ?? '')) inFlight.set(key, agent);
   } else if (isToolEnd(name)) inFlight.delete(key);
-  else if (name === 'SubagentStop' || name === 'Stop' || name === 'UserPromptSubmit') {
+  else if (name === 'SubagentStop' || name === 'Stop') {
     // Stop без фоновых задач: не работает ни один субагент.
     const all = name === 'Stop' && !event.background_tasks?.length;
     const owner = name === 'SubagentStop' ? agent : '';
@@ -177,6 +179,7 @@ export class SessionManager {
   private readonly sessions = new Map<number, Session>();
   private nextId = 1;
   private readonly settingsFile: string;
+  private readonly settings = hookSettings();
   private readonly eventsDir: string;
   private readonly emit: Emit;
   private readonly spawn: Spawn;
@@ -197,15 +200,34 @@ export class SessionManager {
     this.eventsDir = path.join(userData, 'sessions');
     prepareEventsDir(this.eventsDir);
     this.removeOrphanedEvents();
-    const settings = hookSettings();
     // Экземпляр другой версии с тем же userData не подменит сессиям набор хуков.
-    this.settingsFile = path.join(userData, `claude-hooks-${createHash('sha256').update(JSON.stringify(settings)).digest('hex').slice(0, 12)}.json`);
-    // Атомарно: соседний инстанс пишет тот же файл, а запускающийся claude не должен прочитать обрезанный.
-    writeJsonAtomic(this.settingsFile, settings);
+    this.settingsFile = path.join(userData, `claude-hooks-${createHash('sha256').update(JSON.stringify(this.settings)).digest('hex').slice(0, 12)}.json`);
+    this.writeSettings();
+    this.removeStaleSettings(userData);
+  }
+
+  // Атомарно: соседний инстанс пишет тот же файл, а запускающийся claude не должен прочитать обрезанный.
+  private writeSettings(): void {
+    writeJsonAtomic(this.settingsFile, this.settings);
+  }
+
+  // Свой файл живой экземпляр освежает перед каждой сессией: давно не тронутый - ничей.
+  private removeStaleSettings(userData: string): void {
+    const stale = Date.now() - SETTINGS_TTL_MS;
+    for (const name of fs.readdirSync(userData)) {
+      const file = path.join(userData, name);
+      if (file === this.settingsFile || !/^claude-hooks-[0-9a-f]{12}\.json$/.test(name)) continue;
+      try {
+        if (fs.statSync(file).mtimeMs < stale) fs.rmSync(file, { force: true });
+      } catch {
+        // Файл убрал соседний экземпляр.
+      }
+    }
   }
 
   create(project: string, cwd: string, addDirs: string[], prompt?: string, resume?: string, parent?: number): number {
     this.checkParent(project, parent);
+    this.writeSettings();
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     createEventsFile(eventsFile);

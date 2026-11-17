@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
-import { SessionManager, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
+import { SessionManager, SETTINGS_TTL_MS, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
 import { HOOK_COMMAND, hookSettings } from './session-state.ts';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
@@ -194,11 +194,15 @@ test('SessionManager не передаёт сессии CYBORG_CWD лаунче�
   assert.ok(env.CYBORG_EVENTS && env.CYBORG_SETTINGS);
 });
 
-test('SessionManager: файл хуков назван по содержимому - экземпляр другой версии с тем же userData его не затирает', (t) => {
+test('SessionManager: файл хуков назван по содержимому - экземпляр другой версии с тем же userData его не затирает; не тронутые неделю чужие удаляются', (t) => {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
   const legacy = path.join(userData, 'claude-hooks.json');
-  fs.writeFileSync(legacy, '{"hooks":{}}');
+  const stale = path.join(userData, 'claude-hooks-aaaaaaaaaaaa.json');
+  const fresh = path.join(userData, 'claude-hooks-bbbbbbbbbbbb.json');
+  const old = new Date(Date.now() - SETTINGS_TTL_MS - 60_000);
+  for (const file of [legacy, stale, fresh]) fs.writeFileSync(file, '{"hooks":{}}');
+  for (const file of [legacy, stale]) fs.utimesSync(file, old, old);
   let env: Record<string, string> = {};
   const manager = new SessionManager(userData, () => {}, ((_file: string, _args: string[], opts: { env: Record<string, string> }) => ((env = opts.env), fakePty())) as any);
   t.after(() => manager.killAll());
@@ -206,6 +210,11 @@ test('SessionManager: файл хуков назван по содержимом
   assert.match(path.basename(env.CYBORG_SETTINGS), /^claude-hooks-[0-9a-f]{12}\.json$/);
   assert.deepEqual(JSON.parse(fs.readFileSync(env.CYBORG_SETTINGS, 'utf8')), hookSettings());
   assert.equal(fs.readFileSync(legacy, 'utf8'), '{"hooks":{}}');
+  assert.equal(fs.existsSync(stale), false);
+  assert.ok(fs.existsSync(fresh));
+  fs.utimesSync(env.CYBORG_SETTINGS, old, old);
+  manager.create('p', os.tmpdir(), []);
+  assert.ok(fs.statSync(env.CYBORG_SETTINGS).mtimeMs > old.getTime(), 'запуск сессии освежает свой файл');
 });
 
 test('SessionManager считает только работающие сессии', (t) => {
@@ -661,12 +670,15 @@ test('SessionManager.say: вызов субагента держит очере�
   assert.deepEqual(writes.slice(4), ['\x1b[200~третье\x1b[201~', '\r']);
 });
 
-test('SessionManager.say: вызов без Post* (отказ в разрешении, Esc) снимают Stop и UserPromptSubmit, вызов фонового субагента - только Stop без фоновых задач', async (t) => {
+test('SessionManager.say: вызов без Post* (отказ в разрешении, Esc) снимает Stop, а не UserPromptSubmit - его шлют и фоновые задачи; вызов фонового субагента - только Stop без фоновых задач', async (t) => {
   const { manager, id, writes, push } = talkingManager(t, 0);
   const state = () => manager.peers(id)!.find((p) => p.id === id)!.state;
   await push({ hook_event_name: 'UserPromptSubmit' });
   await push({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'denied' });
   assert.equal(await manager.say(id, 'первое'), 'queued');
+  await push({ hook_event_name: 'UserPromptSubmit' });
+  await sleep(SUBMIT_DELAY_MS + 50);
+  assert.deepEqual(writes, [], 'UserPromptSubmit фоновой задачи посреди вызова не открывает ввод');
   await push({ hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }] });
   await sleep(SUBMIT_DELAY_MS + 50);
   assert.deepEqual(writes, ['\x1b[200~первое\x1b[201~', '\r'], 'пауза до фоновой задачи принимает ввод');
