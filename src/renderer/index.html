@@ -250,6 +250,26 @@
       </form>
     </dialog>
 
+    <dialog id="claude-md-dialog" aria-labelledby="claude-md-dialog-title">
+      <form method="dialog">
+        <h2 id="claude-md-dialog-title">Глобальный CLAUDE.md</h2>
+        <p class="hint">
+          Инструкции Claude Code для всех сессий на этой машине: язык, тон, длина ответов, предпочтения в работе. Это файл <code>CLAUDE.md</code> в каталоге
+          настроек Claude Code (<code>~/.claude</code> либо <code>CLAUDE_CONFIG_DIR</code>); удалённые сессии получают его копию на хосте. Новая сессия
+          читает сохранённый текст, уже идущие - нет. Правила репозитория лежат в его собственном <code>CLAUDE.md</code>.
+        </p>
+        <div id="claude-md-editor"></div>
+        <div id="claude-md-problems" class="dialog-note" hidden></div>
+        <div id="claude-md-error" class="dialog-error" role="alert" hidden></div>
+        <footer>
+          <button type="button" id="claude-md-reveal" title="Открыть файл приложением системы по умолчанию">Открыть в системе</button>
+          <span class="spacer"></span>
+          <button type="button" id="claude-md-cancel">Закрыть</button>
+          <button type="button" id="claude-md-save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
     <dialog id="search-dialog" aria-labelledby="search-dialog-title">
       <h2 id="search-dialog-title">Поиск файла</h2>
       <div id="search-modes"></div>

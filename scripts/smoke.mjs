@@ -530,6 +530,32 @@ async function main() {
   writeFileSync(promptsFile, JSON.stringify(afterSave));
   log('промпты кнопок: действующий набор в Monaco, проверка, правка доходит до сессии, негодный промпт не стартует молча');
 
+  // Глобальный CLAUDE.md правится из меню: текст файла в Monaco, сохранение пишет его в каталог настроек Claude, чужая правка не затирается.
+  const claudeMdFile = join(claudeHome, 'CLAUDE.md');
+  writeFileSync(claudeMdFile, '# Смоук\n');
+  const claudeMdEditor = (call) => ev(`(() => { const e = window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#claude-md-dialog")); return e.${call}; })()`);
+  await clickMenu(mainEv, 'Глобальный CLAUDE.md…');
+  // Фокус редактор получает после того, как диалог принял его: раньше «Сохранить» ещё ничего не делает.
+  const claudeMdReady = (what) => waitFor(what, async () => await ev('Boolean(document.activeElement?.closest("#claude-md-editor"))'));
+  await claudeMdReady('редактор Monaco в диалоге CLAUDE.md');
+  assert.equal(await claudeMdEditor('getValue()'), '# Смоук\n', 'редактор не показал текст CLAUDE.md');
+  assert.equal(await claudeMdEditor('getModel().getLanguageId()'), 'markdown', 'CLAUDE.md подсвечен не как Markdown');
+  writeFileSync(claudeMdFile, '# Правка сессии\n');
+  await claudeMdEditor('setValue("# Моя правка\\n")');
+  await ev('document.querySelector("#claude-md-save").click()');
+  await waitFor('чужая правка CLAUDE.md названа', async () => /изменился на диске/.test(await text('#claude-md-error')));
+  assert.equal(readFileSync(claudeMdFile, 'utf8'), '# Правка сессии\n', 'сохранение затёрло чужую правку CLAUDE.md');
+  await claudeMdEditor('setValue("# Смоук\\n")');
+  await ev('document.querySelector("#claude-md-cancel").click()');
+  await waitFor('диалог CLAUDE.md закрыт', async () => (await ev('document.querySelector("#claude-md-dialog").open')) === false);
+  await clickMenu(mainEv, 'Глобальный CLAUDE.md…');
+  await claudeMdReady('редактор CLAUDE.md открыт заново');
+  await claudeMdEditor('setValue("# Моя правка\\n")');
+  await ev('document.querySelector("#claude-md-save").click()');
+  await waitFor('диалог CLAUDE.md закрыт сохранением', async () => (await ev('document.querySelector("#claude-md-dialog").open')) === false);
+  assert.equal(readFileSync(claudeMdFile, 'utf8'), '# Моя правка\n', 'CLAUDE.md не записан');
+  log('глобальный CLAUDE.md: текст в Monaco, чужая правка не затирается, сохранение пишет файл');
+
   // FR-3005: бросок файла ОС вне зон ничего не делает - событие отменено, курсор «нельзя».
   const stray = await ev(`(() => {
     const result = {};

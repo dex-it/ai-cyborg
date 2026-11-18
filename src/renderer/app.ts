@@ -19,6 +19,7 @@ import { CommandBars, type CommandTarget } from './command-bar';
 import { pickPr } from './command-values';
 import { initCommandEditor } from './command-editor';
 import { initPromptEditor } from './prompt-editor';
+import { initClaudeMdEditor } from './claude-md-editor';
 import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
 import { decideStart, StartGuard, TaskSessionRegistry } from './task-flow';
@@ -1963,6 +1964,8 @@ const commandEditor = initCommandEditor({ mac, problems: () => commandBars.confi
 api.on<void>('menu:commands', () => void commandEditor.open());
 const promptEditor = initPromptEditor();
 api.on<void>('menu:prompts', () => void promptEditor.open());
+const claudeMdEditor = initClaudeMdEditor();
+api.on<void>('menu:claude-md', () => void claudeMdEditor.open());
 // Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта; у удалённой вкладки - на хосте.
 const searchDialog = new SearchDialog({
   roots: () => (active ? treeRoots(active) : (project?.repos ?? []).map((repo) => ({ path: repo, label: basename(repo), hint: 'репозиторий проекта' }))),

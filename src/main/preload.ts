@@ -38,6 +38,8 @@ const api = {
   saveCommands: (text: string, scope: CommandsScope): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text, scope),
   loadPrompts: (): Promise<{ raw: unknown; problem?: string }> => ipcRenderer.invoke('prompts:load'),
   savePrompts: (text: string): Promise<{ error?: string }> => ipcRenderer.invoke('prompts:save', text),
+  loadClaudeMd: (): Promise<{ text: string; problem?: string }> => ipcRenderer.invoke('claude-md:load'),
+  saveClaudeMd: (text: string, base: string): Promise<{ error?: string }> => ipcRenderer.invoke('claude-md:save', text, base),
   /** Путь из вывода сессии - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
   openPath: (file: string): Promise<void> => ipcRenderer.invoke('path:open', file),
   /** Файл можно запустить в системном терминале (бит, shebang или расширение); команду и хэш считает главный процесс. */
@@ -47,7 +49,7 @@ const api = {
   /** http(s)-ссылка - в браузере системы; иные схемы главный процесс отбрасывает. */
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('url:open', url),
   /** Файл кнопок (воркспейса или общий) либо промптов - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
-  revealConfig: (kind: 'commands' | 'commands-global' | 'prompts'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
+  revealConfig: (kind: 'commands' | 'commands-global' | 'prompts' | 'claude-md'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
   createSession: (projectId: string, cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', projectId, cwd, addDirs, start),
   /** Удалённая сессия: либо {projectId, host, repo, branch, prompt?}, либо {projectId, handoff, repo} по передаче от сессии. */

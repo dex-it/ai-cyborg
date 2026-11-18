@@ -42,11 +42,11 @@ export interface JsonEditor {
 }
 
 /** Редактируемый JSON для диалога кнопок команд: тот же Monaco, тема и размер шрифта, что у просмотра файлов; Cmd/Ctrl+S зовёт onSave. */
-export async function createJsonEditor(body: HTMLElement, value: string, onSave: () => void): Promise<JsonEditor> {
+export async function createJsonEditor(body: HTMLElement, value: string, onSave: () => void, language: 'json' | 'markdown' = 'json'): Promise<JsonEditor> {
   const monaco = await loadMonaco();
   const editor = monaco.editor.create(body, {
     value,
-    language: 'json',
+    language,
     theme: monacoTheme(),
     automaticLayout: true,
     fontSize,
