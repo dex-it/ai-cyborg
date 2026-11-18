@@ -6,6 +6,7 @@ export const PROJECT_NEW_MENU_ID = 'project-new';
 export const PROJECT_PROPERTIES_MENU_ID = 'project-properties';
 export const COMMANDS_MENU_ID = 'commands-edit';
 export const PROMPTS_MENU_ID = 'prompts-edit';
+export const CLAUDE_MD_MENU_ID = 'claude-md-edit';
 export const CLAUDE_TOKEN_MENU_ID = 'claude-token';
 export const HOST_DISK_MENU_ID = 'host-disk';
 export type SearchMode = 'files' | 'text' | 'changes';
@@ -39,6 +40,7 @@ export interface WorkspaceMenu {
   editProject(): void;
   editCommands(): void;
   editPrompts(): void;
+  editClaudeMd(): void;
   claudeToken(): void;
   hostDisk(): void;
   search(mode: SearchMode): void;
@@ -102,6 +104,7 @@ export function appMenuTemplate(
       { type: 'separator' },
       { id: COMMANDS_MENU_ID, label: 'Кнопки команд…', enabled: workspace.hasWorkspace, click: () => workspace.editCommands() },
       { id: PROMPTS_MENU_ID, label: 'Промпты кнопок…', click: () => workspace.editPrompts() },
+      { id: CLAUDE_MD_MENU_ID, label: 'Глобальный CLAUDE.md…', click: () => workspace.editClaudeMd() },
       { type: 'separator' },
       { id: CLAUDE_TOKEN_MENU_ID, label: 'Вход Claude на хостах…', click: () => workspace.claudeToken() },
       { id: HOST_DISK_MENU_ID, label: 'Место на хостах…', enabled: workspace.hasProject, click: () => workspace.hostDisk() },

@@ -7,6 +7,7 @@ import { AllowedPaths, createPathHandlers } from './allowed-paths';
 import { globalBase, saveCommandsText, type CommandsConfig } from './commands';
 import { CommandStore } from './command-store';
 import { savePromptsText } from './prompts';
+import { ClaudeMdStore } from './claude-md';
 import { PromptStore } from './prompt-store';
 import { RunApprovals } from './run-approvals';
 import { createRunHandlers, registerRunChannels, runChannel, runConfirm } from './run-file';
@@ -193,6 +194,7 @@ mcpServer
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
 const prompts = new PromptStore(path.join(userData, 'prompts.json'));
+const claudeMd = new ClaudeMdStore(path.join(claudePaths(os.homedir(), process.env, process.platform).configDir, 'CLAUDE.md'));
 const globalCommands = new CommandStore(path.join(userData, 'commands.json'));
 const runApprovals = new RunApprovals(path.join(userData, 'run-approvals.json'));
 type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
@@ -390,6 +392,8 @@ ipcMain.handle('commands:save', (_event, text: unknown, scope: unknown) => {
   return saveCommandsText(text, projects, mac, globalBase(globalCommands.read().raw, mac));
 });
 ipcMain.handle('prompts:load', () => prompts.read());
+ipcMain.handle('claude-md:load', () => claudeMd.read());
+ipcMain.handle('claude-md:save', (_event, text: unknown, base: unknown) => claudeMd.save(text, base));
 ipcMain.handle('path:open', async (_event, file: unknown) => {
   const target = openablePath(file, os.homedir());
   if ('error' in target) await tell({ type: 'warning', message: target.error });
@@ -400,6 +404,7 @@ ipcMain.handle('url:open', async (_event, url: unknown) => {
   if (target) await shell.openExternal(target);
 });
 ipcMain.handle('config:reveal', (_event, kind: unknown) => {
+  if (kind === 'claude-md') return showInSystemApp(claudeMd.file, 'Claude Code работает без глобальных инструкций. Сохраните текст в редакторе, чтобы файл появился.');
   const file = kind === 'prompts' ? prompts.file : kind === 'commands' ? current.file : kind === 'commands-global' ? globalCommands.file : null;
   if (file) return showInSystemApp(file);
 });
@@ -676,9 +681,9 @@ function quitWithConfirm(): void {
 
 const tell = (options: Electron.MessageBoxOptions) => (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
 
-async function showInSystemApp(file: string): Promise<void> {
+async function showInSystemApp(file: string, missing = 'Действуют встроенные значения. Сохраните их в редакторе, чтобы файл появился.'): Promise<void> {
   if (!fs.existsSync(file)) {
-    await tell({ type: 'info', message: `Файла ${file} ещё нет`, detail: 'Действуют встроенные значения. Сохраните их в редакторе, чтобы файл появился.' });
+    await tell({ type: 'info', message: `Файла ${file} ещё нет`, detail: missing });
     return;
   }
   const error = await shell.openPath(file);
@@ -699,6 +704,7 @@ function rebuildMenu(): void {
     editProject: () => win?.webContents.send('menu:project', 'edit'),
     editCommands: () => win?.webContents.send('menu:commands'),
     editPrompts: () => win?.webContents.send('menu:prompts'),
+    editClaudeMd: () => win?.webContents.send('menu:claude-md'),
     claudeToken: () => win?.webContents.send('menu:claude-token'),
     hostDisk: () => win?.webContents.send('menu:host-disk'),
     search: (mode) => win?.webContents.send('menu:search', mode),

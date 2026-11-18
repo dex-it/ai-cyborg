@@ -16,6 +16,8 @@ export interface ConfigEditorDeps {
   saved(): void;
   /** Файл в приложении системы по умолчанию. */
   reveal(): Promise<void>;
+  /** Подсветка текста; по умолчанию JSON. */
+  language?: 'json' | 'markdown';
 }
 
 export interface ConfigEditor {
@@ -36,6 +38,10 @@ export function initConfigEditor(deps: ConfigEditorDeps): ConfigEditor {
   const showError = (text: string): void => {
     errorEl.textContent = text;
     errorEl.hidden = !text;
+  };
+  const dropEditor = (): void => {
+    editor?.dispose();
+    editor = null;
   };
   const dirty = (): boolean => editor !== null && editor.getValue() !== initial;
   const discardable = (): boolean => !dirty() || confirm('Закрыть без сохранения?');
@@ -70,19 +76,20 @@ export function initConfigEditor(deps: ConfigEditorDeps): ConfigEditor {
   dialog.addEventListener('cancel', (event) => {
     if (!discardable()) event.preventDefault();
   });
+  // Событие close приходит задачей и может отстать от повторного открытия: открытый заново диалог свой редактор не отдаёт.
   dialog.addEventListener('close', () => {
-    editor?.dispose();
-    editor = null;
+    if (!dialog.open) dropEditor();
   });
 
   async function fill(): Promise<void> {
+    dropEditor();
     initial = await deps.load();
     showError('');
     const problems = deps.problems();
     problemsEl.textContent = problems.length ? `Замечания к текущему файлу:\n${problems.join('\n')}` : '';
     problemsEl.hidden = !problems.length;
     if (!dialog.open) dialog.showModal();
-    const created = await createJsonEditor(host, initial, () => void save());
+    const created = await createJsonEditor(host, initial, () => void save(), deps.language);
     if (!dialog.open) {
       created.dispose();
       return;
@@ -97,8 +104,6 @@ export function initConfigEditor(deps: ConfigEditorDeps): ConfigEditor {
     },
     async reload(): Promise<boolean> {
       if (!dialog.open || !discardable()) return false;
-      editor?.dispose();
-      editor = null;
       await fill();
       return true;
     },
