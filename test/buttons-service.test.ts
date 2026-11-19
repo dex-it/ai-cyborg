@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import './legacy-commands';
 import { ButtonsService, type ButtonsNotice } from '../src/main/buttons-service';
 
 function rig(opts: { workspace?: boolean; global?: unknown; ws?: unknown; prompts?: unknown; promptsProblem?: string } = {}) {

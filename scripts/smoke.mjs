@@ -21,6 +21,14 @@ const userData = join(base, 'userdata');
 const repo = join(base, 'repo');
 const worktree = join(base, 'repo-wt');
 for (const dir of [userData, repo]) mkdirSync(dir);
+// Встроенных кнопок полосы в коде нет: набор из четырёх кнопок лежит в общем слое, как у оператора.
+const seedBar = [
+  { label: 'Сливай', text: 'сливай', submit: true, hotkey: 'F1', description: 'Фраза «сливай»: слить PR текущей ветки.' },
+  { label: 'Сделай PR', text: 'сделай PR', submit: true, hotkey: 'F2', description: 'Фраза «сделай PR»: открыть PR из текущей ветки.' },
+  { label: 'Мердж', text: 'открой PR текущей ветки, если его ещё нет, и смерджи его в целевую ветку', submit: false, hotkey: 'F3', description: 'Вставляет без Enter просьбу открыть PR ветки, если его нет, и слить его в целевую ветку: проверьте и нажмите Enter сами.' },
+  { label: 'Приберись', text: 'приберись', submit: true, hotkey: 'F4', description: 'Фраза «приберись»: убрать за собой, например слитые ветки.' },
+];
+writeFileSync(join(userData, 'commands.json'), JSON.stringify(seedBar));
 
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=smoke', '-c', 'user.email=smoke@example.com', '-C', cwd, ...args], { stdio: 'pipe' });
 git(repo, 'init', '-q', '-b', 'main');
@@ -402,7 +410,7 @@ async function main() {
   const barButtons = () => ev('[...document.querySelectorAll(".workspace-pane.active .command-button")].map((b) => b.firstChild.textContent)');
   const barButton = (label) => ev(`[...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)}).click()`);
   const barNotice = () => text('.workspace-pane.active .command-notice');
-  assert.deepEqual(await barButtons(), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись'], 'под терминалом нет встроенных кнопок');
+  assert.deepEqual(await barButtons(), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись'], 'под терминалом нет кнопок общего слоя');
   await barButton('Сливай');
   await waitFor('«Сливай» отправил текст с Enter', async () => (await squeezed()).includes('got:[сливай]'));
 
@@ -422,10 +430,10 @@ async function main() {
   const winMoveUp = (label) => ev(`[...document.querySelectorAll("#buttons-list .buttons-row")].find((r) => r.querySelector(".buttons-label").textContent === ${JSON.stringify(label)}).querySelector(".buttons-move").click()`);
   await clickMenu(mainEv, 'Кнопки…');
   await waitFor('окно «Кнопки» открыто', winOpen);
-  await waitFor('в окне встроенные кнопки полосы', async () => (await winRows()).slice(0, 4).join() === 'Сливай,Сделай PR,Мердж,Приберись');
+  await waitFor('в окне кнопки общего слоя на полосе', async () => (await winRows()).slice(0, 4).join() === 'Сливай,Сделай PR,Мердж,Приберись');
   assert.equal(await ev('document.querySelector("#buttons-layer-workspace").getAttribute("aria-pressed")'), 'true', 'окно открылось не на слое воркспейса');
   await winPick('Сливай');
-  assert.match(await text('#buttons-form'), /из: встроенная/, 'форма не показала, откуда значение поля');
+  assert.match(await text('#buttons-form'), /из: общая/, 'форма не показала, откуда значение поля');
   await winAdd(0, 'A', 'a', false);
   await winPick('A');
   await winField('Сочетание', 'Ctrl+C');
@@ -441,10 +449,10 @@ async function main() {
   await winField('Сочетание', 'Alt+B');
   await ev('document.querySelector("#buttons-save").click()');
   await waitFor('окно закрыто сохранением', async () => !(await winOpen()));
-  await waitFor('кнопки из воркспейса на полосе без перезапуска, встроенные переставлены', async () => (await barButtons()).join() === 'Приберись,Сливай,Сделай PR,Мердж,Ветка,Задача,PR,Предложи,Спроси,Вставка');
+  await waitFor('кнопки из воркспейса на полосе без перезапуска, общие переставлены', async () => (await barButtons()).join() === 'Приберись,Сливай,Сделай PR,Мердж,Ветка,Задача,PR,Предложи,Спроси,Вставка');
   const stored = JSON.parse(readFileSync(legacyFile, 'utf8'));
   assert.equal(stored.commands.length, 8, 'кнопки не легли в файл воркспейса');
-  assert.deepEqual(stored.commands.slice(0, 2), [{ label: 'Приберись' }, { label: 'Сливай' }], 'перестановка встроенных не записана местами');
+  assert.deepEqual(stored.commands.slice(0, 2), [{ label: 'Приберись' }, { label: 'Сливай' }], 'перестановка общих не записана местами');
   assert.equal(stored.projects.length, 2, 'запись кнопок затёрла проекты');
 
   await barButton('Ветка');
@@ -496,10 +504,10 @@ async function main() {
   await winAdd(0, 'Общая', 'для всех', true);
   await ev('document.querySelector("#buttons-save").click()');
   await waitFor('окно закрыто сохранением общего слоя', async () => !(await winOpen()));
-  await waitFor('общая кнопка между встроенными и кнопками воркспейса', async () => (await barButtons()).join().startsWith('Приберись,Сливай,Сделай PR,Мердж,Общая,Ветка'));
-  assert.deepEqual(JSON.parse(readFileSync(join(userData, 'commands.json'), 'utf8')), [{ label: 'Общая', text: 'для всех', submit: true }], 'общий слой не лёг в userData');
+  await waitFor('новая общая кнопка после прежних общих и перед кнопками воркспейса', async () => (await barButtons()).join().startsWith('Приберись,Сливай,Сделай PR,Мердж,Общая,Ветка'));
+  assert.deepEqual(JSON.parse(readFileSync(join(userData, 'commands.json'), 'utf8')).slice(-1), [{ label: 'Общая', text: 'для всех', submit: true }], 'общий слой не лёг в userData');
   assert.ok(!JSON.parse(readFileSync(legacyFile, 'utf8')).commands.some((b) => b.label === 'Общая'), 'общая кнопка попала в файл воркспейса');
-  log('кнопки-команды: встроенные, правка в окне «Кнопки», подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью, общий слой');
+  log('кнопки-команды: общий набор, правка в окне «Кнопки», подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью, общий слой');
 
   // Правила по полям через окно и меню полосы: выключение, замена, захват сочетания, ✦ в кнопку, кнопка от сессии.
   const barTitle = (label) => ev(`[...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)})?.title ?? ""`);
@@ -539,8 +547,8 @@ async function main() {
   await ev('document.querySelector("#buttons-cancel").click()');
   await waitFor('окно закрыто', async () => !(await winOpen()));
 
-  // Замена встроенной «Сливай»: новая кнопка берёт её сочетание; включение исходной сочетание не возвращает.
-  assert.match(await barTitle('Сливай'), /F1/, 'у встроенной «Сливай» нет сочетания F1');
+  // Замена общей «Сливай»: новая кнопка берёт её сочетание; включение исходной сочетание не возвращает.
+  assert.match(await barTitle('Сливай'), /F1/, 'у общей «Сливай» нет сочетания F1');
   await winOpenOn();
   await winPick('Сливай');
   await winAction('Заменить другой кнопкой…');
@@ -558,19 +566,19 @@ async function main() {
   assert.match(await barTitle('Слить'), /F1/, 'включение исходной отняло сочетание у новой');
   assert.doesNotMatch(await barTitle('Сливай'), /F1/, 'сочетание осталось и у исходной');
 
-  // Сочетание кнопки воркспейса забирается у встроенной «Приберись» (F4) без ошибки, окно показывает, кому оно отдано, и даёт вернуть.
+  // Сочетание кнопки воркспейса забирается у общей «Приберись» (F4) без ошибки, окно показывает, кому оно отдано, и даёт вернуть.
   await winOpenOn();
   await winPick('Ветка');
   await winField('Сочетание', 'F4');
   await winSave();
   await waitFor('F4 у кнопки воркспейса', async () => /F4/.test(await barTitle('Ветка')));
-  assert.doesNotMatch(await barTitle('Приберись'), /F4/, 'сочетание F4 осталось и у встроенной');
+  assert.doesNotMatch(await barTitle('Приберись'), /F4/, 'сочетание F4 осталось и у общей');
   await winOpenOn();
   assert.match(await text('#buttons-list'), /сочетание отдано «Ветка»/, 'окно не показало, кому отдано сочетание');
   await winPick('Приберись');
   await ev('[...document.querySelectorAll("#buttons-form button")].find((b) => b.textContent.startsWith("Вернуть сочетание")).click()');
   await winSave();
-  await waitFor('F4 вернулось встроенной', async () => /F4/.test(await barTitle('Приберись')));
+  await waitFor('F4 вернулось общей', async () => /F4/.test(await barTitle('Приберись')));
   assert.doesNotMatch(await barTitle('Ветка'), /F4/, 'после возврата сочетание осталось у забравшей');
 
   // ✦: «Сохранить как кнопку…» открывает форму новой кнопки с полями предложения, файл не меняется до «Сохранить».

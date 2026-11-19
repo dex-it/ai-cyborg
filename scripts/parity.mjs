@@ -64,6 +64,16 @@ function makeWorld(session) {
     lastProjectId: 'p1',
   };
   writeFileSync(join(world.userdata, 'projects.json'), JSON.stringify(projects));
+  // Встроенных кнопок полосы нет: четыре прежние лежат в общем слое.
+  writeFileSync(
+    join(world.userdata, 'commands.json'),
+    JSON.stringify([
+      { label: 'Сливай', text: 'сливай', submit: true, hotkey: 'F1', description: 'Фраза «сливай»: слить PR текущей ветки.' },
+      { label: 'Сделай PR', text: 'сделай PR', submit: true, hotkey: 'F2', description: 'Фраза «сделай PR»: открыть PR из текущей ветки.' },
+      { label: 'Мердж', text: 'открой PR текущей ветки, если его ещё нет, и смерджи его в целевую ветку', submit: false, hotkey: 'F3', description: 'Вставляет без Enter просьбу открыть PR ветки, если его нет, и слить его в целевую ветку: проверьте и нажмите Enter сами.' },
+      { label: 'Приберись', text: 'приберись', submit: true, hotkey: 'F4', description: 'Фраза «приберись»: убрать за собой, например слитые ветки.' },
+    ]),
+  );
   writeFileSync(join(world.userdata, 'hubs.json'), JSON.stringify({ custom: [], disabled: ['github-topic'] }));
   const extraEnv = { HOME: world.home, ...(session.world?.gh === 'data' ? { FAKE_GH: 'data', FAKE_GH_ITEMS: '3' } : {}), ...(session.world?.env ?? {}) };
   return { ...world, fx: prepareFixtures(base, extraEnv) };
