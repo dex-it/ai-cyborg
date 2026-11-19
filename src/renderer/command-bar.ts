@@ -246,7 +246,13 @@ export class CommandBars {
     gear.title = 'Кнопки…';
     gear.setAttribute('aria-label', 'Кнопки');
     gear.addEventListener('click', () => this.deps.openButtons());
-    bar.buttons.replaceChildren(...this.commands.map((button) => make(button, false)), ...bar.suggested.map((button) => make(button, true)), gear);
+    // Черта на стыке кнопок общих слоёв и воркспейса.
+    const own = (button: CommandButton): boolean => this.origins.get(button.label.toLowerCase()) === 'workspace';
+    const placed = this.commands.flatMap((button, index) => {
+      const node = make(button, false);
+      return index > 0 && own(button) !== own(this.commands[index - 1]) ? [el('span', 'command-separator'), node] : [node];
+    });
+    bar.buttons.replaceChildren(...placed, ...bar.suggested.map((button) => make(button, true)), gear);
     this.renderNotice(bar);
   }
 

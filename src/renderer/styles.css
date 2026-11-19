@@ -2061,6 +2061,15 @@ label.disabled .hint {
   border-style: dashed;
 }
 
+/* Черта между кнопками общих слоёв и кнопками воркспейса. */
+.command-separator {
+  align-self: center;
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--border-strong);
+}
+
 /* Кнопки, предложенные моделью: оттенок акцента и маркер ✦, чтобы отличались от заданных заранее (нейтральных) не только цветом. */
 .command-button.suggested {
   background: var(--accent-soft);
