@@ -7,7 +7,7 @@ import path from 'node:path';
 import { MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
 import { SessionManager, SETTINGS_TTL_MS, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
-import { HOOK_COMMAND, hookSettings } from './session-state.ts';
+import { DISPLAY_HOOK_COMMAND, HOOK_COMMAND, hookSettings } from './session-state.ts';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 
@@ -412,6 +412,28 @@ test('хук не запрещает вызов инструмента, когд
     const run = spawnSync(shell, ['-c', HOOK_COMMAND], { input: '{}', env: { CYBORG_EVENTS: '/nonexistent/cyborg/events.jsonl' } });
     assert.equal(run.status, 0, shell);
   }
+});
+
+test('хук MessageDisplay: порция без комментария кнопок не запускает разбор, сбой разбора не мешает показу', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-display-'));
+  const marker = path.join(dir, 'called');
+  const script = path.join(dir, 'agentd.js');
+  fs.writeFileSync(script, `require('fs').writeFileSync(${JSON.stringify(marker)}, ''); process.stdin.pipe(process.stdout);`);
+  const env = { CYBORG_NODE: process.execPath, CYBORG_AGENTD: script, PATH: process.env.PATH ?? '' };
+  for (const shell of ['/bin/sh', '/bin/bash']) {
+    fs.rmSync(marker, { force: true });
+    const plain = spawnSync(shell, ['-c', DISPLAY_HOOK_COMMAND], { input: JSON.stringify({ delta: 'ответ\n' }), env });
+    assert.equal(plain.status, 0, shell);
+    assert.equal(plain.stdout.toString(), '', shell);
+    assert.equal(fs.existsSync(marker), false, shell);
+    const input = JSON.stringify({ delta: '<!-- cyborg-buttons: [] -->\n' });
+    const marked = spawnSync(shell, ['-c', DISPLAY_HOOK_COMMAND], { input, env });
+    assert.equal(marked.stdout.toString(), input, shell);
+    const broken = spawnSync(shell, ['-c', DISPLAY_HOOK_COMMAND], { input, env: { PATH: env.PATH } });
+    assert.equal(broken.status, 0, shell);
+    assert.equal(broken.stdout.toString(), '', shell);
+  }
+  assert.deepEqual(hookSettings().hooks.MessageDisplay, [{ hooks: [{ type: 'command', command: DISPLAY_HOOK_COMMAND }] }]);
 });
 
 // Менеджер с pty, записывающим вызовы; throwing - pty, бросающий на каждом вызове (процесс завершился, дескриптор закрыт).

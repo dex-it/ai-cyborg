@@ -684,6 +684,7 @@ export class Daemon {
       CYBORG_EVENTS: file('events.jsonl'),
       CYBORG_SETTINGS: file('settings.json'),
       CYBORG_MCP: file('mcp.json'),
+      ...(this.deps.self ? { CYBORG_NODE: this.deps.self.node, CYBORG_AGENTD: this.deps.self.script } : {}),
       ...agentAuthEnv(sess.auth),
     });
     this.watchEvents(sess);

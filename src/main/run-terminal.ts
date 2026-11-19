@@ -6,7 +6,7 @@ import { INHERITED_SESSION_VARS } from './sessions';
 export const TERMINALS = ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xfce4-terminal', 'kitty', 'alacritty', 'wezterm', 'foot', 'xterm'];
 
 // CYBORG_EVENTS и CYBORG_SETTINGS унаследовал бы Cyborg, запущенный из его же сессии: sessionEnv их перекрывает, а не удаляет.
-const UNSET = [...INHERITED_SESSION_VARS, 'CYBORG_EVENTS', 'CYBORG_SETTINGS'];
+const UNSET = [...INHERITED_SESSION_VARS, 'CYBORG_EVENTS', 'CYBORG_SETTINGS', 'CYBORG_NODE', 'CYBORG_AGENTD'];
 
 // Постоянный текст: пользовательские данные доходят до него только аргументами ($1 - каталог, дальше - команда).
 export const RUN_SCRIPT = [
