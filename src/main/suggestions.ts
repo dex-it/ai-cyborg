@@ -78,6 +78,20 @@ export function modelText(text: string, submit: boolean): { refuse: string } | {
 }
 
 /** Ответ без комментария с кнопками в конце: он служебный и читателю ответа не нужен. */
+/** Комментарий, из которого не прошла ни одна кнопка, остаётся на экране как есть: видно, что модель предлагала. */
+export function displaySuggestions(delta: string): string | null {
+  let changed = false;
+  const lines = delta.split(/(?<=\n)/).map((line) => {
+    const body = line.replace(/\r?\n$/, '');
+    if (!body.trimStart().startsWith(MARKER)) return line;
+    const buttons = parseSuggestions(body);
+    if (!buttons.length) return line;
+    changed = true;
+    return `✦ Кнопки на полосе: ${buttons.map((b) => `«${b.label}»`).join(', ')}${line.slice(body.length)}`;
+  });
+  return changed ? lines.join('') : null;
+}
+
 export function withoutSuggestions(message: string): string {
   const trimmed = message.trimEnd();
   const start = trimmed.endsWith(END) ? trimmed.lastIndexOf(MARKER) : -1;

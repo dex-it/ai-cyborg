@@ -95,6 +95,7 @@ const markChildren = (entries: HistoryEntry[]): HistoryEntry[] => {
 // Несуществующий каталог в --plugin-dir - на усмотрение claude; сессия без скиллов Cyborg лучше сессии, которая не запустилась.
 const pluginDir = path.join(__dirname, 'plugin');
 if (fs.existsSync(path.join(pluginDir, '.claude-plugin', 'plugin.json'))) sessions.pluginDir = pluginDir;
+if (fs.existsSync(path.join(__dirname, 'agentd.js'))) sessions.agentd = path.join(__dirname, 'agentd.js');
 const handoffs = new Handoffs((request) => {
   if (!win || win.isDestroyed()) return false;
   win.webContents.send('session:handoff', request);

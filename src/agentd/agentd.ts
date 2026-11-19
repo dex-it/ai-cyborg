@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Daemon, type PtyProc } from './daemon.ts';
 import { arecord, MIC_BIN } from './mic.ts';
 import type { Msg } from './protocol.ts';
+import { displaySuggestions } from '../main/suggestions.ts';
 
 const IDLE_EXIT_MS = 10 * 60_000;
 const home = os.homedir();
@@ -169,6 +170,22 @@ async function connect(): Promise<void> {
   process.stdin.on('end', () => socket.end());
 }
 
+/** Хук MessageDisplay сессии (локальной и на хосте): порция ответа на stdin, замена - displayContent на stdout. */
+function displayHook(): void {
+  const chunks: Buffer[] = [];
+  process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
+  process.stdin.on('end', () => {
+    try {
+      const { delta } = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { delta?: unknown };
+      const shown = typeof delta === 'string' ? displaySuggestions(delta) : null;
+      if (shown !== null) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'MessageDisplay', displayContent: shown } }));
+    } catch {
+      // ввод не JSON: Claude Code покажет порцию как есть
+    }
+  });
+}
+
 if (process.argv[2] === 'serve') void serve();
+else if (process.argv[2] === 'display-hook') displayHook();
 else if (process.argv[2] === 'connect') void connect();
 else if (process.argv[2] === 'arecord') void arecord(process.argv.slice(3), process.env, path.join(path.dirname(process.env.CYBORG_MIC ?? ''), MIC_BIN)).then((code) => process.exit(code));

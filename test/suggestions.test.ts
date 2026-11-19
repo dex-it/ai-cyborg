@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { ISOLATION_PROMPT, MCP_SESSION_PROMPT, PARALLEL_PROMPT, PARALLEL_SKILL, SESSION_PROMPT, claudeArgs } from '../src/main/claude-args';
 import { LABEL_MAX, TEXT_MAX } from '../src/main/commands';
 import { CLOSE_AGENT_TOOL, CLOSE_SESSION_TOOL, LIST_SESSIONS_TOOL, OPEN_SESSION_TOOL, REPORT_DONE_TOOL, SEND_TO_SESSION_TOOL, SPAWN_AGENT_TOOL } from '../src/main/session-tools';
-import { parseSuggestions, SUGGEST_MAX, SUGGEST_PROMPT } from '../src/main/suggestions';
+import { displaySuggestions, parseSuggestions, SUGGEST_MAX, SUGGEST_PROMPT } from '../src/main/suggestions';
 
 const tail = (json: string, before = 'Готово.\n\n'): string => `${before}<!-- cyborg-buttons: ${json} -->`;
 const button = { label: 'Тест', text: 'напиши тест' };
@@ -147,5 +147,28 @@ describe('Кнопки от модели: инструкция сессии', ()
   it('пример из инструкции сам разбирается', () => {
     const example = /<!-- cyborg-buttons: .* -->/.exec(SUGGEST_PROMPT)?.[0] ?? '';
     assert.equal(parseSuggestions(example).length, 1);
+  });
+});
+
+describe('Кнопки модели на экране: хук MessageDisplay', () => {
+  const comment = '<!-- cyborg-buttons: [{"label":"Тесты","text":"npm test","submit":true},{"label":"Ревью","text":"сделай ревью"}] -->';
+
+  it('строка комментария заменяется подписями годных кнопок, перевод строки остаётся', () => {
+    assert.equal(displaySuggestions(`Готово.\n\n${comment}\n`), 'Готово.\n\n✦ Кнопки на полосе: «Тесты», «Ревью»\n');
+    assert.equal(displaySuggestions(comment), '✦ Кнопки на полосе: «Тесты», «Ревью»');
+  });
+
+  it('порция без комментария и упоминание маркера внутри строки не меняются', () => {
+    assert.equal(displaySuggestions('Обычный ответ\n'), null);
+    assert.equal(displaySuggestions(`Хвост вида ${comment} разбирает Cyborg\n`), null);
+  });
+
+  it('комментарий, из которого не прошла ни одна кнопка, виден как есть', () => {
+    assert.equal(displaySuggestions('<!-- cyborg-buttons: [{"label":"Удалить","text":"!rm -rf /"}] -->\n'), null);
+    assert.equal(displaySuggestions('<!-- cyborg-buttons: не JSON -->\n'), null);
+  });
+
+  it('отброшенная кнопка не называется на экране', () => {
+    assert.equal(displaySuggestions('<!-- cyborg-buttons: [{"label":"Шелл","text":"!ls"},{"label":"Тесты","text":"npm test"}] -->'), '✦ Кнопки на полосе: «Тесты»');
   });
 });

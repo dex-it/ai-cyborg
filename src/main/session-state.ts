@@ -35,6 +35,9 @@ export const isToolEnd = (name: string | undefined): boolean => name === 'PostTo
 /** Вызов инструмента начат или закончен: сессия (или её субагент) работает. */
 export const isToolEvent = (name: string | undefined): boolean => name === 'PreToolUse' || isToolEnd(name);
 
+// Claude Code ждёт хук на каждой порции ответа: процесс разбора запускается только на порции с комментарием кнопок; сбой - порция показывается как есть.
+export const DISPLAY_HOOK_COMMAND = 'i=$(cat); case "$i" in *cyborg-buttons:*) printf "%s" "$i" | ELECTRON_RUN_AS_NODE=1 "$CYBORG_NODE" "$CYBORG_AGENTD" display-hook ;; esac; true';
+
 /** Содержимое --settings: те же хуки у локальной сессии и у демона на хосте. */
 export function hookSettings(): { hooks: Record<string, unknown[]> } {
   return {
@@ -42,7 +45,7 @@ export function hookSettings(): { hooks: Record<string, unknown[]> } {
       HOOK_EVENTS.map((event) => [
         event,
         [{ ...(isToolEvent(event) ? { matcher: '*' } : {}), hooks: [{ type: 'command', command: HOOK_COMMAND }] }],
-      ]),
+      ]).concat([['MessageDisplay', [{ hooks: [{ type: 'command', command: DISPLAY_HOOK_COMMAND }] }]]]),
     ),
   };
 }

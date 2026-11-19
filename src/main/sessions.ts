@@ -188,6 +188,8 @@ export class SessionManager {
   mcp: McpLink | null = null;
   /** Каталог плагина Cyborg со скиллами сессии; подключается ключом --plugin-dir только на время сессии. */
   pluginDir: string | null = null;
+  /** dist/agentd.js: им хук MessageDisplay прячет комментарий кнопок; нет файла - комментарий виден. */
+  agentd: string | null = null;
   outboxDelayMs = 2000;
   /** Номер разговора дочерней сессии: приходит с первым событием хука и после /clear. */
   onChild: ((sid: string) => void) | null = null;
@@ -252,6 +254,7 @@ export class SessionManager {
         CYBORG_EVENTS: eventsFile,
         CYBORG_SETTINGS: this.settingsFile,
         ...(pluginDir ? { CYBORG_PLUGIN: pluginDir } : {}),
+        ...(this.agentd ? { CYBORG_NODE: process.execPath, CYBORG_AGENTD: this.agentd } : {}),
         ...(mcpFile ? { CYBORG_MCP: mcpFile } : {}),
       }),
     });
