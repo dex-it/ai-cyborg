@@ -501,6 +501,145 @@ async function main() {
   assert.ok(!JSON.parse(readFileSync(legacyFile, 'utf8')).commands.some((b) => b.label === 'Общая'), 'общая кнопка попала в файл воркспейса');
   log('кнопки-команды: встроенные, правка в окне «Кнопки», подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью, общий слой');
 
+  // Правила по полям через окно и меню полосы: выключение, замена, захват сочетания, ✦ в кнопку, кнопка от сессии.
+  const barTitle = (label) => ev(`[...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)})?.title ?? ""`);
+  const barMenu = (label) => ev(`[...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === ${JSON.stringify(label)}).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }))`);
+  const menuItems = () => ev('[...document.querySelectorAll("#repo-menu .menu-item")].map((i) => i.textContent)');
+  const menuClick = (label) => ev(`[...document.querySelectorAll("#repo-menu .menu-item")].find((i) => i.textContent.startsWith(${JSON.stringify(label)})).click()`);
+  const wsCommands = () => JSON.parse(readFileSync(legacyFile, 'utf8')).commands;
+  const winOpenOn = async () => {
+    await clickMenu(mainEv, 'Кнопки…');
+    await waitFor('окно «Кнопки» открыто', winOpen);
+    await ev('document.querySelector("#buttons-layer-workspace").click()');
+    await waitFor('окно на слое воркспейса', async () => (await ev('document.querySelector("#buttons-layer-workspace").getAttribute("aria-pressed")')) === 'true');
+  };
+  const winSave = async () => {
+    await ev('document.querySelector("#buttons-save").click()');
+    await waitFor('окно закрыто сохранением', async () => !(await winOpen()));
+  };
+  await barMenu('Мердж');
+  await waitFor('меню кнопки полосы', async () => (await menuItems()).length >= 2);
+  assert.deepEqual(await menuItems(), ['Изменить «Мердж»…', 'Выключить в этом воркспейсе']);
+  await menuClick('Выключить');
+  await waitFor('выключенная в воркспейсе кнопка пропала с полосы', async () => !(await barButtons()).includes('Мердж'));
+  assert.ok(wsCommands().some((b) => b.label === 'Мердж' && b.disabled === true), 'выключение не записано в поле commands');
+  await winOpenOn();
+  await winPick('Мердж');
+  await winAction('Включить');
+  await winSave();
+  await waitFor('включение в окне вернуло кнопку', async () => (await barButtons()).includes('Мердж'));
+  assert.ok(!wsCommands().some((b) => b.label === 'Мердж' && b.disabled), 'включение не сняло отключение');
+  await barMenu('Мердж');
+  await waitFor('меню кнопки полосы', async () => (await menuItems()).length >= 2);
+  await menuClick('Изменить');
+  await waitFor('«Изменить…» открыл окно', winOpen);
+  assert.equal(await ev('[...document.querySelectorAll("#buttons-form .buttons-field")].find((x) => x.querySelector(".buttons-field-name").textContent === "Подпись").querySelector("input").value'), 'Мердж', 'окно открылось не на кнопке «Мердж»');
+  await ev('document.querySelector("#buttons-cancel").click()');
+  await waitFor('окно закрыто', async () => !(await winOpen()));
+
+  // Замена встроенной «Сливай»: новая кнопка берёт её сочетание; включение исходной сочетание не возвращает.
+  assert.match(await barTitle('Сливай'), /F1/, 'у встроенной «Сливай» нет сочетания F1');
+  await winOpenOn();
+  await winPick('Сливай');
+  await winAction('Заменить другой кнопкой…');
+  await winField('Подпись', 'Слить');
+  await winField('Текст', 'слей это');
+  await ev('document.querySelector("#buttons-compose-create").click()');
+  await winSave();
+  await waitFor('замена встала на место', async () => { const l = await barButtons(); return l.includes('Слить') && !l.includes('Сливай'); });
+  assert.match(await barTitle('Слить'), /F1/, 'новая кнопка не получила сочетание заменённой');
+  await winOpenOn();
+  await winPick('Сливай');
+  await winAction('Включить');
+  await winSave();
+  await waitFor('исходная включена', async () => (await barButtons()).includes('Сливай'));
+  assert.match(await barTitle('Слить'), /F1/, 'включение исходной отняло сочетание у новой');
+  assert.doesNotMatch(await barTitle('Сливай'), /F1/, 'сочетание осталось и у исходной');
+
+  // Сочетание кнопки воркспейса забирается у встроенной «Приберись» (F4) без ошибки, окно показывает, кому оно отдано, и даёт вернуть.
+  await winOpenOn();
+  await winPick('Ветка');
+  await winField('Сочетание', 'F4');
+  await winSave();
+  await waitFor('F4 у кнопки воркспейса', async () => /F4/.test(await barTitle('Ветка')));
+  assert.doesNotMatch(await barTitle('Приберись'), /F4/, 'сочетание F4 осталось и у встроенной');
+  await winOpenOn();
+  assert.match(await text('#buttons-list'), /сочетание отдано «Ветка»/, 'окно не показало, кому отдано сочетание');
+  await winPick('Приберись');
+  await ev('[...document.querySelectorAll("#buttons-form button")].find((b) => b.textContent.startsWith("Вернуть сочетание")).click()');
+  await winSave();
+  await waitFor('F4 вернулось встроенной', async () => /F4/.test(await barTitle('Приберись')));
+  assert.doesNotMatch(await barTitle('Ветка'), /F4/, 'после возврата сочетание осталось у забравшей');
+
+  // ✦: «Сохранить как кнопку…» открывает форму новой кнопки с полями предложения, файл не меняется до «Сохранить».
+  await barButton('Предложи');
+  await waitFor('предложенные кнопки', async () => (await barButtons()).includes('✦ Вставь'));
+  const before2 = JSON.stringify(wsCommands());
+  await barMenu('✦ Вставь');
+  await waitFor('меню предложенной', async () => (await menuItems()).includes('Сохранить как кнопку…'));
+  await menuClick('Сохранить как кнопку…');
+  await waitFor('окно с формой предложенной', async () => (await winOpen()) && /Новая кнопка/.test(await text('#buttons-form')));
+  assert.equal(await ev('[...document.querySelectorAll("#buttons-form .buttons-field")].find((x) => x.querySelector(".buttons-field-name").textContent === "Подпись").querySelector("input").value'), 'Вставь');
+  assert.equal(JSON.stringify(wsCommands()), before2, 'форма предложенной кнопки записала файл до «Сохранить»');
+  await ev('document.querySelector("#buttons-compose-create").click()');
+  await winSave();
+  await waitFor('сохранённая кнопка на полосе', async () => (await barButtons()).includes('Вставь'));
+  const savedSuggest = wsCommands().find((b) => b.label === 'Вставь');
+  assert.ok(savedSuggest && savedSuggest.text === 'вставь это' && savedSuggest.hotkey === undefined, 'предложенная кнопка записана неверно');
+  await barButton('Спроси');
+  await waitFor('предложенные убраны', async () => !(await barButtons()).some((label) => label.startsWith('✦')));
+
+  // Кнопку добавляет сессия: уведомление, «новая», «Изменить…», «Отменить» с возвратом сочетания.
+  const mcpCall = async (name, args) => {
+    const files = readFileSync(fakeArgsLog, 'utf8').split('\n').map((l) => /--mcp-config (\S+)/.exec(l)?.[1]).filter((f) => f && existsSync(f));
+    const { mcpServers: { cyborg } } = JSON.parse(readFileSync(files.at(-1), 'utf8'));
+    const reply = await fetch(cyborg.url, { method: 'POST', headers: { ...cyborg.headers, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    return (await reply.json()).result;
+  };
+  const refusedCall = await mcpCall('add_button', { label: 'Оболочка', text: '!rm -rf' });
+  assert.equal(refusedCall.isError, true, 'реплика с «!» принята инструментом');
+  assert.ok(!wsCommands().some((b) => b.label === 'Оболочка'), 'отказ инструмента изменил файл');
+  const made = await mcpCall('add_button', { label: 'Из сессии', text: 'привет из сессии', submit: true });
+  assert.ok(!made.isError, 'add_button отказал: ' + JSON.stringify(made));
+  await waitFor('кнопка от сессии на полосе', async () => (await barButtons()).includes('Из сессии'));
+  await waitFor('уведомление у полосы', async () => /«Из сессии»/.test(await text('.workspace-pane.active .command-announce')));
+  assert.equal(await ev('Boolean([...document.querySelectorAll(".workspace-pane.active .command-button")].find((b) => b.firstChild.textContent === "Из сессии").classList.contains("fresh"))'), true, 'нет пометки «новая»');
+  const announceButton = (label) => ev(`[...document.querySelectorAll(".workspace-pane.active .command-announce button")].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
+  await announceButton('Изменить…');
+  await waitFor('«Изменить…» в уведомлении открыл окно', winOpen);
+  await ev('document.querySelector("#buttons-cancel").click()');
+  await waitFor('окно закрыто', async () => !(await winOpen()));
+  const took = await mcpCall('add_button', { label: 'Забрала', text: 'x', hotkey: 'F2' });
+  assert.match(took.content[0].text, /Сделай PR/, 'ответ не назвал, у кого забрано сочетание');
+  await waitFor('уведомление о забранном сочетании', async () => /Сделай PR/.test(await text('.workspace-pane.active .command-announce')));
+  assert.doesNotMatch(await barTitle('Сделай PR'), /F2/);
+  await announceButton('Отменить');
+  await waitFor('отмена убрала кнопку', async () => !(await barButtons()).includes('Забрала'));
+  assert.ok(!wsCommands().some((b) => b.label === 'Забрала'), 'отмена не вернула файл');
+  await waitFor('сочетание вернулось', async () => /F2/.test(await barTitle('Сделай PR')));
+
+  // Файл слоя правят снаружи при открытом окне: нижний слой подхватывается без переоткрытия, негодная запись остаётся открытой в форме при правке подписи.
+  const wsBefore = readFileSync(legacyFile, 'utf8');
+  const globalFile = join(userData, 'commands.json');
+  const globalBefore = readFileSync(globalFile, 'utf8');
+  await winOpenOn();
+  writeFileSync(globalFile, JSON.stringify([...JSON.parse(globalBefore), { label: 'Снаружи', text: 'снаружи', submit: true }]));
+  await ev('window.dispatchEvent(new Event("focus"))');
+  await waitFor('общая кнопка снаружи появилась в окне на слое воркспейса', async () => (await winRows()).includes('Снаружи'));
+  const wsJson = JSON.parse(wsBefore);
+  writeFileSync(legacyFile, JSON.stringify({ ...wsJson, commands: [...wsJson.commands, { label: 'X', text: '' }] }));
+  await ev('window.dispatchEvent(new Event("focus"))');
+  await waitFor('негодная запись видна в окне', async () => (await winRows()).includes('X'));
+  await winPick('X');
+  await winField('Подпись', 'Y');
+  assert.match(await text('#buttons-form'), /Удалить запись/, 'форма негодной записи закрылась при правке подписи');
+  await ev('window.confirm = () => true; document.querySelector("#buttons-cancel").click()');
+  await waitFor('окно закрыто', async () => !(await winOpen()));
+  writeFileSync(legacyFile, wsBefore);
+  writeFileSync(globalFile, globalBefore);
+  await ev('window.dispatchEvent(new Event("focus"))');
+  log('кнопки: выключение из меню полосы и окна, замена с сочетанием, захват и возврат сочетания, ✦ в кнопку, кнопка от сессии с уведомлением и отменой, внешняя правка при открытом окне');
+
   // FR-12009: промпты кнопок запуска сессий - в окне «Кнопки», правка доходит до первого сообщения следующей сессии.
   const startedWith = async (key) => {
     const id = await ev(`window.cyborg.createSession("p1", ${JSON.stringify(repo)}, [], { jira: { key: ${JSON.stringify(key)} } })`);

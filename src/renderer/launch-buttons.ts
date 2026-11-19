@@ -29,7 +29,7 @@ export function ownLaunchButtons(place: LaunchPlace): OwnLaunchButton[] {
   const parsed = parseLaunchButtons(raw);
   return [
     ...parsed.buttons.filter((b) => b.place === place && !b.disabled).map((b) => ({ label: b.label })),
-    ...parsed.bad.filter((b) => b.place === place && b.label !== undefined).map((b) => ({ label: b.label as string, bad: true as const })),
+    ...parsed.bad.filter((b) => b.place === place && b.label !== undefined && !b.disabled && !b.duplicate).map((b) => ({ label: b.label as string, bad: true as const })),
   ];
 }
 

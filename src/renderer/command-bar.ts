@@ -36,6 +36,8 @@ export interface CommandBarsDeps {
   workspaceOpen(): boolean;
   /** Выключить кнопку в слое без окна. */
   disableButton(layer: FileLayer, label: string): Promise<{ error?: string }>;
+  /** Меню у кнопки: общее меню приложения (клавиатура, Escape). */
+  menu(anchor: HTMLElement, label: string, items: [string, () => void][]): void;
   undoButtons(id: number): Promise<{ error?: string }>;
 }
 
@@ -70,7 +72,6 @@ export class CommandBars {
   private readonly fresh = new Set<string>();
   /** Слой, где кнопка родилась, по подписи в нижнем регистре: выключить в воркспейсе можно встроенную и общую. */
   private origins = new Map<string, string>();
-  private menu: HTMLElement | null = null;
 
   constructor(private readonly deps: CommandBarsDeps) {}
 
@@ -236,7 +237,7 @@ export class CommandBars {
         if (!suggested && this.origins.get(button.label.toLowerCase()) !== 'workspace' && this.deps.workspaceOpen()) {
           items.push(['Выключить в этом воркспейсе', () => void this.deps.disableButton('workspace', button.label).then((r) => r.error && this.say(target, `${button.label}: ${r.error}`, true))]);
         }
-        this.showMenu(event, items);
+        this.deps.menu(node, node.textContent ?? '', items);
       });
       return node;
     };
@@ -247,30 +248,6 @@ export class CommandBars {
     gear.addEventListener('click', () => this.deps.openButtons());
     bar.buttons.replaceChildren(...this.commands.map((button) => make(button, false)), ...bar.suggested.map((button) => make(button, true)), gear);
     this.renderNotice(bar);
-  }
-
-  private showMenu(event: MouseEvent, items: [string, () => void][]): void {
-    this.menu?.remove();
-    const menu = el('div', 'command-menu');
-    menu.setAttribute('role', 'menu');
-    menu.style.cssText = `position:fixed;left:${event.clientX}px;top:${event.clientY}px;z-index:50`;
-    for (const [text, run] of items) {
-      const item = el('button', '', text) as HTMLButtonElement;
-      item.type = 'button';
-      item.setAttribute('role', 'menuitem');
-      item.addEventListener('click', () => {
-        menu.remove();
-        run();
-      });
-      menu.append(item);
-    }
-    document.body.append(menu);
-    this.menu = menu;
-    const close = (): void => {
-      menu.remove();
-      document.removeEventListener('click', close, true);
-    };
-    document.addEventListener('click', close, true);
   }
 
   private renderNotice(bar: Bar): void {

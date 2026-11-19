@@ -152,6 +152,10 @@ export interface BadLaunchButton {
   place?: LaunchPlace;
   label?: string;
   message: string;
+  /** Запись выключена человеком: на карточке её нет, даже негодной. */
+  disabled?: true;
+  /** Подпись повторена на том же месте: на карточке стоит первая кнопка, эта не показывается. */
+  duplicate?: true;
 }
 
 export interface ParsedLaunchButtons {
@@ -173,9 +177,10 @@ export function parseLaunchButtons(raw: unknown): ParsedLaunchButtons {
   }
   if (list.length > MAX_COMMANDS) out.issues.push({ place: 'mr', layer: 'global', message: `Своих кнопок запуска больше ${MAX_COMMANDS}: лишние пропущены` });
   list.slice(0, MAX_COMMANDS).forEach((item, index) => {
-    const reject = (message: string, place?: LaunchPlace, label?: string, field?: ButtonIssue['field']): void => {
+    const reject = (message: string, place?: LaunchPlace, label?: string, field?: ButtonIssue['field'], duplicate?: true): void => {
       const at = `Кнопка запуска ${index + 1}${label ? ` («${label}»)` : ''}`;
-      out.bad.push({ index, ...(place ? { place } : {}), ...(label ? { label } : {}), message: `${at}: ${message}` });
+      const off = isRecord(item) && item.disabled === true;
+      out.bad.push({ index, ...(place ? { place } : {}), ...(label ? { label } : {}), message: `${at}: ${message}`, ...(off ? { disabled: true as const } : {}), ...(duplicate ? { duplicate } : {}) });
       out.issues.push({ place: place ?? 'mr', layer: 'global', index, ...(label ? { label } : {}), ...(field ? { field } : {}), message: `${at}: ${message}` });
     };
     if (!isRecord(item)) return reject('не объект');
@@ -185,7 +190,7 @@ export function parseLaunchButtons(raw: unknown): ParsedLaunchButtons {
     const at = place as LaunchPlace;
     if (named === undefined || named.length > LABEL_MAX || CONTROL.test(label as string)) return reject(`label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`, at, named, 'label');
     if (BUILTIN_LAUNCH[at].some((b) => sameLabel(b.label, named))) return reject('подпись встроенной кнопки этого места', at, named, 'label');
-    if (out.buttons.some((b) => b.place === at && sameLabel(b.label, named))) return reject('подпись повторена, действует первая кнопка', at, named, 'label');
+    if (out.buttons.some((b) => b.place === at && sameLabel(b.label, named))) return reject('подпись повторена, действует первая кнопка', at, named, 'label', true);
     const textProblem = promptTextProblem(text, PLACE_PLACEHOLDERS[at]);
     if (textProblem) return reject(textProblem, at, named, 'text');
     const descProblem = description === undefined ? null : descriptionProblem(description);

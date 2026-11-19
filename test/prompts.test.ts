@@ -161,6 +161,22 @@ describe('Правило текста первого сообщения: одн�
     for (const text of bad) assert.notEqual(promptTextProblem(text, allowed), null, String(text));
   });
 
+  it('негодная кнопка помечена: выключенная человеком и повтор подписи на карточку не попадают', () => {
+    const parsed = parseLaunchButtons({
+      buttons: [
+        { place: 'mr', label: 'Объясни', text: 'ok {mr_url}' },
+        { place: 'mr', label: 'Объясни', text: 'ещё {mr_url}' },
+        { place: 'mr', label: 'Выкл', text: '-p', disabled: true },
+        { place: 'mr', label: 'Плохая', text: '-p' },
+      ],
+    });
+    const by = (label: string) => parsed.bad.find((b) => b.label === label);
+    assert.equal(by('Объясни')?.duplicate, true);
+    assert.equal(by('Выкл')?.disabled, true);
+    assert.equal(by('Плохая')?.disabled, undefined);
+    assert.equal(by('Плохая')?.duplicate, undefined);
+  });
+
   it('parsePrompts и parseLaunchButtons отказывают одинаково на каждом входе правила', () => {
     for (const text of bad) {
       const viaPrompts = parsePrompts({ 'mr.review': { text } }).problems.length;

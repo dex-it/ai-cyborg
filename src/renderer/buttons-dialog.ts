@@ -76,6 +76,8 @@ export function initButtonsDialog(deps: ButtonsDialogDeps): ButtonsDialog {
   let dragFrom: number | null = null;
   /** Состояние файлов, от перечитывания которого человек уже отказался: заново об одном и том же не спрашиваем. */
   let declined = '';
+  /** Всё, что окно прочитало с диска в последний раз: файлы обоих слоёв, prompts.json и наличие воркспейса. */
+  let seenDisk = '';
 
   const draftText = (): string => JSON.stringify([state.commands[layer] ?? null, layer === 'global' ? (state.prompts ?? null) : null]);
   const dirty = (): boolean => dialog.open && draftText() !== initial;
@@ -103,6 +105,7 @@ export function initButtonsDialog(deps: ButtonsDialogDeps): ButtonsDialog {
     loadProblem = [disk.config.globalProblem, disk.prompts.problem].filter(Boolean).join('\n');
     if (!state.hasWorkspace && layer === 'workspace') layer = 'global';
     base = baseOf(disk, layer);
+    seenDisk = JSON.stringify(disk);
     initial = draftText();
     saveIssues = [];
     declined = '';
@@ -329,7 +332,8 @@ export function initButtonsDialog(deps: ButtonsDialogDeps): ButtonsDialog {
     const index = row.rawIndex as number;
     formEl.append(el('p', 'buttons-field-error', row.issue ?? 'Запись негодна'));
     const edit = (patch: Record<string, unknown>): void => {
-      if (applyOp(patchAt(ctx(), index, patch)) && typeof patch.label === 'string') select(`bar:${patch.label.trim().toLowerCase()}`);
+      // Пока запись негодна, её ключ - номер; когда стала годной, ключом стала подпись.
+      if (applyOp(patchAt(ctx(), index, patch)) && !rowOf(selected) && typeof patch.label === 'string') select(`bar:${patch.label.trim().toLowerCase()}`);
       render();
     };
     formEl.append(field('Подпись', textInput(row.label, false, (value) => edit({ label: value.trim() || undefined }))));
@@ -546,8 +550,8 @@ export function initButtonsDialog(deps: ButtonsDialogDeps): ButtonsDialog {
     async refresh(): Promise<void> {
       if (!dialog.open) return;
       const disk = await readDisk();
-      const onDisk = JSON.stringify(baseOf(disk, layer));
-      if (onDisk === JSON.stringify(base)) {
+      const onDisk = JSON.stringify(disk);
+      if (onDisk === seenDisk) {
         declined = '';
         return;
       }

@@ -134,6 +134,7 @@ const commandBars = new CommandBars({
   openButtons: (request) => void buttonsDialog.open(request),
   workspaceOpen: () => workspaceFile !== null,
   disableButton: (layer, label) => api.applyButtons({ op: 'disable', place: 'bar', label, layer, disabled: true }).then((reply) => (reply.error ? reply : (void reloadCommands(), reply))),
+  menu: (anchor, label, items) => showPickMenu(anchor, label, items.map(([text, run]) => pickItem(text, undefined, run))),
   undoButtons: (id) => api.undoButtons(id).then((reply) => (void reloadCommands(), void reloadLaunchButtons(), void buttonsDialog.refresh(), reply)),
 });
 

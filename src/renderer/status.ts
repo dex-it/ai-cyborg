@@ -315,8 +315,9 @@ export class StatusHub {
     if (!open1) {
       for (const own of ownLaunchButtons('jira')) {
         const button = el('button', '', own.label) as HTMLButtonElement;
-        button.title = launchHint('jira', own.label);
-        button.disabled = !this.host.project()?.repos.length || own.bad === true;
+        const noRepos = !this.host.project()?.repos.length;
+        button.title = noRepos ? 'Сессии негде открыться: добавьте репозиторий в свойствах проекта' : launchHint('jira', own.label);
+        button.disabled = noRepos || own.bad === true;
         button.addEventListener('click', (event) => {
           event.stopPropagation();
           this.close();
