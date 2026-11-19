@@ -4,8 +4,7 @@ import path from 'node:path';
 export const NOTIFICATIONS_MENU_ID = 'notifications';
 export const PROJECT_NEW_MENU_ID = 'project-new';
 export const PROJECT_PROPERTIES_MENU_ID = 'project-properties';
-export const COMMANDS_MENU_ID = 'commands-edit';
-export const PROMPTS_MENU_ID = 'prompts-edit';
+export const BUTTONS_MENU_ID = 'buttons-edit';
 export const CLAUDE_MD_MENU_ID = 'claude-md-edit';
 export const CLAUDE_TOKEN_MENU_ID = 'claude-token';
 export const HOST_DISK_MENU_ID = 'host-disk';
@@ -38,8 +37,7 @@ export interface WorkspaceMenu {
   openRecent(file: string): void;
   newProject(): void;
   editProject(): void;
-  editCommands(): void;
-  editPrompts(): void;
+  editButtons(): void;
   editClaudeMd(): void;
   claudeToken(): void;
   hostDisk(): void;
@@ -102,8 +100,7 @@ export function appMenuTemplate(
       { id: PROJECT_NEW_MENU_ID, label: 'Новый проект…', enabled: workspace.hasWorkspace, click: () => workspace.newProject() },
       { id: PROJECT_PROPERTIES_MENU_ID, label: 'Свойства проекта…', enabled: workspace.hasProject, click: () => workspace.editProject() },
       { type: 'separator' },
-      { id: COMMANDS_MENU_ID, label: 'Кнопки команд…', enabled: workspace.hasWorkspace, click: () => workspace.editCommands() },
-      { id: PROMPTS_MENU_ID, label: 'Промпты кнопок…', click: () => workspace.editPrompts() },
+      { id: BUTTONS_MENU_ID, label: 'Кнопки…', click: () => workspace.editButtons() },
       { id: CLAUDE_MD_MENU_ID, label: 'Глобальный CLAUDE.md…', click: () => workspace.editClaudeMd() },
       { type: 'separator' },
       { id: CLAUDE_TOKEN_MENU_ID, label: 'Вход Claude на хостах…', click: () => workspace.claudeToken() },

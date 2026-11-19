@@ -6,6 +6,7 @@ import { timeOf } from '../main/jira-keys';
 import type { Project } from '../main/projects';
 import { ago } from './ago';
 import { byId, el } from './dom';
+import { launchHint, ownLaunchButtons } from './launch-buttons';
 import { applyMrDetails, mrNumber } from './mr-model';
 import { attentionOf, ATTENTION_TEXT, byAttention, groupIssues, jiraOnlyLevel, levelOf, LEVEL_TEXT, mrActions, mrsOfIssue, pipelineTone, reviewQueue, usable, type Attention, type Level } from './status-model';
 
@@ -19,8 +20,8 @@ export interface StatusHost {
   project(): Project | null;
   /** Открытая сессия по ключу MR либо `jira:KEY`: кнопка тогда ведёт к ней. */
   sessionOf(key: string): { exited: boolean } | undefined;
-  startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement): void;
-  startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement): void;
+  startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement, button?: string): void;
+  startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement, button?: string): void;
 }
 
 interface Snapshot {
@@ -304,7 +305,21 @@ export class StatusHub {
       this.close();
       this.host.startJira(issue, linked[0], this.button);
     });
+    if (!open1) start.title = `${launchHint('jira', 'jira.start')}`;
     actions.append(start);
+    if (!open1) {
+      for (const own of ownLaunchButtons('jira')) {
+        const button = el('button', '', own.label) as HTMLButtonElement;
+        button.title = launchHint('jira', own.label);
+        button.disabled = !this.host.project()?.repos.length;
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.close();
+          this.host.startJira(issue, linked[0], this.button, own.label);
+        });
+        actions.append(button);
+      }
+    }
     row.append(main, actions);
     item.append(row);
     if (open) item.append(this.issueDetails(issue));
@@ -424,6 +439,18 @@ export class StatusHub {
         this.host.startMr(mr, action.intent, this.button);
       });
       actions.append(button);
+    }
+    if (!this.host.sessionOf(mr.key)) {
+      for (const own of ownLaunchButtons('mr')) {
+        const button = el('button', '', own.label) as HTMLButtonElement;
+        button.title = launchHint('mr', own.label);
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.close();
+          this.host.startMr(mr, mr.own ? 'rework' : 'review', this.button, own.label);
+        });
+        actions.append(button);
+      }
     }
     row.append(main, actions);
     item.append(row);

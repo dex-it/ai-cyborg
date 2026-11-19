@@ -11,6 +11,11 @@ export const CLOSE_SESSION_TOOL = 'close_session';
 export const SPAWN_AGENT_TOOL = 'spawn_agent';
 export const CLOSE_AGENT_TOOL = 'close_agent';
 export const REPORT_DONE_TOOL = 'report_done';
+export const LIST_BUTTONS_TOOL = 'list_buttons';
+export const ADD_BUTTON_TOOL = 'add_button';
+export const UPDATE_BUTTON_TOOL = 'update_button';
+export const DISABLE_BUTTON_TOOL = 'disable_button';
+export const BUTTON_TOOLS = [LIST_BUTTONS_TOOL, ADD_BUTTON_TOOL, UPDATE_BUTTON_TOOL, DISABLE_BUTTON_TOOL];
 
 export type SessionKind = 'local' | 'remote';
 
@@ -20,6 +25,8 @@ export interface ToolContext {
   hosts: string[];
   /** Вызывающую открыла другая сессия: локальной дочерней отдаётся report_done. */
   child?: boolean;
+  /** Кнопки полосы правятся инструментами: у сессии есть порт кнопок. */
+  buttons?: boolean;
 }
 
 /** Промпт новой сессии уходит позиционным аргументом claude, а Linux ограничивает один аргумент 128 КиБ (MAX_ARG_STRLEN). */
@@ -37,9 +44,74 @@ export const CLOSE_SELF_DELAY_MS = 1000;
 export function sessionTools(dirs: string[], context: ToolContext = { kind: 'local', hosts: [] }): McpTool[] {
   const all = localTools(dirs);
   const byName = (...names: string[]): McpTool[] => all.filter((t) => names.includes(t.name));
-  if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL), reportDoneTool('remote')];
+  const extra = context.buttons ? buttonTools() : [];
+  if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL), reportDoneTool('remote'), ...extra];
   const local = context.child ? [...all, reportDoneTool('local')] : all;
-  return context.hosts.length ? [...local, spawnAgentTool(dirs, context.hosts), closeAgentTool()] : local;
+  return context.hosts.length ? [...local, spawnAgentTool(dirs, context.hosts), closeAgentTool(), ...extra] : [...local, ...extra];
+}
+
+const LAYER_SCHEMA = { type: 'string', enum: ['workspace', 'all'], description: 'workspace (по умолчанию) - кнопки этого воркспейса; all - все воркспейсы: только если человек сам сказал «во все воркспейсы».' };
+const PLACE_SCHEMA = { type: 'string', enum: ['bar', 'mr', 'task', 'jira'], description: 'bar (по умолчанию) - полоса сессии; mr, task, jira - кнопки запуска новой сессии у MR, задачи GitHub/GitLab, задачи Jira (только layer: "all").' };
+
+/** Инструменты кнопок: человек просит «добавь кнопку …», и она появляется без окна и правки файлов. */
+function buttonTools(): McpTool[] {
+  const text = 'Реплика, которую кнопка отправит сессии, одной строкой; не начинается с «!». Текст с «/» в начале только вставляется без Enter. У кнопок запуска - промпт новой сессии с подстановками места ({mr_url}; {task_url}, {status_command}; {jira_key}).';
+  const hotkey = 'Сочетание клавиш вида «Alt+M» или «F5». Передавай, только если человек сам назвал сочетание; сам не выбирай. Занятое сочетание кнопка верхнего слоя забирает у нижней.';
+  return [
+    {
+      name: LIST_BUTTONS_TOOL,
+      description: 'Действующий набор кнопок этого воркспейса по местам (bar, mr, task, jira): подпись, текст, сочетание, происхождение, выключена ли и в каком слое изменена. Вызови перед add_button, update_button и disable_button, чтобы не завести дубль.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    },
+    {
+      name: ADD_BUTTON_TOOL,
+      description: 'Добавляет кнопку по просьбе человека: полосы сессии (в слой воркспейса) либо запуска новой сессии у MR, задачи или Jira (только layer: "all"). Подпись, занятая в действующем наборе, - отказ: поменять кнопку - update_button. Вызов подтверждает человек; у полосы появится уведомление с «Отменить».',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          place: PLACE_SCHEMA,
+          label: { type: 'string', minLength: 1, description: 'Подпись до 40 знаков.' },
+          text: { type: 'string', minLength: 1, description: text },
+          submit: { type: 'boolean', description: 'true - с Enter, по умолчанию только вставить (только полоса).' },
+          hotkey: { type: 'string', description: hotkey },
+          description: { type: 'string', description: 'Подсказка кнопки.' },
+          layer: LAYER_SCHEMA,
+        },
+        required: ['label', 'text'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: UPDATE_BUTTON_TOOL,
+      description: 'Меняет названные поля кнопки: у встроенной и общей кнопки в воркспейсе - частичной записью, остальные поля берутся снизу. Подпись унаследованной кнопки не меняется. Вызов подтверждает человек.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          place: PLACE_SCHEMA,
+          label: { type: 'string', minLength: 1, description: 'Подпись кнопки.' },
+          layer: LAYER_SCHEMA,
+          text: { type: 'string', description: text + ' Новый text без submit значит «только вставить».' },
+          submit: { type: 'boolean' },
+          hotkey: { type: ['string', 'null'], description: hotkey + ' null снимает сочетание.' },
+          description: { type: 'string' },
+          new_label: { type: 'string', description: 'Новая подпись: только у своей кнопки слоя.' },
+          reset: { type: 'array', items: { type: 'string', enum: ['text', 'submit', 'hotkey', 'description'] }, description: 'Поля, которые вернуть к значению снизу.' },
+        },
+        required: ['label'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: DISABLE_BUTTON_TOOL,
+      description: 'Выключает кнопку в слое (она пропадает с полосы и освобождает сочетание) или включает её обратно: disabled: false. Встроенные кнопки запуска не выключаются. Вызов подтверждает человек.',
+      inputSchema: {
+        type: 'object',
+        properties: { place: PLACE_SCHEMA, label: { type: 'string', minLength: 1 }, layer: LAYER_SCHEMA, disabled: { type: 'boolean', description: 'true (по умолчанию) - выключить, false - включить.' } },
+        required: ['label'],
+        additionalProperties: false,
+      },
+    },
+  ];
 }
 
 function reportDoneTool(kind: SessionKind): McpTool {
@@ -433,6 +505,14 @@ export interface SessionsPort {
   noteClosing?(id: number, caller: number): void;
 }
 
+/** Кнопки: главный процесс проверяет и пишет, отказ - исключение с причиной. */
+export interface ButtonsToolsPort {
+  list(caller: number): string;
+  add(caller: number, args: unknown): string;
+  update(caller: number, args: unknown): string;
+  disable(caller: number, args: unknown): string;
+}
+
 /** Удалённая часть: проверка хоста и лимитов, итог, завершение. Тексты результатов формирует она. */
 export interface RemoteToolsPort {
   prepare(host: string, repo: string, limits?: Limits): Promise<void>;
@@ -447,11 +527,13 @@ export function createSessionTools(
   close: (id: number) => void,
   closeSelfDelayMs = CLOSE_SELF_DELAY_MS,
   remote?: RemoteToolsPort,
+  buttons?: ButtonsToolsPort,
 ): McpBackend {
   const contextOf = (caller: number): ToolContext => ({
     kind: sessions.kindOf?.(caller) ?? 'local',
     hosts: remote ? (sessions.hostsOf?.(caller) ?? []) : [],
     child: !!sessions.reportLocal && (sessions.parentOf?.(caller) ?? null) !== null,
+    buttons: !!buttons,
   });
   return {
     tools: (caller) => {
@@ -464,6 +546,10 @@ export function createSessionTools(
       if (!dirs || !peers) throw new Error('сессия завершена');
       // tools/call не обязан следовать tools/list: набор инструментов контекста - и есть право вызова.
       if (!sessionTools(dirs, contextOf(caller)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
+      if (buttons && BUTTON_TOOLS.includes(name)) {
+        if (name === LIST_BUTTONS_TOOL) return buttons.list(caller);
+        return name === ADD_BUTTON_TOOL ? buttons.add(caller, value) : name === UPDATE_BUTTON_TOOL ? buttons.update(caller, value) : buttons.disable(caller, value);
+      }
       if (name === LIST_SESSIONS_TOOL) return describePeers(peers, caller);
       if (name === SEND_TO_SESSION_TOOL) {
         const valid = validateSend(value, peers, caller);

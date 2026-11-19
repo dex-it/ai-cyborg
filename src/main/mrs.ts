@@ -1,5 +1,5 @@
 import { jiraPrompt, validateJiraStart } from './jira';
-import { DEFAULT_PROMPTS, fillPrompt, promptTemplate, type PromptId } from './prompts';
+import { DEFAULT_PROMPTS, fillPrompt, launchTemplate, promptTemplate, type PromptId } from './prompts';
 import { MAX_TRACKED, taskPrompt, validateRef, type SourceResult, type TaskRef, type TrackerKind, type TrackerSettings } from './trackers';
 
 export type MrRef = TaskRef;
@@ -58,7 +58,7 @@ export interface MrDetailsResult {
 }
 
 /** Что присылает интерфейс при старте сессии: только проверяемые ссылки, без названий и веток. */
-export type SessionStart = { task: TaskRef } | { mr: MrRef; intent: MrIntent } | { jira: { key: string } } | { handoff: string };
+export type SessionStart = { task: TaskRef; button?: string } | { mr: MrRef; intent?: MrIntent; button?: string } | { jira: { key: string }; button?: string } | { handoff: string };
 
 /** MR списка до запроса деталей: участники нужны фильтру, головной коммит - проверкам GitHub. */
 export interface ParsedMr {
@@ -112,24 +112,26 @@ export function validateMrListArgs(projectId: unknown, filter: unknown, tracked:
 /** Номер выборки для mrs:details; null - аргумент некорректен. */
 export const validateMrDetailsArgs = (id: unknown): number | null => (typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : null);
 
-/**
- * Начальный промпт по аргументу session:create; null - аргумент некорректен. Лишние поля игнорируются.
- * `prompts` - поле файла воркспейса как записано: текст промпта берётся оттуда, иначе встроенный; негодная запись - исключение с причиной.
- */
+/** Начальный промпт по аргументу session:create; null - аргумент некорректен. Лишние поля игнорируются. `prompts` - поле файла воркспейса как записано: текст промпта берётся оттуда, иначе встроенный; негодная запись - исключение с причиной. */
 export function validateSessionStart(value: unknown, prompts?: unknown): string | null {
   if (typeof value !== 'object' || value === null) return null;
-  const { task, mr, intent, jira } = value as Record<string, unknown>;
+  const { task, mr, intent, jira, button } = value as Record<string, unknown>;
+  // Своя кнопка запуска: интерфейс шлёт подпись, текст берёт главный процесс.
+  if (button !== undefined && (typeof button !== 'string' || !button.trim() || intent !== undefined)) return null;
+  const custom = (place: 'mr' | 'task' | 'jira'): string => launchTemplate(place, button as string, prompts);
   if (jira !== undefined && task === undefined && mr === undefined) {
     const key = validateJiraStart(jira);
-    return key ? jiraPrompt(key, promptTemplate('jira.start', prompts)) : null;
+    return key ? jiraPrompt(key, button === undefined ? promptTemplate('jira.start', prompts) : custom('jira')) : null;
   }
   if (task !== undefined && mr === undefined && jira === undefined) {
     const ref = validateRef(task);
-    return ref ? taskPrompt(ref, promptTemplate('task.start', prompts)) : null;
+    return ref ? taskPrompt(ref, button === undefined ? promptTemplate('task.start', prompts) : custom('task')) : null;
   }
   if (mr !== undefined && task === undefined && jira === undefined) {
     const ref = validateRef(mr);
-    if (!ref || typeof intent !== 'string' || !INTENTS.includes(intent)) return null;
+    if (!ref) return null;
+    if (button !== undefined) return fillPrompt(custom('mr'), { mr_url: mrUrl(ref) });
+    if (typeof intent !== 'string' || !INTENTS.includes(intent)) return null;
     return mrPrompt(ref, intent as MrIntent, promptTemplate(`mr.${intent}` as PromptId, prompts));
   }
   return null;
@@ -273,11 +275,7 @@ export function githubCommented(reviews: { login?: unknown; state?: unknown }[],
   );
 }
 
-/**
- * Общий предел одновременных задач: все выборки сервиса делят его, а не каждая заводит свой пул.
- * Освободившийся слот отдаётся первой ожидающей задаче, не помеченной устаревшей (stale), иначе первой по порядку:
- * задачи отброшенной выборки не стоят перед задачами новой, но дорабатывают.
- */
+/** Общий предел одновременных задач: все выборки сервиса делят его, а не каждая заводит свой пул. Освободившийся слот отдаётся первой ожидающей задаче, не помеченной устаревшей (stale), иначе первой по порядку: задачи отброшенной выборки не стоят перед задачами новой, но дорабатывают. */
 export function createLimiter(limit: number): <T>(task: () => Promise<T>, stale?: () => boolean) => Promise<T> {
   let running = 0;
   const waiting: { go: () => void; stale: () => boolean }[] = [];

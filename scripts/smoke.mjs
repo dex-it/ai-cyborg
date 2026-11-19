@@ -406,32 +406,41 @@ async function main() {
   await barButton('Сливай');
   await waitFor('«Сливай» отправил текст с Enter', async () => (await squeezed()).includes('got:[сливай]'));
 
-  await clickMenu(mainEv, 'Кнопки команд…');
-  await waitFor('диалог кнопок открыт', async () => (await ev('document.querySelector("#commands-dialog").open')) === true);
-  await waitFor('редактор Monaco в диалоге', async () => (await ev('document.querySelectorAll("#commands-editor .monaco-editor").length')) === 1);
-  const editorValue = () => ev('window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#commands-dialog")).getValue()');
-  const opened = JSON.parse(await editorValue());
-  assert.deepEqual(opened.map((b) => b.label), ['Сливай', 'Сделай PR', 'Мердж', 'Приберись'], 'редактор не показал встроенные кнопки');
-  assert.ok(opened.every((b) => b.description), 'у встроенных кнопок в редакторе нет описаний');
-  const setEditor = (value) => ev(`window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#commands-dialog")).setValue(${JSON.stringify(value)})`);
-  await setEditor('[{"label":"A","text":""}]');
-  await ev('document.querySelector("#commands-save").click()');
-  await waitFor('негодная кнопка названа в диалоге', async () => /Кнопка 1 \(«A»\): text/.test(await text('#commands-error')));
-  assert.ok(await ev('document.querySelector("#commands-dialog").open'), 'диалог закрылся при ошибке');
-  await setEditor(
-    JSON.stringify([
-      { label: 'Приберись' },
-      { label: 'Сливай' },
-      { label: 'Ветка', text: 'ветка {branch}', submit: true, hotkey: 'Alt+B' },
-      { label: 'Задача', text: 'задача {task}', submit: true },
-      { label: 'PR', text: 'смерджи PR {pr}', submit: true },
-      { label: 'Предложи', text: 'suggest', submit: true },
-      { label: 'Спроси', text: 'ask', submit: true },
-      { label: 'Вставка', text: 'без ввода', submit: false },
-    ]),
-  );
-  await ev('document.querySelector("#commands-save").click()');
-  await waitFor('диалог закрыт сохранением', async () => (await ev('document.querySelector("#commands-dialog").open')) === false);
+  const winOpen = async () => (await ev('document.querySelector("#buttons-dialog").open')) === true;
+  const winRows = () => ev('[...document.querySelectorAll("#buttons-list .buttons-label")].map((n) => n.textContent)');
+  const winPick = (label) => ev(`[...document.querySelectorAll("#buttons-list .buttons-row")].find((r) => r.querySelector(".buttons-label").textContent.startsWith(${JSON.stringify(label)})).click()`);
+  const winField = (name, value) =>
+    ev(`(() => { const f = [...document.querySelectorAll("#buttons-form .buttons-field")].find((x) => x.querySelector(".buttons-field-name").textContent === ${JSON.stringify(name)}); const i = f.querySelector("input"); if (i.type === "checkbox") i.checked = ${JSON.stringify(value)}; else i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event("change")); })()`);
+  const winAction = (text) => ev(`[...document.querySelectorAll("#buttons-form button")].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
+  const winAdd = async (group, label, text, submit) => {
+    await ev(`document.querySelectorAll("#buttons-list .buttons-add")[${group}].click()`);
+    await winField('Подпись', label);
+    await winField(group === 0 ? 'Текст' : 'Промпт', text);
+    if (group === 0 && submit) await winField('Отправлять с Enter', true);
+    await ev('document.querySelector("#buttons-compose-create").click()');
+  };
+  const winMoveUp = (label) => ev(`[...document.querySelectorAll("#buttons-list .buttons-row")].find((r) => r.querySelector(".buttons-label").textContent === ${JSON.stringify(label)}).querySelector(".buttons-move").click()`);
+  await clickMenu(mainEv, 'Кнопки…');
+  await waitFor('окно «Кнопки» открыто', winOpen);
+  await waitFor('в окне встроенные кнопки полосы', async () => (await winRows()).slice(0, 4).join() === 'Сливай,Сделай PR,Мердж,Приберись');
+  assert.equal(await ev('document.querySelector("#buttons-layer-workspace").getAttribute("aria-pressed")'), 'true', 'окно открылось не на слое воркспейса');
+  await winPick('Сливай');
+  assert.match(await text('#buttons-form'), /из: встроенная/, 'форма не показала, откуда значение поля');
+  await winAdd(0, 'A', 'a', false);
+  await winPick('A');
+  await winField('Сочетание', 'Ctrl+C');
+  await ev('document.querySelector("#buttons-save").click()');
+  await waitFor('негодное сочетание названо в окне', async () => /терминалом/.test(await text('#buttons-error')));
+  assert.ok(await winOpen(), 'окно закрылось при ошибке');
+  await winAction('Удалить');
+  for (let i = 0; i < 3; i++) await winMoveUp('Приберись');
+  for (const [label, text2, submit] of [['Ветка', 'ветка {branch}', true], ['Задача', 'задача {task}', true], ['PR', 'смерджи PR {pr}', true], ['Предложи', 'suggest', true], ['Спроси', 'ask', true], ['Вставка', 'без ввода', false]]) {
+    await winAdd(0, label, text2, submit);
+  }
+  await winPick('Ветка');
+  await winField('Сочетание', 'Alt+B');
+  await ev('document.querySelector("#buttons-save").click()');
+  await waitFor('окно закрыто сохранением', async () => !(await winOpen()));
   await waitFor('кнопки из воркспейса на полосе без перезапуска, встроенные переставлены', async () => (await barButtons()).join() === 'Приберись,Сливай,Сделай PR,Мердж,Ветка,Задача,PR,Предложи,Спроси,Вставка');
   const stored = JSON.parse(readFileSync(legacyFile, 'utf8'));
   assert.equal(stored.commands.length, 8, 'кнопки не легли в файл воркспейса');
@@ -479,21 +488,20 @@ async function main() {
   await ev('window.dispatchEvent(new Event("focus"))');
   await waitFor('правка файла снаружи подхвачена', async () => (await barButtons()).includes('Внешняя'));
 
-  // Общий набор: правится в том же диалоге, лежит в userData и ложится под кнопки воркспейса.
-  await clickMenu(mainEv, 'Кнопки команд…');
-  await waitFor('диалог кнопок открыт для общего набора', async () => (await ev('document.querySelector("#commands-dialog").open')) === true);
-  await ev('document.querySelector("#commands-scope-global").click()');
-  await waitFor('редактор показал общий набор', async () => (await ev('document.querySelector("#commands-scope-global").getAttribute("aria-pressed")')) === 'true');
-  await waitFor('в общем наборе только встроенные', async () => JSON.parse(await editorValue()).length === 4);
-  await setEditor(JSON.stringify([{ label: 'Общая', text: 'для всех', submit: true }]));
-  await ev('document.querySelector("#commands-save").click()');
-  await waitFor('диалог закрыт сохранением общего набора', async () => (await ev('document.querySelector("#commands-dialog").open')) === false);
+  // Общий слой: правится в том же окне, лежит в userData и ложится под кнопки воркспейса.
+  await clickMenu(mainEv, 'Кнопки…');
+  await waitFor('окно открыто для общего слоя', winOpen);
+  await ev('document.querySelector("#buttons-layer-global").click()');
+  await waitFor('окно показало общий слой', async () => (await ev('document.querySelector("#buttons-layer-global").getAttribute("aria-pressed")')) === 'true');
+  await winAdd(0, 'Общая', 'для всех', true);
+  await ev('document.querySelector("#buttons-save").click()');
+  await waitFor('окно закрыто сохранением общего слоя', async () => !(await winOpen()));
   await waitFor('общая кнопка между встроенными и кнопками воркспейса', async () => (await barButtons()).join().startsWith('Приберись,Сливай,Сделай PR,Мердж,Общая,Ветка'));
-  assert.deepEqual(JSON.parse(readFileSync(join(userData, 'commands.json'), 'utf8')), [{ label: 'Общая', text: 'для всех', submit: true }], 'общий набор не лёг в userData');
+  assert.deepEqual(JSON.parse(readFileSync(join(userData, 'commands.json'), 'utf8')), [{ label: 'Общая', text: 'для всех', submit: true }], 'общий слой не лёг в userData');
   assert.ok(!JSON.parse(readFileSync(legacyFile, 'utf8')).commands.some((b) => b.label === 'Общая'), 'общая кнопка попала в файл воркспейса');
-  log('кнопки-команды: встроенные, правка в Monaco, подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью, общий набор');
+  log('кнопки-команды: встроенные, правка в окне «Кнопки», подстановки, сочетание, вставка без Enter, правка файла снаружи, предложенные моделью, общий слой');
 
-  // FR-12009: промпты кнопок запуска сессий - действующий набор в Monaco, правка доходит до первого сообщения следующей сессии.
+  // FR-12009: промпты кнопок запуска сессий - в окне «Кнопки», правка доходит до первого сообщения следующей сессии.
   const startedWith = async (key) => {
     const id = await ev(`window.cyborg.createSession("p1", ${JSON.stringify(repo)}, [], { jira: { key: ${JSON.stringify(key)} } })`);
     await waitFor(`подставной claude получил аргументы сессии ${key}`, async () => existsSync(fakeArgsLog) && readFileSync(fakeArgsLog, 'utf8').includes(key));
@@ -502,33 +510,37 @@ async function main() {
   };
   assert.match(await startedWith('SMK-2'), /Задача Jira SMK-2: прочитай её \(jira issue view SMK-2 --comments 5\)/, 'встроенный промпт Jira изменился без правки файла');
   const beforePrompts = JSON.parse(readFileSync(legacyFile, 'utf8'));
-  await clickMenu(mainEv, 'Промпты кнопок…');
-  await waitFor('диалог промптов открыт', async () => (await ev('document.querySelector("#prompts-dialog").open')) === true);
-  await waitFor('редактор Monaco в диалоге промптов', async () => (await ev('document.querySelectorAll("#prompts-editor .monaco-editor").length')) === 1);
-  const promptEditor = (call) => ev(`(() => { const e = window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest("#prompts-dialog")); return e.${call}; })()`);
-  const shown = JSON.parse(await promptEditor('getValue()'));
-  assert.deepEqual(Object.keys(shown), ['mr.review', 'mr.rework', 'mr.ci', 'task.start', 'jira.start'], 'редактор не показал встроенные промпты');
-  assert.ok(Object.values(shown).every((p) => p.text && p.description), 'у встроенного промпта нет текста или описания');
-  const setPrompts = (value) => promptEditor(`setValue(${JSON.stringify(JSON.stringify(value))})`);
-  await setPrompts({ 'jira.start': { text: 'Работай над {jira_kye}' } });
-  await ev('document.querySelector("#prompts-save").click()');
-  await waitFor('негодный промпт назван в диалоге', async () => /«jira\.start»: неизвестная подстановка \{jira_kye\}/.test(await text('#prompts-error')));
-  assert.ok(await ev('document.querySelector("#prompts-dialog").open'), 'диалог закрылся при ошибке');
-  await setPrompts({ ...shown, 'jira.start': { text: 'Смоук-промпт {jira_key}', description: 'для проверки' } });
-  await ev('document.querySelector("#prompts-save").click()');
-  await waitFor('диалог промптов закрыт сохранением', async () => (await ev('document.querySelector("#prompts-dialog").open')) === false);
+  await clickMenu(mainEv, 'Кнопки…');
+  await waitFor('окно открыто', winOpen);
+  await ev('document.querySelector("#buttons-layer-global").click()');
+  await waitFor('окно показало общий слой', async () => (await ev('document.querySelector("#buttons-layer-global").getAttribute("aria-pressed")')) === 'true');
+  assert.ok((await winRows()).some((label) => label.startsWith('Ревью')), 'в окне нет строк кнопок запуска');
+  await winPick('Сессия по задаче Jira');
+  await winField('Промпт', 'Работай над {jira_kye}');
+  await ev('document.querySelector("#buttons-save").click()');
+  await waitFor('негодный промпт назван в окне', async () => /«jira\.start»: неизвестная подстановка \{jira_kye\}/.test(await text('#buttons-error')));
+  assert.ok(await winOpen(), 'окно закрылось при ошибке');
+  await winField('Промпт', 'Смоук-промпт {jira_key}');
+  await winField('Описание', 'для проверки');
+  await winAdd(3, 'Объясни', 'Объясни {jira_key}', false);
+  await ev('document.querySelector("#buttons-save").click()');
+  await waitFor('окно закрыто сохранением промптов', async () => !(await winOpen()));
   const promptsFile = join(userData, 'prompts.json');
   const afterSave = JSON.parse(readFileSync(promptsFile, 'utf8'));
   assert.equal(afterSave['jira.start'].text, 'Смоук-промпт {jira_key}', 'промпт не лёг в общий файл промптов');
+  assert.deepEqual(afterSave.buttons, [{ place: 'jira', label: 'Объясни', text: 'Объясни {jira_key}' }], 'своя кнопка запуска не легла в prompts.json');
   assert.deepEqual(JSON.parse(readFileSync(legacyFile, 'utf8')), beforePrompts, 'запись промптов тронула файл воркспейса');
   assert.match(await startedWith('SMK-3'), /Смоук-промпт SMK-3/, 'правка промпта не дошла до первого сообщения сессии');
+  const idOwn = await ev(`window.cyborg.createSession("p1", ${JSON.stringify(repo)}, [], { jira: { key: "SMK-5" }, button: "Объясни" })`);
+  await waitFor('сессия по своей кнопке получила её промпт', async () => readFileSync(fakeArgsLog, 'utf8').includes('Объясни SMK-5'));
+  await ev(`window.cyborg.kill(${idOwn}); 1`);
   // Негодная запись, правленная руками, не заменяется встроенной молча: сессия не стартует и называет причину.
   writeFileSync(promptsFile, JSON.stringify({ 'jira.start': { text: '-p {jira_key}' } }));
   const refused = await ev(`window.cyborg.createSession("p1", ${JSON.stringify(repo)}, [], { jira: { key: "SMK-4" } }).then(() => "стартовала", (error) => String(error))`);
   assert.match(refused, /text не может начинаться с «-»/, 'негодный промпт из файла не назван');
   assert.ok(!readFileSync(fakeArgsLog, 'utf8').includes('SMK-4'), 'сессия с негодным промптом стартовала');
   writeFileSync(promptsFile, JSON.stringify(afterSave));
-  log('промпты кнопок: действующий набор в Monaco, проверка, правка доходит до сессии, негодный промпт не стартует молча');
+  log('промпты кнопок: окно «Кнопки», проверка, правка доходит до сессии, негодный промпт не стартует молча');
 
   // Глобальный CLAUDE.md правится из меню: текст файла в Monaco, сохранение пишет его в каталог настроек Claude, чужая правка не затирается.
   const claudeMdFile = join(claudeHome, 'CLAUDE.md');

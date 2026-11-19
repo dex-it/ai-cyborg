@@ -1,6 +1,7 @@
 import type { Project } from '../main/projects';
 import type { Task, TaskRef, TasksResult } from '../main/trackers';
 import { el } from './dom';
+import { launchHint, ownLaunchButtons } from './launch-buttons';
 import { readChoice, readPref, writePref } from './prefs';
 import type { PanelView } from './panel';
 import { RowMarks } from './row-marks';
@@ -46,7 +47,7 @@ export interface TasksViewHost {
   trackedRefs(): TaskRef[];
   applyStatuses(result: TasksResult): void;
   sessionOf(key: string): OpenTaskSession | undefined;
-  startTask(task: Task, anchor: HTMLElement): void;
+  startTask(task: Task, anchor: HTMLElement, button?: string): void;
 }
 
 const api = window.cyborg;
@@ -400,6 +401,7 @@ export class TasksView implements PanelView {
     for (const action of this.actions) {
       const button = el('button', '', action.label(task, open)) as HTMLButtonElement;
       button.dataset.action = action.id;
+      if (!open) button.title = launchHint('task', 'task.start');
       button.addEventListener('click', (event) => {
         // Меню выбора репозитория закрывается кликом по документу: клик по кнопке не должен закрыть его сразу.
         event.stopPropagation();
@@ -407,6 +409,19 @@ export class TasksView implements PanelView {
         action.run(task, button);
       });
       actions.append(button);
+    }
+    if (!open) {
+      for (const own of ownLaunchButtons('task')) {
+        const button = el('button', '', own.label) as HTMLButtonElement;
+        button.dataset.action = 'own';
+        button.title = launchHint('task', own.label);
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.marks.set(task.key);
+          this.host.startTask(task, button, own.label);
+        });
+        actions.append(button);
+      }
     }
     row.append(main, actions);
     return row;

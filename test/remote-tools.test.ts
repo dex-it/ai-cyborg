@@ -34,6 +34,42 @@ describe('набор инструментов по виду сессии', () =>
   });
 });
 
+describe('инструменты кнопок', () => {
+  const buttonNames = ['list_buttons', 'add_button', 'update_button', 'disable_button'];
+
+  it('с портом локальная получает прежние инструменты и четыре инструмента кнопок', () => {
+    assert.deepEqual(names(sessionTools(DIRS, { kind: 'local', hosts: [], buttons: true })), ['open_session', 'list_sessions', 'send_to_session', 'close_session', ...buttonNames]);
+  });
+
+  it('с портом удалённая получает list_sessions, send_to_session, report_done и кнопки', () => {
+    assert.deepEqual(names(sessionTools(DIRS, { kind: 'remote', hosts: [], buttons: true })), ['list_sessions', 'send_to_session', 'report_done', ...buttonNames]);
+  });
+
+  it('без порта перечни прежние', () => {
+    assert.ok(!names(sessionTools(DIRS, { kind: 'local', hosts: [] })).some((n) => buttonNames.includes(n)));
+  });
+
+  it('вызов маршрутизируется в порт, ошибка порта - ошибка инструмента', async () => {
+    const calls: string[] = [];
+    const port = {
+      list: () => 'L',
+      add: (caller: number, args: unknown) => (calls.push(`add ${caller} ${JSON.stringify(args)}`), 'A'),
+      update: () => 'U',
+      disable: () => {
+        throw new Error('отказ');
+      },
+    };
+    const sessions = { dirsOf: () => DIRS, peers: () => [], say: async () => 'sent' as const };
+    const backend = createSessionTools(sessions as never, { request: async () => 1 }, () => undefined, 0, undefined, port);
+    assert.equal(await backend.call(7, 'list_buttons', {}), 'L');
+    assert.equal(await backend.call(7, 'add_button', { label: 'x' }), 'A');
+    assert.deepEqual(calls, ['add 7 {"label":"x"}']);
+    await assert.rejects(backend.call(7, 'disable_button', {}), /отказ/);
+    const without = createSessionTools(sessions as never, { request: async () => 1 }, () => undefined);
+    await assert.rejects(without.call(7, 'add_button', {}), /недоступен/);
+  });
+});
+
 describe('validateSpawn', () => {
   const ok = { host: 'dev1', repo: '/repo/a', branch: 'feat/x', prompt: ' задание ' };
 

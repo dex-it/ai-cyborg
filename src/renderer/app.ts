@@ -17,8 +17,8 @@ import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initial
 import { initSourcesSection } from './sources';
 import { CommandBars, type CommandTarget } from './command-bar';
 import { pickPr } from './command-values';
-import { initCommandEditor } from './command-editor';
-import { initPromptEditor } from './prompt-editor';
+import { initButtonsDialog } from './buttons-dialog';
+import { reloadLaunchButtons } from './launch-buttons';
 import { initClaudeMdEditor } from './claude-md-editor';
 import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
@@ -131,6 +131,9 @@ const commandBars = new CommandBars({
   mac,
   send: (id, data) => api.input(id, data),
   layout: () => requestAnimationFrame(() => active && fitSession(active)),
+  openButtons: (request) => void buttonsDialog.open(request),
+  disableButton: (layer, label) => api.applyButtons({ op: 'disable', place: 'bar', label, layer, disabled: true }).then((reply) => (reply.error ? reply : (void reloadCommands(), reply))),
+  undoButtons: (id) => api.undoButtons(id).then((reply) => (void reloadCommands(), reply)),
 });
 
 let state: ProjectsState = { projects: [], lastProjectId: null };
@@ -801,7 +804,7 @@ function bindRemotePaste(term: Terminal, host: HTMLElement, paste: RemotePaste):
   });
 }
 
-type TrackerStart = { task: Task } | { mr: Mr; intent: MrIntent } | { jira: JiraIssue };
+type TrackerStart = { task: Task; button?: string } | { mr: Mr; intent: MrIntent } | { mr: Mr; button: string } | { jira: JiraIssue; button?: string };
 /** handoff - задача, переданная другой сессией через MCP Cyborg: её текст держит главный процесс. */
 type StartFrom = TrackerStart | { handoff: string; parent: Session };
 
@@ -840,10 +843,12 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
           ('handoff' in start
             ? { handoff: start.handoff }
             : 'task' in start
-              ? { task: refOf(start.task) }
+              ? { task: refOf(start.task), ...(start.button ? { button: start.button } : {}) }
               : 'mr' in start
-                ? { mr: refOf(start.mr), intent: start.intent }
-                : { jira: { key: start.jira.key } }),
+                ? 'button' in start
+                  ? { mr: refOf(start.mr), button: start.button }
+                  : { mr: refOf(start.mr), intent: start.intent }
+                : { jira: { key: start.jira.key }, ...(start.button ? { button: start.button } : {}) }),
       );
   const root = remote ? remote.cwd : ((await api.gitRoot(repo)) ?? repo);
   const parent = start && 'handoff' in start ? start.parent : undefined;
@@ -1532,34 +1537,35 @@ function showSideView(history: boolean): void {
 
 // ---------- задачи трекеров ----------
 
-function startTask(task: Task, anchor: HTMLElement): void {
+function startTask(task: Task, anchor: HTMLElement, button?: string): void {
   if (!project) return;
   const existing = taskSessions.get(project.id, task.key);
   const decision = decideStart(!!existing, task.repos, project.repos);
   if (decision.action === 'switch' && existing) activateSession(existing);
-  else if (decision.action === 'create') void newSession(decision.repo, { task });
-  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, { task }));
+  else if (decision.action === 'create') void newSession(decision.repo, { task, ...(button ? { button } : {}) });
+  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, { task, ...(button ? { button } : {}) }));
 }
 
-function startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement): void {
+function startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement, button?: string): void {
+  const start: TrackerStart = button ? { mr, button } : { mr, intent };
   if (!project) return;
   const existing = taskSessions.get(project.id, mr.key);
   const decision = decideStart(!!existing, mr.repos, project.repos);
   if (decision.action === 'switch' && existing) activateSession(existing);
-  else if (decision.action === 'create') void newSession(decision.repo, { mr, intent });
-  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где открыть MR', (repo) => void newSession(repo, { mr, intent }));
+  else if (decision.action === 'create') void newSession(decision.repo, start);
+  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где открыть MR', (repo) => void newSession(repo, start));
 }
 
 /** Сессия по задаче Jira: повторное действие возвращает к открытой; репозиторий - у связанного MR из проекта, иначе единственный либо по выбору. */
-function startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement): void {
+function startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement, button?: string): void {
   if (!project) return;
   const existing = taskSessions.get(project.id, `jira:${issue.key}`);
   const { repos } = project;
   const ofMr = linked?.repos.filter((repo) => repos.includes(repo)) ?? [];
   const decision = decideStart(!!existing, ofMr.length ? ofMr : repos, repos);
   if (decision.action === 'switch' && existing) activateSession(existing);
-  else if (decision.action === 'create') void newSession(decision.repo, { jira: issue });
-  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, { jira: issue }));
+  else if (decision.action === 'create') void newSession(decision.repo, { jira: issue, ...(button ? { button } : {}) });
+  else if (decision.action === 'menu') showRepoMenu(decision.repos, anchor, 'Где начать задачу', (repo) => void newSession(repo, { jira: issue, ...(button ? { button } : {}) }));
 }
 
 function applyMrStatuses(result: MrListResult): void {
@@ -1959,11 +1965,23 @@ splitter.addEventListener('mousedown', (down) => {
 function reloadCommands(): Promise<void> {
   return api.loadCommands().then((config) => commandBars.setConfig(config));
 }
-window.addEventListener('focus', () => void reloadCommands());
-const commandEditor = initCommandEditor({ mac, problems: () => commandBars.configProblems, saved: () => void reloadCommands() });
-api.on<void>('menu:commands', () => void commandEditor.open());
-const promptEditor = initPromptEditor();
-api.on<void>('menu:prompts', () => void promptEditor.open());
+window.addEventListener('focus', () => {
+  void reloadCommands();
+  void reloadLaunchButtons();
+  void buttonsDialog.refresh();
+});
+const buttonsDialog = initButtonsDialog({
+  mac,
+  saved: () => {
+    void reloadCommands();
+    void reloadLaunchButtons();
+  },
+});
+api.on<void>('menu:buttons', () => void buttonsDialog.open());
+api.onButtonsChanged((caller, notice) => {
+  void reloadCommands().then(() => commandBars.announce(caller, notice));
+  void buttonsDialog.refresh();
+});
 const claudeMdEditor = initClaudeMdEditor();
 api.on<void>('menu:claude-md', () => void claudeMdEditor.open());
 // Ищется по тем корням, которые человек видит в дереве: у сессии свои, без сессии - репозитории проекта; у удалённой вкладки - на хосте.
@@ -1986,6 +2004,7 @@ void Promise.all([api.workspaceInfo(), api.loadProjects()]).then(async ([info, l
   workspaceSep = info.sep;
   state = loaded;
   void reloadCommands();
+  void reloadLaunchButtons();
   const problem = await api.projectsProblem();
   selectProject(state.projects.find((p) => p.id === state.lastProjectId) ?? state.projects[0] ?? null, false);
   for (const owner of state.projects) void discoverRemote(owner);

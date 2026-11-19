@@ -4,9 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, safeStorage, session, shell } from 'electron';
 import { AllowedPaths, createPathHandlers } from './allowed-paths';
-import { globalBase, saveCommandsText, type CommandsConfig } from './commands';
+import { type CommandsConfig } from './commands';
+import { ButtonsService } from './buttons-service';
 import { CommandStore } from './command-store';
-import { savePromptsText } from './prompts';
 import { ClaudeMdStore } from './claude-md';
 import { PromptStore } from './prompt-store';
 import { RunApprovals } from './run-approvals';
@@ -34,7 +34,7 @@ import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart 
 import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
 import { McpServer } from './mcp';
-import { createSessionTools, Handoffs, type RemoteToolsPort, type SessionsPort } from './session-tools';
+import { createSessionTools, Handoffs, type ButtonsToolsPort, type RemoteToolsPort, type SessionsPort } from './session-tools';
 import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
 import { ClaudeTokenStore } from './remote/claude-token';
 import { buildMirror, readMemory } from './remote/claude-config';
@@ -125,7 +125,14 @@ const sessionsPort: SessionsPort = {
   reportLocal: (id, report) => sessions.reportLocal(id, report),
   noteClosing: (id, caller) => sessions.noteClosing(id, caller),
 };
-const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools), app.getVersion());
+// Служба создаётся ниже, когда готовы хранилища: порт обращается к ней при вызове.
+const buttonsPort: ButtonsToolsPort = {
+  list: (caller) => buttons.list(caller),
+  add: (caller, args) => buttons.add(caller, args),
+  update: (caller, args) => buttons.update(caller, args),
+  disable: (caller, args) => buttons.disable(caller, args),
+};
+const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools, buttonsPort), app.getVersion());
 // На Linux без связки ключей safeStorage шифрует постоянным ключом: такое хранение токен на диск не пускает.
 const claudeToken = new ClaudeTokenStore(path.join(app.getPath('userData'), 'remote-claude-token.bin'), {
   available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
@@ -384,13 +391,22 @@ ipcMain.handle('commands:load', (): CommandsConfig => {
   const { raw, problem } = globalCommands.read();
   return { global: raw, ...(problem ? { globalProblem: problem } : {}), workspace: projects.loadCommands() };
 });
-ipcMain.handle('commands:save', (_event, text: unknown, scope: unknown) => {
-  const mac = process.platform === 'darwin';
-  if (scope === 'global') return saveCommandsText(text, globalCommands, mac);
-  if (scope !== 'workspace') return { error: 'Неизвестный набор кнопок' };
-  // Подписи и сочетания воркспейса проверяются против того, что под ним: встроенных кнопок с общим набором.
-  return saveCommandsText(text, projects, mac, globalBase(globalCommands.read().raw, mac));
+const buttons = new ButtonsService({
+  commands: globalCommands,
+  prompts,
+  workspace: () => ({
+    open: current.file !== null,
+    name: current.file && !current.legacy ? workspaceDisplayName(current.file) : null,
+    load: () => projects.loadCommands(),
+    save: (commands) => projects.saveCommands(commands),
+  }),
+  mac: process.platform === 'darwin',
+  announce: (caller, notice) => win?.webContents.send('buttons:changed', caller, notice),
 });
+ipcMain.handle('commands:save', (_event, text: unknown, scope: unknown) => buttons.saveText(text, scope));
+ipcMain.handle('buttons:save', (_event, request: unknown) => buttons.save(request));
+ipcMain.handle('buttons:apply', (_event, request: unknown) => buttons.apply(request));
+ipcMain.handle('buttons:undo', (_event, id: unknown) => buttons.undo(id));
 ipcMain.handle('prompts:load', () => prompts.read());
 ipcMain.handle('claude-md:load', () => claudeMd.read());
 ipcMain.handle('claude-md:save', (_event, text: unknown, base: unknown) => claudeMd.save(text, base));
@@ -405,10 +421,7 @@ ipcMain.handle('url:open', async (_event, url: unknown) => {
 });
 ipcMain.handle('config:reveal', (_event, kind: unknown) => {
   if (kind === 'claude-md') return showInSystemApp(claudeMd.file, 'Claude Code работает без глобальных инструкций. Сохраните текст в редакторе, чтобы файл появился.');
-  const file = kind === 'prompts' ? prompts.file : kind === 'commands' ? current.file : kind === 'commands-global' ? globalCommands.file : null;
-  if (file) return showInSystemApp(file);
 });
-ipcMain.handle('prompts:save', (_event, text: unknown) => savePromptsText(text, prompts));
 ipcMain.handle('session:create', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, start?: unknown) => {
   const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
   if (!project) throw new Error('Каталог не входит в репозитории проекта');
@@ -702,8 +715,7 @@ function rebuildMenu(): void {
     openRecent: (file) => void openRecent(file),
     newProject: () => win?.webContents.send('menu:project', 'new'),
     editProject: () => win?.webContents.send('menu:project', 'edit'),
-    editCommands: () => win?.webContents.send('menu:commands'),
-    editPrompts: () => win?.webContents.send('menu:prompts'),
+    editButtons: () => win?.webContents.send('menu:buttons'),
     editClaudeMd: () => win?.webContents.send('menu:claude-md'),
     claudeToken: () => win?.webContents.send('menu:claude-token'),
     hostDisk: () => win?.webContents.send('menu:host-disk'),

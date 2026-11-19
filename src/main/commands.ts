@@ -11,8 +11,6 @@ export interface CommandButton {
   description?: string;
   /** true - кнопка скрыта (так отключается и встроенная: удалённая из файла вернулась бы из набора по умолчанию). */
   disabled?: boolean;
-  /** Запись `{ "label" }` без прочих полей: только место кнопки нижнего слоя, содержимое берётся у неё. */
-  ref?: true;
 }
 
 export const MAX_COMMANDS = 30;
@@ -135,10 +133,6 @@ export function parseCommands(raw: unknown, mac: boolean): ParsedCommands {
       problems.push(`${at}: label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`);
       return;
     }
-    if (isRef(item)) {
-      commands.push({ label: label.trim(), text: '', submit: false, ref: true });
-      return;
-    }
     if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX || CONTROL.test(text)) {
       problems.push(`${at}: text - непустая строка до ${TEXT_MAX} знаков в одну строку`);
       return;
@@ -164,31 +158,151 @@ export function parseCommands(raw: unknown, mac: boolean): ParsedCommands {
   return { commands, problems };
 }
 
-const sameLabel = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+export const sameLabel = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-const canonicalJson = (value: unknown): string =>
+export const canonicalJson = (value: unknown): string =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? JSON.stringify(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
     : JSON.stringify(value);
-const sameEntry = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
+export const sameEntry = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
 
-/**
- * Копия встроенной кнопки: до общего набора редактор записывал встроенные кнопки в файл воркспейса целиком.
- * Такая запись ничего не меняет, поэтому не заслоняет кнопку общего набора с той же подписью.
- */
-const isBuiltinCopy = (item: unknown): boolean => {
-  const label = labelOf(item);
-  const builtin = label === null ? undefined : DEFAULT_COMMANDS.find((d) => sameLabel(d.label, label));
-  return builtin !== undefined && sameEntry(item, builtin);
-};
+// ---------- слои: встроенные -> общие -> воркспейс ----------
 
-function isRef(item: unknown): boolean {
-  if (typeof item !== 'object' || item === null || Array.isArray(item)) return false;
-  const keys = Object.keys(item);
-  return keys.length === 1 && keys[0] === 'label';
+export type Layer = 'builtin' | 'global' | 'workspace';
+export type FileLayer = 'global' | 'workspace';
+export type ButtonPlace = 'bar' | 'mr' | 'task' | 'jira';
+export const LAYER_RANK: Record<Layer, number> = { builtin: 0, global: 1, workspace: 2 };
+
+/** Запись слоя: полная кнопка либо правка кнопки нижнего слоя по полям (названо - заменяет нижнее значение). */
+export interface CommandEntry {
+  label: string;
+  text?: string;
+  submit?: boolean;
+  /** null - снять сочетание нижней кнопки. */
+  hotkey?: string | null;
+  description?: string;
+  disabled?: boolean;
 }
 
-const placesOnly = (item: unknown): boolean => isRef(item) || (item as CommandButton | null)?.ref === true || isBuiltinCopy(item);
+export type EntryField = 'label' | 'text' | 'submit' | 'hotkey' | 'description' | 'disabled' | 'place';
+
+/** Адрес отказа: кнопка и поле, чтобы окно и инструмент показали причину там, где она. message - целая фраза с номером кнопки. */
+export interface ButtonIssue {
+  place: ButtonPlace;
+  layer: FileLayer;
+  index?: number;
+  label?: string;
+  field?: EntryField;
+  message: string;
+}
+
+export interface ParsedLayer {
+  entries: CommandEntry[];
+  issues: ButtonIssue[];
+  problems: string[];
+}
+
+/** Слой кнопок: commands.json либо поле commands файла воркспейса. Негодная запись пропускается, причина в issues; запись только с ошибкой в сочетании остаётся без него. Запись без text допустима как правка кнопки нижнего слоя, есть ли такая кнопка - судит resolveBar. */
+export function parseLayer(raw: unknown, mac: boolean, layer: FileLayer = 'global'): ParsedLayer {
+  const issues: ButtonIssue[] = [];
+  const entries: CommandEntry[] = [];
+  const issue = (index: number | undefined, label: unknown, field: EntryField | undefined, message: string): void => {
+    issues.push({ place: 'bar', layer, ...(index === undefined ? {} : { index }), ...(typeof label === 'string' && label.trim() ? { label: label.trim() } : {}), ...(field ? { field } : {}), message });
+  };
+  if (raw === undefined) return { entries, issues, problems: [] };
+  if (!Array.isArray(raw)) {
+    issue(undefined, undefined, undefined, 'commands должен быть массивом кнопок');
+    return { entries, issues, problems: issues.map((i) => i.message) };
+  }
+  if (raw.length > MAX_COMMANDS) issue(undefined, undefined, undefined, `Кнопок больше ${MAX_COMMANDS}: лишние пропущены`);
+  raw.slice(0, MAX_COMMANDS).forEach((item, index) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      issue(index, undefined, undefined, `${where(index, undefined)}: не объект`);
+      return;
+    }
+    const { label, text, submit, hotkey, description, disabled } = item as Record<string, unknown>;
+    const at = where(index, label);
+    const bad = (field: EntryField | undefined, reason: string): void => issue(index, label, field, `${at}: ${reason}`);
+    if (typeof label !== 'string' || !label.trim() || label.trim().length > LABEL_MAX || CONTROL.test(label)) {
+      bad('label', `label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`);
+      return;
+    }
+    const entry: CommandEntry = { label: label.trim() };
+    if (text !== undefined) {
+      if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX || CONTROL.test(text)) {
+        bad('text', `text - непустая строка до ${TEXT_MAX} знаков в одну строку`);
+        return;
+      }
+      entry.text = text.trim();
+    }
+    if (submit !== undefined) {
+      if (typeof submit !== 'boolean') {
+        bad('submit', 'submit - true или false');
+        return;
+      }
+      entry.submit = submit;
+    }
+    if (hotkey === null) entry.hotkey = null;
+    else if (typeof hotkey === 'string') {
+      const parsed = parseHotkey(hotkey.trim(), mac);
+      if ('error' in parsed) bad('hotkey', `hotkey: ${parsed.error}`);
+      else entry.hotkey = hotkey.trim();
+    } else if (hotkey !== undefined) bad('hotkey', 'hotkey - строка вида «Alt+S»');
+    if (typeof description === 'string' && description.trim() && description.length <= DESCRIPTION_MAX && !CONTROL.test(description)) entry.description = description.trim();
+    else if (description !== undefined) bad('description', `description - непустая строка до ${DESCRIPTION_MAX} знаков в одну строку`);
+    if (typeof disabled === 'boolean') entry.disabled = disabled;
+    else if (disabled !== undefined) bad('disabled', 'disabled - true или false');
+    const extra = Object.keys(item).filter((key) => !KNOWN_FIELDS.has(key));
+    if (extra.length) bad(undefined, `неизвестное поле ${extra.join(', ')}`);
+    entries.push(entry);
+  });
+  return { entries, issues, problems: issues.map((i) => i.message) };
+}
+
+const isRefEntry = (e: CommandEntry): boolean => Object.keys(e).length === 1;
+const hotkeyKey = (text: string | null | undefined, mac: boolean): string | null => {
+  if (!text) return null;
+  const parsed = parseHotkey(text, mac);
+  return 'error' in parsed ? null : canonical(parsed);
+};
+export const sameHotkey = (a: string | null | undefined, b: string | null | undefined, mac: boolean): boolean => {
+  const ka = hotkeyKey(a, mac);
+  return ka !== null && ka === hotkeyKey(b, mac);
+};
+
+/** Копия встроенной кнопки: до общего набора редактор записывал встроенные кнопки в файл воркспейса целиком. Такая запись ничего не меняет, поэтому не заслоняет правку общего набора. */
+const isBuiltinCopy = (entry: CommandEntry): boolean => {
+  const builtin = DEFAULT_COMMANDS.find((d) => sameLabel(d.label, entry.label));
+  return (
+    builtin !== undefined &&
+    entry.text === builtin.text &&
+    (entry.submit === true) === builtin.submit &&
+    entry.hotkey === builtin.hotkey &&
+    entry.description === builtin.description &&
+    entry.disabled === undefined
+  );
+};
+
+type RowField = 'text' | 'submit' | 'hotkey' | 'description' | 'disabled';
+
+/** Строка набора после наложения слоёв: действующие значения, слой каждого поля и слой, где кнопка появилась. */
+export interface BarRow {
+  label: string;
+  text: string;
+  submit: boolean;
+  /** Сочетание строки как задано, до отдачи верхней кнопке. */
+  hotkey?: string;
+  description?: string;
+  disabled?: boolean;
+  origin: Layer;
+  from: Partial<Record<RowField, Layer>>;
+  /** Сочетание строки отдано этой кнопке верхнего слоя. */
+  hotkeyLostTo?: string;
+  /** Подписи кнопок, у которых эта строка забрала сочетание. */
+  hotkeyTakenFrom?: string[];
+  /** Для выключенной строки: у кого сейчас её сочетание. */
+  hotkeyHolder?: string;
+}
 
 interface Placed<B, L> {
   below?: B;
@@ -213,96 +327,173 @@ function placeLayer<B, L>(base: readonly B[], layer: readonly L[], same: (below:
   return out;
 }
 
-const labelsMatch = (below: CommandButton, own: unknown): boolean => labelOf(own) !== null && sameLabel(below.label, labelOf(own) as string);
+const rowsMatch = (below: { label: string }, own: { label: string }): boolean => sameLabel(below.label, own.label);
 
-/** Слой набора поверх нижнего: одноимённая кнопка заменяет нижнюю, порядок - по placeLayer; скрытые остаются, их убирает mergeCommands. */
-export function layerCommands(base: readonly CommandButton[], extra: readonly CommandButton[]): CommandButton[] {
-  return placeLayer(base, extra, labelsMatch).flatMap(({ below, own }) => {
-    if (own === undefined) return below ? [below] : [];
-    if (below !== undefined) return [placesOnly(own) ? below : own];
-    // Повтор подписи нижней кнопки и место без кнопки ниже на полосу не попадают: их называет mergeCommands.
-    return own.ref || base.some((b) => labelsMatch(b, own)) ? [] : [own];
-  });
-}
+const builtinRows = (): BarRow[] =>
+  DEFAULT_COMMANDS.map((d) => ({
+    label: d.label,
+    text: d.text,
+    submit: d.submit,
+    ...(d.hotkey ? { hotkey: d.hotkey } : {}),
+    ...(d.description ? { description: d.description } : {}),
+    origin: 'builtin' as Layer,
+    from: { text: 'builtin', submit: 'builtin', ...(d.hotkey ? { hotkey: 'builtin' } : {}), ...(d.description ? { description: 'builtin' } : {}) } as BarRow['from'],
+  }));
 
-/** Нижний слой кнопок воркспейса: встроенные кнопки под общим набором из userData. */
-export const globalBase = (raw: unknown, mac: boolean): CommandButton[] => layerCommands(DEFAULT_COMMANDS, parseCommands(raw, mac).commands);
-
-/** Нижний слой и дополнения: одноимённая кнопка заменяет нижнюю на её месте, остальные идут следом; сочетание достаётся первой. */
-export function mergeCommands(defaults: readonly CommandButton[], extra: readonly CommandButton[], mac: boolean): ParsedCommands {
-  const all = layerCommands(defaults, extra);
-  // Скрытая кнопка не занимает сочетание и не попадает на полосу.
-  const merged = all.filter((button) => !button.disabled);
-  const problems: string[] = [];
-  // Вторая запись с подписью встроенной кнопки не попадает на полосу: молча терять её нельзя.
-  for (const d of defaults) if (extra.filter((e) => sameLabel(e.label, d.label)).length > 1) problems.push(`«${d.label}»: подпись встроенной кнопки повторена, действует первая запись`);
-  for (const e of extra) if (e.ref && !defaults.some((d) => sameLabel(d.label, e.label))) problems.push(`«${e.label}»: запись только с label задаёт место кнопки, а кнопки с такой подписью ниже нет`);
-  const taken = new Map<string, string>();
-  const commands = merged.map((button) => {
-    if (!button.hotkey) return button;
-    const parsed = parseHotkey(button.hotkey, mac);
-    const key = 'error' in parsed ? null : canonical(parsed);
-    const owner = key === null ? undefined : taken.get(key);
-    if (key !== null && owner === undefined) {
-      taken.set(key, button.label);
-      return button;
-    }
-    if (owner !== undefined) problems.push(`«${button.label}»: сочетание ${button.hotkey} уже у кнопки «${owner}»`);
-    const rest: CommandButton = { ...button };
-    delete rest.hotkey;
-    return rest;
-  });
-  return { commands, problems };
-}
-
-/** Текст для редактора и проверка того, что из него вернулось; любая замеченная проблема - отказ, файл не пишется. Сочетания должны годиться на обеих системах. */
-export function checkCommandsText(text: string, mac: boolean, base: readonly CommandButton[] = DEFAULT_COMMANDS): { ok: true; commands: unknown[] } | { ok: false; error: string } {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch (error) {
-    return { ok: false, error: `Не JSON: ${(error as Error).message}` };
+/** Правка по полям: названное поле заменяет нижнее. Запись со своим text задаёт и submit (нет поля - только вставить): submit снизу ей не достаётся. */
+function applyEntry(row: BarRow, e: CommandEntry, layer: FileLayer): BarRow {
+  if (isBuiltinCopy(e)) return row;
+  const out: BarRow = { ...row, from: { ...row.from } };
+  if (e.text !== undefined) {
+    out.text = e.text;
+    out.from.text = layer;
+    out.submit = e.submit === true;
+    out.from.submit = layer;
+  } else if (e.submit !== undefined) {
+    out.submit = e.submit;
+    out.from.submit = layer;
   }
-  if (!Array.isArray(raw)) return { ok: false, error: 'Нужен массив кнопок: [ { "label": ..., "text": ... } ]' };
-  const parsed = parseCommands(raw, mac);
-  // Файл переносят между системами: сочетание, которое годится только здесь (CmdOrCtrl+K на macOS), там получило бы замечание.
-  const elsewhere = parsed.commands.flatMap((button) => {
-    const other = button.hotkey ? parseHotkey(button.hotkey, !mac) : null;
-    return other && 'error' in other ? [`«${button.label}»: сочетание ${button.hotkey} не годится на ${mac ? 'Linux и Windows' : 'macOS'}: ${other.error}`] : [];
-  });
-  const problems = [...parsed.problems, ...elsewhere, ...mergeCommands(base, parsed.commands, mac).problems];
-  return problems.length ? { ok: false, error: problems.join('\n') } : { ok: true, commands: raw };
+  if (e.hotkey === null) {
+    delete out.hotkey;
+    out.from.hotkey = layer;
+  } else if (e.hotkey !== undefined) {
+    out.hotkey = e.hotkey;
+    out.from.hotkey = layer;
+  }
+  if (e.description !== undefined) {
+    out.description = e.description;
+    out.from.description = layer;
+  }
+  if (e.disabled !== undefined) {
+    if (e.disabled) out.disabled = true;
+    else delete out.disabled;
+    out.from.disabled = layer;
+  }
+  return out;
 }
 
-const labelOf = (item: unknown): string | null =>
-  typeof item === 'object' && item !== null && typeof (item as { label?: unknown }).label === 'string' ? (item as { label: string }).label : null;
-
-/**
- * Действующий набор в том виде, как он записывается в файл: кнопки нижнего слоя (с описаниями) и записи файла как они есть, в порядке полосы.
- * Записи файла берутся без разбора, чтобы негодную запись можно было увидеть и поправить, а не потерять при сохранении.
- */
-export function effectiveCommands(raw: unknown, base: readonly CommandButton[] = DEFAULT_COMMANDS): unknown[] {
-  return placeLayer(base, Array.isArray(raw) ? raw : [], labelsMatch).map(({ below, own }) => (own === undefined || (below !== undefined && placesOnly(own)) ? below : own));
+function applyLayer(base: BarRow[], parsed: ParsedLayer, layer: FileLayer, issues: ButtonIssue[]): BarRow[] {
+  const seen = new Set<string>();
+  const own: CommandEntry[] = [];
+  for (const e of parsed.entries) {
+    const key = e.label.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      own.push(e);
+      continue;
+    }
+    const builtin = base.some((b) => b.origin === 'builtin' && sameLabel(b.label, e.label));
+    issues.push({ place: 'bar', layer, label: e.label, field: 'label', message: builtin ? `«${e.label}»: подпись встроенной кнопки повторена, действует первая запись` : `«${e.label}»: подпись повторена в слое, действует первая запись` });
+  }
+  return placeLayer(base, own, rowsMatch).flatMap(({ below, own: entry }) => {
+    if (entry === undefined) return below ? [below] : [];
+    if (below !== undefined) return [applyEntry(below, entry, layer)];
+    if (entry.text === undefined) {
+      issues.push({ place: 'bar', layer, label: entry.label, field: 'text', message: `«${entry.label}»: запись без text правит кнопку нижнего слоя, а кнопки «${entry.label}» ниже нет` });
+      return [];
+    }
+    return [
+      {
+        label: entry.label,
+        text: entry.text,
+        submit: entry.submit === true,
+        ...(entry.hotkey ? { hotkey: entry.hotkey } : {}),
+        ...(entry.description ? { description: entry.description } : {}),
+        ...(entry.disabled ? { disabled: true } : {}),
+        origin: layer,
+        from: { text: layer, submit: layer, ...(entry.hotkey ? { hotkey: layer } : {}), ...(entry.description ? { description: layer } : {}), ...(entry.disabled !== undefined ? { disabled: layer } : {}) },
+      } as BarRow,
+    ];
+  });
 }
 
-export const commandsToText = (raw: unknown, base: readonly CommandButton[] = DEFAULT_COMMANDS): string => JSON.stringify(effectiveCommands(raw, base), null, 2);
+/** Сочетание достаётся кнопке, чьё значение пришло из самого верхнего слоя; остальные включённые кнопки с ним его теряют без замечания. Две кнопки одного слоя (выше встроенного) с одним сочетанием - повтор: замечание, действует первая по порядку. */
+function assignHotkeys(rows: BarRow[], mac: boolean, issues: ButtonIssue[]): void {
+  const groups = new Map<string, BarRow[]>();
+  for (const row of rows) {
+    const key = row.disabled ? null : hotkeyKey(row.hotkey, mac);
+    if (key !== null) groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  const owners = new Map<string, BarRow>();
+  for (const [key, group] of groups) {
+    const rank = (r: BarRow): number => LAYER_RANK[r.from.hotkey ?? 'builtin'];
+    const top = Math.max(...group.map(rank));
+    const owner = group.find((r) => rank(r) === top) as BarRow;
+    owners.set(key, owner);
+    for (const row of group) {
+      if (row === owner) continue;
+      if (rank(row) === top && top > 0) issues.push({ place: 'bar', layer: row.from.hotkey as FileLayer, label: row.label, field: 'hotkey', message: `«${row.label}»: сочетание ${row.hotkey} уже у кнопки «${owner.label}»` });
+      row.hotkeyLostTo = owner.label;
+      owner.hotkeyTakenFrom = [...(owner.hotkeyTakenFrom ?? []), row.label];
+    }
+  }
+  for (const row of rows) {
+    if (!row.disabled) continue;
+    const key = hotkeyKey(row.hotkey, mac);
+    const owner = key === null ? undefined : owners.get(key);
+    if (owner) row.hotkeyHolder = owner.label;
+  }
+}
 
-const orderOf = (layer: readonly unknown[], base: readonly CommandButton[]): string =>
-  placeLayer(base, layer, labelsMatch)
-    .map(({ below, own }) => (below?.label ?? labelOf(own) ?? '').toLowerCase())
-    .join('\n');
+export interface ResolvedBar {
+  /** Все строки набора, в том числе выключенные. */
+  rows: BarRow[];
+  /** Кнопки полосы: включённые, сочетание только у владельца. */
+  buttons: CommandButton[];
+  issues: ButtonIssue[];
+  problems: string[];
+}
 
-/** Копия кнопки нижнего слоя в файле заслонила бы её правку: она сворачивается в `{ "label" }` и остаётся, только если держит порядок. */
-export function ownEntries(commands: readonly unknown[], base: readonly CommandButton[]): unknown[] {
-  let kept = commands.map((item) => {
-    const below = base.find((b) => labelsMatch(b, item));
-    return below !== undefined && (placesOnly(item) || sameEntry(item, below)) ? { label: labelOf(item) } : item;
+/** Набор полосы: встроенные кнопки, поверх них общий слой, поверх него слой воркспейса; оба слоя накладываются одним правилом по полям. */
+export function resolveBar(config: Pick<CommandsConfig, 'global' | 'workspace'>, mac: boolean): ResolvedBar {
+  const issues: ButtonIssue[] = [];
+  let rows = builtinRows();
+  for (const layer of ['global', 'workspace'] as const) {
+    const parsed = parseLayer(config[layer], mac, layer);
+    issues.push(...parsed.issues);
+    rows = applyLayer(rows, parsed, layer, issues);
+  }
+  assignHotkeys(rows, mac, issues);
+  const buttons = rows
+    .filter((r) => !r.disabled)
+    .map((r): CommandButton => ({ label: r.label, text: r.text, submit: r.submit, ...(r.hotkey && !r.hotkeyLostTo ? { hotkey: r.hotkey } : {}), ...(r.description ? { description: r.description } : {}) }));
+  return { rows, buttons, issues, problems: issues.map((i) => i.message) };
+}
+
+/** Строки под слоем: встроенные для общего, встроенные и общий для воркспейса. */
+export const rowsBelow = (layer: FileLayer, config: Pick<CommandsConfig, 'global'>, mac: boolean): BarRow[] => (layer === 'global' ? builtinRows() : resolveBar({ global: config.global, workspace: undefined }, mac).rows);
+
+/** Порядок подписей, который даст слой поверх нижнего набора. */
+export const layerOrder = (layer: readonly { label: string }[], base: readonly BarRow[]): string[] =>
+  placeLayer(base, layer, rowsMatch).map(({ below, own }) => (below?.label ?? own?.label ?? '').toLowerCase());
+
+const orderOf = (layer: readonly CommandEntry[], base: readonly BarRow[]): string => layerOrder(layer, base).join('\n');
+
+/** Запись слоя сворачивается к полям, отличным от нижнего значения: копия кнопки нижнего слоя заслонила бы её правку снизу. Запись, от которой осталась одна подпись, держится, только если без неё сменится порядок. Своя кнопка слоя не сжимается. */
+export function compactLayer(entries: readonly CommandEntry[], below: readonly BarRow[], mac: boolean): CommandEntry[] {
+  let kept = entries.map((e): CommandEntry => {
+    const base = below.find((b) => sameLabel(b.label, e.label));
+    if (!base) return e;
+    if (isBuiltinCopy(e)) return { label: e.label };
+    const out: CommandEntry = { label: e.label };
+    const submit = e.text !== undefined ? e.submit === true : (e.submit ?? base.submit);
+    if (e.text !== undefined && e.text !== base.text) {
+      out.text = e.text;
+      if (submit) out.submit = true;
+    } else if (submit !== base.submit) out.submit = submit;
+    if (e.hotkey === null) {
+      if (base.hotkey) out.hotkey = null;
+    } else if (e.hotkey !== undefined && !sameHotkey(e.hotkey, base.hotkey, mac)) out.hotkey = e.hotkey;
+    if (e.description !== undefined && e.description !== base.description) out.description = e.description;
+    if (e.disabled === true && !base.disabled) out.disabled = true;
+    else if (e.disabled === false && base.disabled) out.disabled = false;
+    return out;
   });
-  const wanted = orderOf(kept, base);
+  const wanted = orderOf(kept, below);
   for (const item of [...kept]) {
-    if (!isRef(item)) continue;
+    if (!isRefEntry(item) || !below.some((b) => sameLabel(b.label, item.label))) continue;
     const without = kept.filter((other) => other !== item);
-    if (orderOf(without, base) === wanted) kept = without;
+    if (orderOf(without, below) === wanted) kept = without;
   }
   return kept;
 }
@@ -315,19 +506,22 @@ export interface CommandsConfig {
   workspace: unknown;
 }
 
-export type CommandsScope = 'global' | 'workspace';
+export type CommandsScope = FileLayer;
 
-/** Запись из редактора: текст проверяется заново (интерфейсу не доверяют), ошибка проверки или записи - в ответе, а не исключением. */
-export function saveCommandsText(text: unknown, store: { saveCommands(commands: unknown[]): void }, mac: boolean, base: readonly CommandButton[] = DEFAULT_COMMANDS): { error?: string } {
-  if (typeof text !== 'string' || text.length > MAX_COMMANDS_TEXT) return { error: 'Некорректный текст кнопок' };
-  const checked = checkCommandsText(text, mac, base);
-  if (!checked.ok) return { error: checked.error };
-  try {
-    store.saveCommands(ownEntries(checked.commands, base));
-  } catch (error) {
-    return { error: (error as Error).message };
+export type LayerCheck = { ok: true; entries: CommandEntry[] } | { ok: false; issues: ButtonIssue[] };
+
+/** Проверка слоя перед записью: любое замечание в этом слое - отказ. Сочетания должны годиться на обеих системах (файл переносят). Повтор сочетания между слоями не замечание: верхняя кнопка забирает его у нижней. */
+export function checkLayer(layer: FileLayer, raw: unknown, config: Pick<CommandsConfig, 'global' | 'workspace'>, mac: boolean): LayerCheck {
+  if (!Array.isArray(raw)) return { ok: false, issues: [{ place: 'bar', layer, message: 'Нужен массив кнопок: [ { "label": ..., "text": ... } ]' }] };
+  const resolved = resolveBar(layer === 'global' ? { global: raw, workspace: config.workspace } : { global: config.global, workspace: raw }, mac);
+  const issues = resolved.issues.filter((i) => i.layer === layer);
+  const parsed = parseLayer(raw, mac, layer);
+  for (const entry of parsed.entries) {
+    const other = typeof entry.hotkey === 'string' ? parseHotkey(entry.hotkey, !mac) : null;
+    if (other && 'error' in other) issues.push({ place: 'bar', layer, label: entry.label, field: 'hotkey', message: `«${entry.label}»: сочетание ${entry.hotkey} не годится на ${mac ? 'Linux и Windows' : 'macOS'}: ${other.error}` });
   }
-  return {};
+  if (issues.length) return { ok: false, issues };
+  return { ok: true, entries: compactLayer(parsed.entries, rowsBelow(layer, config, mac), mac) };
 }
 
 // ---------- подстановки ----------
