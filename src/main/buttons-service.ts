@@ -9,8 +9,6 @@ import {
   buttonsView,
   layerCtx,
   promptsProblem,
-  removeButton,
-  removeLaunchButton,
   renameButton,
   resetField,
   setBuiltinPrompt,
@@ -70,6 +68,13 @@ const messageOf = (issues: ButtonIssue[]): string => issues.map((i) => i.message
 const labelAt = (entries: readonly unknown[], label: string): number => entries.findIndex((e) => isRecord(e) && typeof e.label === 'string' && sameLabel(e.label, label));
 const NOT_OPEN = 'Воркспейс не открыт';
 const ORIGIN = { builtin: 'builtin', global: 'all', workspace: 'workspace' } as const;
+
+// Кнопка от инструмента остаётся надолго: ведущий «#» судится строже предложений модели, по образцу validateSend.
+function toolText(text: string, submit: boolean): { refuse: string } | { submit: boolean; note?: string } {
+  const filtered = modelText(text, submit);
+  if ('refuse' in filtered || !text.trim().startsWith('#')) return filtered;
+  return { submit: false, note: 'текст начинается с «#»: кнопка только вставляет, Enter нажмите сами' };
+}
 
 export class ButtonsService {
   private readonly journal = new Map<number, JournalEntry>();
@@ -249,13 +254,13 @@ export class ButtonsService {
     let finalLabel = existing?.label ?? label;
     const text = call.text;
     if (text !== undefined) {
-      const filtered = modelText(text, call.submit ?? false);
+      const filtered = toolText(text, call.submit ?? false);
       if ('refuse' in filtered) refuse('text', filtered.refuse);
     }
     if (name === 'add_button') {
       if (existing) refuse('label', `кнопка «${existing.label}» уже есть (${ORIGIN[existing.origin]}): поменять её - update_button, включить - disable_button с disabled: false`);
       if (text === undefined) refuse('text', 'нужен text');
-      const filtered = modelText(text as string, call.submit ?? false) as { submit: boolean; note?: string };
+      const filtered = toolText(text as string, call.submit ?? false) as { submit: boolean; note?: string };
       if (filtered.note) notes.push(filtered.note);
       result = addButton(ctx, { label, text: text as string, submit: filtered.submit, ...(call.hotkey ? { hotkey: call.hotkey } : {}), ...(call.description ? { description: call.description } : {}) });
       verb = 'added';
@@ -277,14 +282,14 @@ export class ButtonsService {
       for (const field of call.reset ?? []) step(resetField(at, finalLabel, field));
       const patch: BarPatch = {};
       if (text !== undefined) {
-        const filtered = modelText(text, call.submit ?? false) as { submit: boolean; note?: string };
+        const filtered = toolText(text, call.submit ?? false) as { submit: boolean; note?: string };
         patch.text = text;
         patch.submit = filtered.submit || undefined;
         if (filtered.note) notes.push(filtered.note);
         else if (!filtered.submit) notes.push('кнопка только вставляет текст: Enter нажмите сами (submit: true отправляет с Enter)');
       } else if (call.submit !== undefined) {
         const effective = call.text ?? existing.text;
-        const filtered = modelText(effective, call.submit) as { submit: boolean; note?: string };
+        const filtered = toolText(effective, call.submit) as { submit: boolean; note?: string };
         patch.submit = filtered.submit;
         if (filtered.note) notes.push(filtered.note);
       }
@@ -345,6 +350,7 @@ export class ButtonsService {
     if (call.text !== undefined) {
       const filtered = modelText(call.text, false);
       if ('refuse' in filtered) refuse('text', filtered.refuse);
+      if (call.text.trim().startsWith('#')) refuse('text', 'промпт не может начинаться с «#»: это команда Claude Code, а не задание сессии');
     }
     let next: Record<string, unknown> | null;
     let verb: ButtonsNotice['verb'] = 'changed';

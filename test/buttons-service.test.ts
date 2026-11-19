@@ -103,6 +103,15 @@ describe('Кнопки: инструменты сессии', () => {
     assert.deepEqual(r.files.ws, [{ label: 'Компакт', text: '/compact' }]);
   });
 
+  it('фильтры инструментов строже предложений: «#» у полосы без Enter, у кнопки запуска - отказ', () => {
+    const r = rig();
+    const said = r.service.add(1, { label: 'Память', text: '# запомни', submit: true });
+    assert.match(said, /«#»/);
+    assert.deepEqual(r.files.ws, [{ label: 'Память', text: '# запомни' }]);
+    throws(() => r.service.add(1, { place: 'mr', label: 'Решётка', text: '#x {mr_url}', layer: 'all' }), /«#»/);
+    throws(() => r.service.add(1, { place: 'mr', label: 'Шелл', text: '!x {mr_url}', layer: 'all' }), /«!»/);
+  });
+
   it('update_button у встроенной пишет частичную запись; ответ называет «только вставить»', () => {
     const r = rig({ global: [{ label: 'Мердж', text: 'T', submit: true }] });
     const said = r.service.update(1, { label: 'Мердж', text: 'T2' });
