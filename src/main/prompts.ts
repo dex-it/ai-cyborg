@@ -200,6 +200,12 @@ export function parseLaunchButtons(raw: unknown): ParsedLaunchButtons {
     if (extra.length) return reject(`неизвестное поле ${extra.join(', ')}`, at, named);
     out.buttons.push({ place: at, label: named, text: (text as string).trim(), ...(typeof description === 'string' ? { description: description.trim() } : {}), ...(disabled === true ? { disabled: true } : {}) });
   });
+  // Подпись уже занята на месте: негодную с ней на карточке нет, иначе подсказка по подписи покажет чужую запись.
+  out.bad.forEach((b, i) => {
+    if (b.duplicate || b.place === undefined || b.label === undefined) return;
+    const same = (x: { place?: LaunchPlace; label?: string }): boolean => x.place === b.place && x.label !== undefined && sameLabel(x.label, b.label as string);
+    if (out.buttons.some(same) || out.bad.slice(0, i).some((x) => !x.duplicate && !x.disabled && same(x))) b.duplicate = true;
+  });
   return out;
 }
 
@@ -231,7 +237,7 @@ export function launchTitle(place: LaunchPlace, key: PromptId | string, raw: unk
   const parsed = parseLaunchButtons(raw);
   const found = parsed.buttons.find((b) => b.place === place && sameLabel(b.label, key));
   if (found) return [found.description, found.text].filter(Boolean).join('\n\n');
-  return parsed.bad.find((b) => b.place === place && b.label !== undefined && sameLabel(b.label, key))?.message ?? '';
+  return parsed.bad.find((b) => b.place === place && b.label !== undefined && !b.disabled && !b.duplicate && sameLabel(b.label, key))?.message ?? '';
 }
 /** Предел текста файла промптов, принимаемого главным процессом от интерфейса. */
 export const MAX_PROMPTS_TEXT = 100_000;

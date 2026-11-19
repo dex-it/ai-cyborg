@@ -520,6 +520,8 @@ async function main() {
   await barMenu('Мердж');
   await waitFor('меню кнопки полосы', async () => (await menuItems()).length >= 2);
   assert.deepEqual(await menuItems(), ['Изменить «Мердж»…', 'Выключить в этом воркспейсе']);
+  const menuBox = await ev('(() => { const r = document.querySelector("#repo-menu").getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: innerHeight }; })()');
+  assert.ok(menuBox.top >= 0 && menuBox.bottom <= menuBox.h, `меню кнопки полосы вышло за окно: ${JSON.stringify(menuBox)}`);
   await menuClick('Выключить');
   await waitFor('выключенная в воркспейсе кнопка пропала с полосы', async () => !(await barButtons()).includes('Мердж'));
   assert.ok(wsCommands().some((b) => b.label === 'Мердж' && b.disabled === true), 'выключение не записано в поле commands');

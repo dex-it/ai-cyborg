@@ -1251,6 +1251,9 @@ function openRepoMenu(anchor: HTMLElement, label: string, focus: 'first' | 'none
   menuOpener = anchor;
   repoMenu.style.top = `${rect.bottom + 2}px`;
   repoMenu.hidden = false;
+  // Якорь у нижнего края окна (полоса): снизу не помещается - над якорем.
+  const height = repoMenu.getBoundingClientRect().height;
+  if (rect.bottom + 2 + height > window.innerHeight) repoMenu.style.top = `${Math.max(0, rect.top - 2 - height)}px`;
   rove(repoMenu, '.menu-item');
   if (focus === 'first') repoMenu.querySelector<HTMLElement>('.menu-item')?.focus();
 }

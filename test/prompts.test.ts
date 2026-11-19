@@ -177,6 +177,15 @@ describe('Правило текста первого сообщения: одн�
     assert.equal(by('Плохая')?.duplicate, undefined);
   });
 
+  it('негодная кнопка перед годной с той же подписью не показывается: подсказка не чужая', () => {
+    const raw = { buttons: [{ place: 'mr', label: 'X', text: '-p' }, { place: 'mr', label: 'x', text: 'ok {mr_url}' }] };
+    const parsed = parseLaunchButtons(raw);
+    assert.equal(parsed.bad[0].duplicate, true);
+    assert.equal(launchTitle('mr', 'X', raw), 'ok {mr_url}');
+    const twoBad = parseLaunchButtons({ buttons: [{ place: 'mr', label: 'Y', text: '-p' }, { place: 'mr', label: 'Y', text: '-q' }] });
+    assert.deepEqual(twoBad.bad.map((b) => b.duplicate), [undefined, true]);
+  });
+
   it('parsePrompts и parseLaunchButtons отказывают одинаково на каждом входе правила', () => {
     for (const text of bad) {
       const viaPrompts = parsePrompts({ 'mr.review': { text } }).problems.length;
