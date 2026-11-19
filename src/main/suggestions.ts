@@ -12,10 +12,7 @@ const SHELL_PREFIX = '!';
 const SLASH_PREFIX = '/';
 const ELLIPSIS = '…';
 
-/**
- * Подпись длиннее LABEL_MAX кодовых единиц режется по границе кодовой точки (пара суррогатов целиком) и получает «…».
- * Снимаются только пробелы U+0020: trim() снял бы перевод строки и прочие управляющие символы до проверки CONTROL.
- */
+/** Подпись длиннее LABEL_MAX кодовых единиц режется по границе кодовой точки (пара суррогатов целиком) и получает «…». Снимаются только пробелы U+0020: trim() снял бы перевод строки и прочие управляющие символы до проверки CONTROL. */
 function fitLabel(label: unknown): unknown {
   if (typeof label !== 'string') return label;
   const spaced = label.replace(/^ +| +$/g, '');
@@ -36,13 +33,7 @@ export const SUGGEST_PROMPT =
   'Реплика не начинается с «!». ' +
   'Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай.';
 
-/**
- * Кнопки из хвоста ответа: комментарий должен стоять в самом конце сообщения (процитированный из файла в середине ответа не в счёт).
- * Ответ модели недоверенный: поля проверяются как у кнопок файла, кроме длины подписи (модель промахивается в счёте знаков, длинная обрезается
- * с «…»), лишние поля отбрасываются. `submit` принимается (нажимает по-прежнему человек),
- * сочетание клавиш и отключение - нет. Claude Code выполняет ввод с «!» как команду оболочки без запроса разрешения (режим shell), а с «/» как свою
- * команду: такая реплика от модели отбрасывается («!») либо только вставляется без Enter («/»).
- */
+/** Кнопки из хвоста ответа: комментарий должен стоять в самом конце сообщения (процитированный из файла в середине ответа не в счёт). Ответ модели недоверенный: поля проверяются как у кнопок файла, кроме длины подписи (модель промахивается в счёте знаков, длинная обрезается с «…»), лишние поля отбрасываются. `submit` принимается (нажимает по-прежнему человек), сочетание клавиш и отключение - нет. Claude Code выполняет ввод с «!» как команду оболочки без запроса разрешения (режим shell), а с «/» как свою команду: такая реплика от модели отбрасывается («!») либо только вставляется без Enter («/»). */
 export function parseSuggestions(message: unknown): CommandButton[] {
   if (typeof message !== 'string') return [];
   const trimmed = message.trimEnd();
@@ -69,12 +60,21 @@ export function parseSuggestions(message: unknown): CommandButton[] {
   for (const button of parseCommands(plain, false).commands) {
     const key = button.label.toLowerCase();
     if (seen.has(key)) continue;
-    if (button.text.startsWith(SHELL_PREFIX)) continue;
+    const filtered = modelText(button.text, button.submit);
+    if ('refuse' in filtered) continue;
     seen.add(key);
-    buttons.push({ label: button.label, text: button.text, submit: button.submit && !button.text.startsWith(SLASH_PREFIX), ...(button.description ? { description: button.description } : {}) });
+    buttons.push({ label: button.label, text: button.text, submit: filtered.submit, ...(button.description ? { description: button.description } : {}) });
     if (buttons.length === SUGGEST_MAX) break;
   }
   return buttons;
+}
+
+/** Фильтры реплики от модели: «!» - команда оболочки без запроса разрешения, отказ; «/» - команда Claude Code, только вставка без Enter. */
+export function modelText(text: string, submit: boolean): { refuse: string } | { submit: boolean; note?: string } {
+  const trimmed = text.trim();
+  if (trimmed.startsWith(SHELL_PREFIX)) return { refuse: 'реплика не может начинаться с «!»: Claude Code выполнил бы её как команду оболочки без запроса разрешения' };
+  if (trimmed.startsWith(SLASH_PREFIX)) return { submit: false, note: 'текст начинается с «/»: кнопка только вставляет, Enter нажмите сами' };
+  return { submit };
 }
 
 /** Ответ без комментария с кнопками в конце: он служебный и читателю ответа не нужен. */

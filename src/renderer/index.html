@@ -189,63 +189,28 @@
       </form>
     </dialog>
 
-    <dialog id="commands-dialog" aria-labelledby="commands-dialog-title">
+    <dialog id="buttons-dialog" aria-labelledby="buttons-dialog-title">
       <form method="dialog">
-        <h2 id="commands-dialog-title">Кнопки команд</h2>
-        <div class="commands-scopes" role="group" aria-label="Набор кнопок">
-          <button type="button" id="commands-scope-global" class="search-toggle" aria-pressed="false">Общие</button>
-          <button type="button" id="commands-scope-workspace" class="search-toggle" aria-pressed="true">Этот воркспейс</button>
+        <h2 id="buttons-dialog-title">Кнопки</h2>
+        <div class="commands-scopes" role="group" aria-label="Слой кнопок">
+          <button type="button" id="buttons-layer-global" class="search-toggle" aria-pressed="false">Все воркспейсы</button>
+          <button type="button" id="buttons-layer-workspace" class="search-toggle" aria-pressed="true">Этот воркспейс</button>
         </div>
-        <p class="hint" id="commands-hint-global" hidden>
-          Общий набор - для всех воркспейсов: встроенные кнопки (Сливай, Сделай PR, Мердж, Приберись) и ваши. Хранится в <code>commands.json</code> в папке настроек
-          Cyborg. Воркспейс может заменить или скрыть любую кнопку отсюда.
-        </p>
-        <p class="hint" id="commands-hint-workspace">
-          Набор этого воркспейса поверх общего: здесь видны общие кнопки и кнопки воркспейса. В файл воркспейса пишутся только кнопки, отличные от общих, поэтому
-          правка общего набора доходит и сюда.
-        </p>
         <p class="hint">
-          Кнопка с тем же <code>label</code>, что у встроенной или общей, заменяет её. Поля: <code>label</code>, <code>text</code> (одна строка),
-          <code>description</code> (что делает кнопка - подсказка), <code>submit</code> (<code>true</code> - текст и Enter, по умолчанию <code>false</code> -
-          только вставка), <code>hotkey</code> (<code>F5</code>, <code>Alt+S</code>, <code>Ctrl+Shift+K</code>, <code>CmdOrCtrl+Shift+M</code>), <code>disabled</code>
-          (<code>true</code> - скрыть кнопку; так отключается и встроенная). В <code>text</code> работают <code>{branch}</code>, <code>{pr}</code>,
-          <code>{task}</code>. Порядок строк - порядок кнопок на полосе, встроенные и общие тоже можно переставить. Встроенную или общую кнопку, удалённую из
-          списка, редактор вернёт при следующем открытии (скройте её через <code>disabled</code>). Файлы перечитываются сами.
+          Встроенные кнопки, общие для всех воркспейсов (файлы <code>commands.json</code> и <code>prompts.json</code>) и кнопки этого воркспейса. Слой воркспейса
+          меняет у нижней кнопки только отдельные поля: остальные берутся снизу, и правка снизу доходит сюда. Сочетание клавиш у верхней кнопки забирается у
+          нижней без ошибки. Кнопки запуска сессий (MR, задачи, Jira) правятся только во всех воркспейсах.
         </p>
-        <pre class="commands-example">[
-  { "label": "Тесты", "text": "прогони тесты", "submit": true, "hotkey": "F5" },
-  { "label": "Ревью", "text": "сделай ревью {pr}", "hotkey": "Alt+R" }
-]</pre>
-        <div id="commands-editor"></div>
-        <div id="commands-problems" class="dialog-note" hidden></div>
-        <div id="commands-error" class="dialog-error" role="alert" hidden></div>
+        <div class="buttons-body">
+          <div id="buttons-list"></div>
+          <div id="buttons-form"></div>
+        </div>
+        <div id="buttons-problems" class="dialog-note" hidden></div>
+        <div id="buttons-error" class="dialog-error" role="alert" hidden></div>
         <footer>
-          <button type="button" id="commands-reveal" title="Открыть файл приложением системы по умолчанию">Открыть в системе</button>
           <span class="spacer"></span>
-          <button type="button" id="commands-cancel">Закрыть</button>
-          <button type="button" id="commands-save" class="primary">Сохранить</button>
-        </footer>
-      </form>
-    </dialog>
-
-    <dialog id="prompts-dialog" aria-labelledby="prompts-dialog-title">
-      <form method="dialog">
-        <h2 id="prompts-dialog-title">Промпты кнопок</h2>
-        <p class="hint">
-          Первое сообщение сессии, которую запускают кнопки: «Ревью», «Доработать» и «CI» у MR (<code>mr.review</code>, <code>mr.rework</code>,
-          <code>mr.ci</code>), «Взять в работу» у задачи GitHub и GitLab (<code>task.start</code>) и сессия по задаче Jira (<code>jira.start</code>).
-          Показаны действующие тексты с описаниями; что здесь записано, то и сохранится в общем для всех воркспейсов файле <code>prompts.json</code>. В <code>text</code> работают только подстановки,
-          названные в описании промпта (<code>{mr_url}</code>, <code>{task_url}</code>, <code>{status_command}</code>, <code>{jira_key}</code>): название
-          задачи или MR, ветки и автор в промпт не попадают. Текст - одна строка, не начинается с «-».
-        </p>
-        <div id="prompts-editor"></div>
-        <div id="prompts-problems" class="dialog-note" hidden></div>
-        <div id="prompts-error" class="dialog-error" role="alert" hidden></div>
-        <footer>
-          <button type="button" id="prompts-reveal" title="Открыть файл приложением системы по умолчанию">Открыть в системе</button>
-          <span class="spacer"></span>
-          <button type="button" id="prompts-cancel">Закрыть</button>
-          <button type="button" id="prompts-save" class="primary">Сохранить</button>
+          <button type="button" id="buttons-cancel">Закрыть</button>
+          <button type="button" id="buttons-save" class="primary">Сохранить</button>
         </footer>
       </form>
     </dialog>

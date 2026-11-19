@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, DOCS_URL, HOTKEYS_URL, ISSUES_URL, CLAUDE_MD_MENU_ID, COMMANDS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, PROMPTS_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type ExtensionsTab, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, DOCS_URL, HOTKEYS_URL, ISSUES_URL, CLAUDE_MD_MENU_ID, BUTTONS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type ExtensionsTab, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -20,8 +20,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   openRecent() {},
   newProject() {},
   editProject() {},
-  editCommands() {},
-  editPrompts() {},
+  editButtons() {},
   editClaudeMd() {},
   claudeToken() {},
   hostDisk() {},
@@ -87,7 +86,7 @@ describe('appMenuTemplate', () => {
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     it(`${platform}: «Воркспейс» - создать, открыть и недавние, затем проект, кнопки и хосты; вне macOS последним выход`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      const expected = ['Создать…', 'Открыть…', 'Открыть в новом окне…', 'Недавние', 'Новый проект…', 'Свойства проекта…', 'Кнопки команд…', 'Промпты кнопок…', 'Глобальный CLAUDE.md…', 'Вход Claude на хостах…', 'Место на хостах…'];
+      const expected = ['Создать…', 'Открыть…', 'Открыть в новом окне…', 'Недавние', 'Новый проект…', 'Свойства проекта…', 'Кнопки…', 'Глобальный CLAUDE.md…', 'Вход Claude на хостах…', 'Место на хостах…'];
       assert.deepEqual(labels, platform === 'darwin' ? expected : [...expected, 'Выход']);
     });
 
@@ -133,26 +132,16 @@ describe('appMenuTemplate', () => {
     assert.equal(byId(workspaceItems('linux'), PROJECT_NEW_MENU_ID)?.enabled, true);
   });
 
-  it('«Кнопки команд…» недоступны без воркспейса и вызывают правку', () => {
+  it('«Кнопки…» одна на оба прежних пункта: доступна и без воркспейса, вызывает правку', () => {
     const byId = (items: MenuItemConstructorOptions[], id: string) => items.find((item) => item.id === id);
-    assert.equal(byId(workspaceItems('linux', { hasWorkspace: false }), COMMANDS_MENU_ID)?.enabled, false);
+    assert.notEqual(byId(workspaceItems('linux', { hasWorkspace: false }), BUTTONS_MENU_ID)?.enabled, false);
     const calls: string[] = [];
-    const item = byId(workspaceItems('darwin', { editCommands: () => calls.push('commands') }), COMMANDS_MENU_ID);
-    assert.equal(item?.label, 'Кнопки команд…');
-    assert.equal(item?.enabled, true);
+    const items = workspaceItems('darwin', { editButtons: () => calls.push('buttons') });
+    const item = byId(items, BUTTONS_MENU_ID);
+    assert.equal(item?.label, 'Кнопки…');
     (item?.click as () => void)();
-    assert.deepEqual(calls, ['commands']);
-  });
-
-  it('«Промпты кнопок…» общие для воркспейсов: доступны и без воркспейса, вызывают правку', () => {
-    const byId = (items: MenuItemConstructorOptions[], id: string) => items.find((item) => item.id === id);
-    assert.notEqual(byId(workspaceItems('linux', { hasWorkspace: false }), PROMPTS_MENU_ID)?.enabled, false);
-    const calls: string[] = [];
-    const item = byId(workspaceItems('darwin', { editPrompts: () => calls.push('prompts') }), PROMPTS_MENU_ID);
-    assert.equal(item?.label, 'Промпты кнопок…');
-    assert.notEqual(item?.enabled, false);
-    (item?.click as () => void)();
-    assert.deepEqual(calls, ['prompts']);
+    assert.deepEqual(calls, ['buttons']);
+    assert.equal(items.filter((i) => /Кнопки|Промпты/.test(String(i.label))).length, 1);
   });
 
   it('«Глобальный CLAUDE.md…» не зависит от воркспейса: доступен без него и вызывает правку', () => {

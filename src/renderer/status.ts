@@ -6,6 +6,7 @@ import { timeOf } from '../main/jira-keys';
 import type { Project } from '../main/projects';
 import { ago } from './ago';
 import { byId, el } from './dom';
+import { launchHint, ownLaunchButtons } from './launch-buttons';
 import { applyMrDetails, mrNumber } from './mr-model';
 import { attentionOf, ATTENTION_TEXT, byAttention, groupIssues, jiraOnlyLevel, levelOf, LEVEL_TEXT, mrActions, mrsOfIssue, pipelineTone, reviewQueue, usable, type Attention, type Level } from './status-model';
 
@@ -19,8 +20,8 @@ export interface StatusHost {
   project(): Project | null;
   /** Открытая сессия по ключу MR либо `jira:KEY`: кнопка тогда ведёт к ней. */
   sessionOf(key: string): { exited: boolean } | undefined;
-  startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement): void;
-  startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement): void;
+  startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement, button?: string): void;
+  startJira(issue: JiraIssue, linked: Mr | undefined, anchor: HTMLElement, button?: string): void;
 }
 
 interface Snapshot {
@@ -95,6 +96,11 @@ export class StatusHub {
   }
 
   /** Проект выбран либо его источники изменились: данные прежнего проекта сброшены, кнопка показана по источникам. */
+  /** Набор кнопок запуска изменился: открытая карточка рисуется заново. */
+  repaint(): void {
+    if (this.opened) this.render();
+  }
+
   onProjectChanged(): void {
     this.seq++;
     this.loading = false;
@@ -304,7 +310,22 @@ export class StatusHub {
       this.close();
       this.host.startJira(issue, linked[0], this.button);
     });
+    if (!open1 && !start.disabled) start.title = launchHint('jira', 'jira.start');
     actions.append(start);
+    if (!open1) {
+      for (const own of ownLaunchButtons('jira')) {
+        const button = el('button', '', own.label) as HTMLButtonElement;
+        const noRepos = !this.host.project()?.repos.length;
+        button.title = noRepos ? 'Сессии негде открыться: добавьте репозиторий в свойствах проекта' : launchHint('jira', own.label);
+        button.disabled = noRepos || own.bad === true;
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.close();
+          this.host.startJira(issue, linked[0], this.button, own.label);
+        });
+        actions.append(button);
+      }
+    }
     row.append(main, actions);
     item.append(row);
     if (open) item.append(this.issueDetails(issue));
@@ -416,14 +437,29 @@ export class StatusHub {
     meta.append(el('span', 'status-when', `${mr.path} · ${mr.sourceBranch}`));
     main.append(title, meta);
     const actions = el('div', 'status-actions');
-    for (const action of mrActions(mr, why?.kinds ?? [], !!this.host.sessionOf(mr.key))) {
+    const hasSession = !!this.host.sessionOf(mr.key);
+    for (const action of mrActions(mr, why?.kinds ?? [], hasSession)) {
       const button = el('button', action.primary ? 'primary' : '', action.label) as HTMLButtonElement;
+      if (!hasSession) button.title = launchHint('mr', `mr.${action.intent}`);
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         this.close();
         this.host.startMr(mr, action.intent, this.button);
       });
       actions.append(button);
+    }
+    if (!this.host.sessionOf(mr.key)) {
+      for (const own of ownLaunchButtons('mr')) {
+        const button = el('button', '', own.label) as HTMLButtonElement;
+        button.title = launchHint('mr', own.label);
+        button.disabled = own.bad === true;
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.close();
+          this.host.startMr(mr, mr.own ? 'rework' : 'review', this.button, own.label);
+        });
+        actions.append(button);
+      }
     }
     row.append(main, actions);
     item.append(row);

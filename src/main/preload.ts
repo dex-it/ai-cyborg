@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ActionReply, ExtensionsAction, ExtensionsReply, ExtensionsRequest, Hub, HubContent, HubOp, ProbeReply, UsageReply } from '../shared/extensions';
 import type { SearchReply, SearchRequest } from '../shared/search-pattern';
-import type { CommandsConfig, CommandsScope } from './commands';
+import type { ButtonsNotice, ButtonsSaveRequest } from './buttons-service';
+import type { ButtonIssue, CommandsConfig, CommandsScope } from './commands';
 import type { DirEntry, WriteReply } from './files';
 import type { Branches } from './git';
 import type { HistoryEntry } from './history';
@@ -37,7 +38,10 @@ const api = {
   loadCommands: (): Promise<CommandsConfig> => ipcRenderer.invoke('commands:load'),
   saveCommands: (text: string, scope: CommandsScope): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text, scope),
   loadPrompts: (): Promise<{ raw: unknown; problem?: string }> => ipcRenderer.invoke('prompts:load'),
-  savePrompts: (text: string): Promise<{ error?: string }> => ipcRenderer.invoke('prompts:save', text),
+  saveButtons: (request: ButtonsSaveRequest): Promise<{ error?: string; issues?: ButtonIssue[] }> => ipcRenderer.invoke('buttons:save', request),
+  applyButtons: (request: unknown): Promise<{ error?: string }> => ipcRenderer.invoke('buttons:apply', request),
+  undoButtons: (id: number): Promise<{ error?: string }> => ipcRenderer.invoke('buttons:undo', id),
+  onButtonsChanged: (listener: (caller: number, notice: ButtonsNotice) => void): void => void ipcRenderer.on('buttons:changed', (_event, caller: number, notice: ButtonsNotice) => listener(caller, notice)),
   loadClaudeMd: (): Promise<{ text: string; problem?: string }> => ipcRenderer.invoke('claude-md:load'),
   saveClaudeMd: (text: string, base: string): Promise<{ error?: string }> => ipcRenderer.invoke('claude-md:save', text, base),
   /** Путь из вывода сессии - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
@@ -48,8 +52,8 @@ const api = {
   runFile: (file: string): Promise<void> => ipcRenderer.invoke('file:run', file),
   /** http(s)-ссылка - в браузере системы; иные схемы главный процесс отбрасывает. */
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('url:open', url),
-  /** Файл кнопок (воркспейса или общий) либо промптов - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
-  revealConfig: (kind: 'commands' | 'commands-global' | 'prompts' | 'claude-md'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
+  /** Глобальный CLAUDE.md в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
+  revealConfig: (kind: 'claude-md'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
   createSession: (projectId: string, cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', projectId, cwd, addDirs, start),
   /** Удалённая сессия: либо {projectId, host, repo, branch, prompt?}, либо {projectId, handoff, repo} по передаче от сессии. */

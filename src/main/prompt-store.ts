@@ -30,7 +30,7 @@ export class PromptStore {
   /** Для старта сессии: файл, который не прочитан, - ошибка, а не молчаливая замена встроенными промптами. */
   load(): unknown {
     const { raw, problem } = this.read();
-    if (problem) throw new Error(`${problem}. Исправьте его или меню «Воркспейс → Промпты кнопок…».`);
+    if (problem) throw new Error(`${problem}. Исправьте его или меню «Воркспейс → Кнопки…».`);
     return raw;
   }
 

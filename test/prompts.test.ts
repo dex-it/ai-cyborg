@@ -7,16 +7,16 @@ import { jiraPrompt, validateJiraStart } from '../src/main/jira';
 import { mrPrompt, validateSessionStart } from '../src/main/mrs';
 import {
   DEFAULT_PROMPTS,
-  MAX_PROMPTS_TEXT,
   PROMPT_IDS,
   PROMPT_PLACEHOLDERS,
-  checkPromptsText,
-  effectivePrompts,
+  compactPrompts,
   fillPrompt,
+  launchTemplate,
+  launchTitle,
+  parseLaunchButtons,
   parsePrompts,
   promptTemplate,
-  promptsToText,
-  savePromptsText,
+  promptTextProblem,
 } from '../src/main/prompts';
 import { PromptStore } from '../src/main/prompt-store';
 import { taskPrompt } from '../src/main/trackers';
@@ -128,14 +128,14 @@ describe('Промпты кнопок: подстановка', () => {
 
   it('негодная запись нужного промпта - исключение с причиной, не молчаливая замена встроенным; чужая запись не мешает', () => {
     const raw = { 'mr.review': { text: '-x' }, 'mr.ci': { text: 'ок {mr_url}' } };
-    assert.throws(() => validateSessionStart({ mr, intent: 'review' }, raw), /«mr\.review»: text не может начинаться с «-».*Промпты кнопок/s);
+    assert.throws(() => validateSessionStart({ mr, intent: 'review' }, raw), /«mr\.review»: text не может начинаться с «-».*Кнопки/s);
     assert.equal(validateSessionStart({ mr, intent: 'ci' }, raw), 'ок https://github.com/o/r/pull/5');
     assert.equal(promptTemplate('jira.start', raw), DEFAULT_PROMPTS['jira.start'].text);
   });
 
   it('поле prompts не объект - исключение для любой кнопки, не молчаливая замена встроенным', () => {
     for (const raw of [[], 'x', 5, null]) {
-      assert.throws(() => validateSessionStart({ mr, intent: 'review' }, raw), /prompts должен быть объектом.*Промпты кнопок/s, JSON.stringify(raw));
+      assert.throws(() => validateSessionStart({ mr, intent: 'review' }, raw), /prompts должен быть объектом.*Кнопки/s, JSON.stringify(raw));
       assert.throws(() => validateSessionStart({ jira: { key: 'DEX-12' } }, raw), /prompts должен быть объектом/);
     }
   });
@@ -146,42 +146,112 @@ describe('Промпты кнопок: подстановка', () => {
   });
 });
 
-describe('Промпты кнопок: текст редактора', () => {
-  it('действующий набор: все встроенные с описаниями, записи файла на своих местах, лишние в конце как есть', () => {
-    const own = { 'mr.ci': { text: 'свой' }, 'вдруг': 1 };
-    const set = effectivePrompts(own);
-    assert.deepEqual(Object.keys(set), [...PROMPT_IDS, 'вдруг']);
-    assert.deepEqual(set['mr.ci'], { text: 'свой' });
-    assert.deepEqual(set['mr.review'], DEFAULT_PROMPTS['mr.review']);
-    assert.deepEqual(Object.keys(JSON.parse(promptsToText(undefined))), PROMPT_IDS);
-    assert.deepEqual(Object.keys(JSON.parse(promptsToText([]))), PROMPT_IDS, 'негодное поле - как отсутствующее');
-  });
-
-  it('набор из редактора проходит проверку и при повторном открытии даёт тот же текст', () => {
-    const text = promptsToText({ 'mr.ci': { text: 'свой {mr_url}', description: 'д' } });
-    assert.deepEqual(checkPromptsText(text), { ok: true, prompts: JSON.parse(text) });
-    assert.equal(promptsToText(JSON.parse(text)), text);
-  });
-
-  it('не JSON, не объект и любая проблема - отказ с причиной', () => {
-    assert.match((checkPromptsText('{') as { error: string }).error, /^Не JSON/);
-    assert.match((checkPromptsText('[]') as { error: string }).error, /Нужен объект/);
-    assert.match((checkPromptsText('{"mr.ci":{"text":"{x}"}}') as { error: string }).error, /неизвестная подстановка \{x\}/);
-    assert.match((checkPromptsText('{"нет":{"text":"x"}}') as { error: string }).error, /нет такого промпта/);
-  });
-
-  it('savePromptsText проверяет заново, ошибка записи - в ответе', () => {
-    const calls: unknown[] = [];
-    const store = { savePrompts: (p: Record<string, unknown>) => void calls.push(p) };
-    assert.deepEqual(savePromptsText('{"mr.ci":{"text":"ок"}}', store), {});
-    assert.deepEqual(calls, [{ 'mr.ci': { text: 'ок' } }]);
-    for (const bad of [5, undefined, 'x'.repeat(MAX_PROMPTS_TEXT + 1)]) assert.deepEqual(savePromptsText(bad, store), { error: 'Некорректный текст промптов' });
-    assert.match(savePromptsText('{"mr.ci":{"text":"-"}}', store).error ?? '', /«mr\.ci»/);
-    assert.equal(calls.length, 1, 'негодное записано');
-    const failing = { savePrompts: () => { throw new Error('диск'); } };
-    assert.deepEqual(savePromptsText('{}', failing), { error: 'диск' });
+describe('Промпты кнопок: compactPrompts', () => {
+  it('compactPrompts убирает совпавшие со встроенными и пустой buttons', () => {
+    assert.deepEqual(compactPrompts({ 'mr.ci': DEFAULT_PROMPTS['mr.ci'], 'mr.review': { text: 'свой' }, buttons: [] }), { 'mr.review': { text: 'свой' } });
   });
 });
+
+describe('Правило текста первого сообщения: одно для встроенных и своих кнопок', () => {
+  const allowed = PROMPT_PLACEHOLDERS['mr.review'];
+  const bad = ['', '   ', '-p', ' -x', 'a\nb', 'см {nope}', 5, null];
+
+  it('годный текст проходит, негодный получает причину', () => {
+    assert.equal(promptTextProblem('Ревью {mr_url}', allowed), null);
+    for (const text of bad) assert.notEqual(promptTextProblem(text, allowed), null, String(text));
+  });
+
+  it('негодная кнопка помечена: выключенная человеком и повтор подписи на карточку не попадают', () => {
+    const parsed = parseLaunchButtons({
+      buttons: [
+        { place: 'mr', label: 'Объясни', text: 'ok {mr_url}' },
+        { place: 'mr', label: 'Объясни', text: 'ещё {mr_url}' },
+        { place: 'mr', label: 'Выкл', text: '-p', disabled: true },
+        { place: 'mr', label: 'Плохая', text: '-p' },
+      ],
+    });
+    const by = (label: string) => parsed.bad.find((b) => b.label === label);
+    assert.equal(by('Объясни')?.duplicate, true);
+    assert.equal(by('Выкл')?.disabled, true);
+    assert.equal(by('Плохая')?.disabled, undefined);
+    assert.equal(by('Плохая')?.duplicate, undefined);
+  });
+
+  it('негодная кнопка перед годной с той же подписью не показывается: подсказка не чужая', () => {
+    const raw = { buttons: [{ place: 'mr', label: 'X', text: '-p' }, { place: 'mr', label: 'x', text: 'ok {mr_url}' }] };
+    const parsed = parseLaunchButtons(raw);
+    assert.equal(parsed.bad[0].duplicate, true);
+    assert.equal(launchTitle('mr', 'X', raw), 'ok {mr_url}');
+    const twoBad = parseLaunchButtons({ buttons: [{ place: 'mr', label: 'Y', text: '-p' }, { place: 'mr', label: 'Y', text: '-q' }] });
+    assert.deepEqual(twoBad.bad.map((b) => b.duplicate), [undefined, true]);
+  });
+
+  it('parsePrompts и parseLaunchButtons отказывают одинаково на каждом входе правила', () => {
+    for (const text of bad) {
+      const viaPrompts = parsePrompts({ 'mr.review': { text } }).problems.length;
+      const viaButtons = parseLaunchButtons({ buttons: [{ place: 'mr', label: 'Х', text, description: 'д' }] }).bad.length;
+      assert.equal(viaPrompts > 0, viaButtons > 0, String(text));
+      assert.equal(viaPrompts > 0, true, String(text));
+    }
+  });
+});
+
+describe('Свои кнопки запуска: prompts.json', () => {
+  const own = { place: 'mr', label: 'Объясни MR', text: 'Объясни {mr_url}', description: 'д' };
+
+  it('ключ buttons не считается промптом с неизвестным id', () => {
+    assert.deepEqual(parsePrompts({ buttons: [own] }), { prompts: {}, problems: [] });
+  });
+
+  it('годная кнопка разбирается; пустой файл - нет кнопок и замечаний', () => {
+    assert.deepEqual(parseLaunchButtons({ buttons: [own] }).buttons, [{ place: 'mr', label: 'Объясни MR', text: 'Объясни {mr_url}', description: 'д' }]);
+    assert.deepEqual(parseLaunchButtons(undefined), { buttons: [], bad: [], issues: [] });
+  });
+
+  it('негодная пропускается с причиной, прочие остаются', () => {
+    const raw = { buttons: [{ ...own, label: 'Ревью' }, { ...own, text: '-p' }, { ...own, place: 'task', text: 'см {mr_url}' }, { ...own, label: 'Ок' }, 5, { ...own, label: 'Ок', text: 'повтор' }] };
+    const parsed = parseLaunchButtons(raw);
+    assert.deepEqual(parsed.buttons.map((b) => b.label), ['Ок']);
+    assert.equal(parsed.bad.length, 5);
+    assert.match(parsed.bad[0].message, /подпись встроенной кнопки/);
+    assert.match(parsed.bad[2].message, /неизвестная подстановка \{mr_url\} \(есть: \{task_url\}, \{status_command\}\)/);
+  });
+
+  it('не больше 30 кнопок; buttons не массив - замечание', () => {
+    const many = Array.from({ length: 31 }, (_, i) => ({ ...own, label: `К${i}` }));
+    assert.equal(parseLaunchButtons({ buttons: many }).buttons.length, 30);
+    assert.match(parseLaunchButtons({ buttons: many }).issues[0].message, /больше 30/);
+    assert.match(parseLaunchButtons({ buttons: {} }).issues[0].message, /массив кнопок/);
+  });
+
+  it('launchTemplate: годная, негодная, исчезнувшая, выключенная', () => {
+    assert.equal(launchTemplate('mr', 'объясни mr', { buttons: [own] }), 'Объясни {mr_url}');
+    assert.throws(() => launchTemplate('mr', 'Объясни MR', { buttons: [{ ...own, text: '-p' }] }), /«-».*Воркспейс → Кнопки…/s);
+    assert.throws(() => launchTemplate('mr', 'Нет', { buttons: [own] }), /больше нет/);
+    assert.throws(() => launchTemplate('mr', 'Объясни MR', { buttons: [{ ...own, disabled: true }] }), /выключена/);
+  });
+
+  it('старт сессии по своей кнопке: подстановки места; негодная не мешает встроенной и другой своей', () => {
+    const raw = { buttons: [own, { ...own, label: 'Плохая', text: '-p' }, { ...own, label: 'Другая', text: 'Смотри {mr_url}' }] };
+    assert.equal(validateSessionStart({ mr, button: 'Объясни MR' }, raw), 'Объясни https://github.com/o/r/pull/5');
+    assert.equal(validateSessionStart({ mr, button: 'Другая' }, raw), 'Смотри https://github.com/o/r/pull/5');
+    assert.throws(() => validateSessionStart({ mr, button: 'Плохая' }, raw), /Плохая/);
+    assert.equal(validateSessionStart({ mr, intent: 'review' }, raw), 'https://github.com/o/r/pull/5'.replace(/.*/, '/dex-auto:auto review https://github.com/o/r/pull/5'));
+    const task = { buttons: [{ place: 'task', label: 'Задача', text: '{task_url} {status_command}' }, { place: 'jira', label: 'Ж', text: 'ключ {jira_key}' }] };
+    assert.equal(validateSessionStart({ task: gh, button: 'Задача' }, task), 'https://github.com/o/r/issues/7 gh issue edit');
+    assert.equal(validateSessionStart({ jira: { key: 'DEX-1' }, button: 'Ж' }, task), 'ключ DEX-1');
+    assert.equal(validateSessionStart({ mr, button: '' }, raw), null);
+    assert.equal(validateSessionStart({ mr, button: 'Объясни MR', intent: 'review' }, raw), null);
+  });
+
+  it('launchTitle: описание и промпт; у негодной - причина', () => {
+    assert.equal(launchTitle('mr', 'Объясни MR', { buttons: [own] }), 'д\n\nОбъясни {mr_url}');
+    assert.equal(launchTitle('mr', 'mr.review', undefined), `${DEFAULT_PROMPTS['mr.review'].description}\n\n${DEFAULT_PROMPTS['mr.review'].text}`);
+    assert.match(launchTitle('mr', 'mr.review', { 'mr.review': { text: '-x' } }), /«mr\.review»/);
+    assert.match(launchTitle('mr', 'Плохая', { buttons: [{ ...own, label: 'Плохая', text: '-x' }] }), /Плохая/);
+  });
+});
+
 
 describe('PromptStore: общий файл промптов', () => {
   let dir: string;
@@ -206,6 +276,6 @@ describe('PromptStore: общий файл промптов', () => {
     fs.writeFileSync(file, '{ не json');
     const store = new PromptStore(file);
     assert.match(store.read().problem ?? '', /не разобран/);
-    assert.throws(() => store.load(), /не разобран.*Промпты кнопок/s);
+    assert.throws(() => store.load(), /не разобран.*Кнопки/s);
   });
 });

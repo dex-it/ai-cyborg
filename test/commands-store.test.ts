@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { MAX_COMMANDS_TEXT, saveCommandsText } from '../src/main/commands';
+import { ButtonsService } from '../src/main/buttons-service';
+import { MAX_COMMANDS_TEXT } from '../src/main/commands';
 import { CommandStore } from '../src/main/command-store';
 import { ProjectStore, type ProjectsState } from '../src/main/projects';
 
@@ -67,33 +68,47 @@ describe('ProjectStore: кнопки команд в файле воркспей
   });
 });
 
-describe('saveCommandsText: запись из редактора', () => {
-  const fake = () => {
+describe('ButtonsService.saveText: запись текста слоя из редактора', () => {
+  const rig = () => {
     const saved: unknown[][] = [];
-    return { saved, store: { saveCommands: (c: unknown[]) => void saved.push(c) } };
+    const service = new ButtonsService({
+      commands: { read: () => ({ raw: undefined }), saveCommands: () => undefined },
+      prompts: { read: () => ({ raw: undefined }), savePrompts: () => undefined },
+      workspace: () => ({ open: true, name: 'W', load: () => undefined, save: (c) => void saved.push(c) }),
+      mac: true,
+    });
+    return { saved, service };
   };
 
   it('корректный текст проверяется и пишется массивом', () => {
-    const { saved, store } = fake();
-    assert.deepEqual(saveCommandsText(JSON.stringify([button]), store, true), {});
+    const { saved, service } = rig();
+    assert.deepEqual(service.saveText(JSON.stringify([button]), 'workspace'), {});
     assert.deepEqual(saved, [[button]]);
   });
 
   it('не строка, слишком длинный, не JSON и негодная кнопка - ошибка в ответе, запись не вызвана', () => {
-    const { saved, store } = fake();
+    const { saved, service } = rig();
     for (const text of [42, null, 'x'.repeat(MAX_COMMANDS_TEXT + 1), '[{', '{}', '[{"label":"A"}]']) {
-      assert.ok(saveCommandsText(text, store, true).error, String(text).slice(0, 20));
+      assert.ok(service.saveText(text, 'workspace').error, String(text).slice(0, 20));
     }
     assert.deepEqual(saved, []);
   });
 
   it('отказ записи хранилища - в ответе, без исключения', () => {
-    const store = {
-      saveCommands: () => {
-        throw new Error('диск полон');
-      },
-    };
-    assert.deepEqual(saveCommandsText('[]', store, true), { error: 'диск полон' });
+    const service = new ButtonsService({
+      commands: { read: () => ({ raw: undefined }), saveCommands: () => undefined },
+      prompts: { read: () => ({ raw: undefined }), savePrompts: () => undefined },
+      workspace: () => ({
+        open: true,
+        name: 'W',
+        load: () => undefined,
+        save: () => {
+          throw new Error('диск полон');
+        },
+      }),
+      mac: true,
+    });
+    assert.deepEqual(service.saveText('[]', 'workspace'), { error: 'диск полон' });
   });
 });
 

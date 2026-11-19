@@ -1,6 +1,7 @@
 import type { Mr, MrFilter, MrIntent, MrListResult, MrRef } from '../main/mrs';
 import type { Project } from '../main/projects';
 import { el } from './dom';
+import { launchHint, ownLaunchButtons } from './launch-buttons';
 import { readChoice, writePref } from './prefs';
 import { keepKnownDetails, MR_FILTER_OPTIONS, MR_SORT_OPTIONS, MrMetaSlots, mrActionLabel, mrActionVisible, mrEmptyView, mrIntent, mrMeta, mrNumber } from './mr-model';
 import { refreshMrs } from './mr-refresh';
@@ -29,7 +30,7 @@ export interface MrsViewHost {
   trackedRefs(): MrRef[];
   applyStatuses(result: MrListResult): void;
   sessionOf(key: string): OpenMrSession | undefined;
-  startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement): void;
+  startMr(mr: Mr, intent: MrIntent, anchor: HTMLElement, button?: string): void;
 }
 
 const api = window.cyborg;
@@ -248,6 +249,7 @@ export class MrsView implements PanelView {
       if (action.visible && !action.visible(mr, open)) continue;
       const button = el('button', '', action.label(mr, open)) as HTMLButtonElement;
       button.dataset.action = action.id;
+      if (!open) button.title = launchHint('mr', `mr.${mrIntent(mr)}`);
       button.addEventListener('click', (event) => {
         // Меню выбора репозитория закрывается кликом по документу: клик по кнопке не должен закрыть его сразу.
         event.stopPropagation();
@@ -255,6 +257,20 @@ export class MrsView implements PanelView {
         action.run(mr, button);
       });
       actions.append(button);
+    }
+    if (!open) {
+      for (const own of ownLaunchButtons('mr')) {
+        const button = el('button', '', own.label) as HTMLButtonElement;
+        button.dataset.action = 'own';
+        button.title = launchHint('mr', own.label);
+        button.disabled = own.bad === true;
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.marks.set(mr.key);
+          this.host.startMr(mr, mrIntent(mr), button, own.label);
+        });
+        actions.append(button);
+      }
     }
     row.append(main, actions);
     return row;

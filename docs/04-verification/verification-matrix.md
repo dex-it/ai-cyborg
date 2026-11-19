@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 203; с автотестом - 185, из них со smoke - 39; только smoke - 10; ручная - 2; только осмотр и демонстрация - 6.
+Требований: 208; с автотестом - 189, из них со smoke - 44; только smoke - 11; ручная - 2; только осмотр и демонстрация - 6.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -136,12 +136,16 @@ date: 2026-10-26
 | FR-12002 | Отправка текста кнопки | 12-command-buttons | smoke | `scripts/smoke.mjs` |
 | FR-12003 | Подстановки `{branch}`, `{pr}`, `{task}` | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/command-values.test.ts`, `scripts/smoke.mjs` |
 | FR-12004 | Сочетание клавиш кнопки | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `scripts/smoke.mjs` |
-| FR-12005 | Набор кнопок и проверка файла | 12-command-buttons | автотест | `test/commands.test.ts`, `test/commands-store.test.ts` |
-| FR-12006 | Правка набора в Monaco и подхват без перезапуска | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/commands-store.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-12005 | Набор кнопок: слои по полям и проверка файла | 12-command-buttons | автотест + smoke | `test/commands.test.ts`, `test/commands-store.test.ts`, `scripts/smoke.mjs` |
+| FR-12006 | Окно «Кнопки» и подхват правок без перезапуска | 12-command-buttons | автотест + smoke | `test/buttons.test.ts`, `test/buttons-service.test.ts`, `test/commands-store.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-12007 | Инструкция сессии и разбор предложений модели | 12-command-buttons | автотест | `test/suggestions.test.ts`, `src/main/sessions.test.ts`, `test/history.test.ts`, `test/trackers.test.ts`, `test/mrs.test.ts` |
 | FR-12008 | Предложенные кнопки на полосе | 12-command-buttons | smoke | `scripts/smoke.mjs` |
-| FR-12009 | Промпты кнопок запуска сессий: общий файл `prompts.json` и сборка первого сообщения | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/mrs.test.ts`, `test/trackers.test.ts`, `test/jira.test.ts`, `test/ipc-error.test.ts`, `scripts/smoke.mjs` |
-| FR-12010 | Правка промптов в Monaco | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-12009 | Промпты и свои кнопки запуска сессий: общий файл `prompts.json` и сборка первого сообщения | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/buttons-service.test.ts`, `test/mrs.test.ts`, `test/trackers.test.ts`, `test/jira.test.ts`, `test/ipc-error.test.ts`, `scripts/smoke.mjs` |
+| FR-12010 | Промпты и свои кнопки запуска в окне «Кнопки» | 12-command-buttons | автотест + smoke | `test/buttons.test.ts`, `test/buttons-service.test.ts`, `scripts/smoke.mjs` |
+| FR-12011 | Меню кнопки полосы и сохранение предложенной кнопки | 12-command-buttons | smoke | `scripts/smoke.mjs` |
+| FR-12012 | Операции окна над кнопкой полосы: выключение, замена, сочетание, удаление, порядок | 12-command-buttons | автотест + smoke | `test/buttons.test.ts`, `scripts/smoke.mjs` |
+| FR-12013 | Свои кнопки запуска на карточках и подсказки кнопок запуска | 12-command-buttons | автотест + smoke | `test/prompts.test.ts`, `test/buttons-service.test.ts`, `scripts/smoke.mjs` |
+| FR-12014 | Уведомление о кнопке, записанной сессией, отмена и пометка «новая» | 12-command-buttons | автотест + smoke | `test/buttons-service.test.ts`, `scripts/smoke.mjs` |
 | FR-13001 | Окно поиска вызывается из меню и сочетанием, на экране его нет | 13-file-search | автотест + smoke | `test/menu.test.ts`, `scripts/smoke.mjs` |
 | FR-13002 | Поиск файла по части имени | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `scripts/smoke.mjs` |
 | FR-13003 | Запрос: подстрока, регистр, целое слово, регулярное выражение | 13-file-search | автотест + smoke | `test/search-model.test.ts`, `test/git-search.test.ts`, `scripts/smoke.mjs` |
@@ -180,6 +184,7 @@ date: 2026-10-26
 | FR-15009 | close_session закрывает вкладку проекта, не обрывая без force работу и вопрос соседки | 15-session-mcp | автотест | `test/session-tools.test.ts`, `src/main/sessions.test.ts`, `test/remote-tools.test.ts`, `test/mcp.test.ts` |
 | FR-15010 | report_done у локальной сессии, открытой другой сессией, отдаёт итог открывшей | 15-session-mcp | автотест | `src/main/sessions.test.ts`, `test/notify.test.ts`, `test/session-tools.test.ts`, `test/remote-tools.test.ts` |
 | FR-15011 | Выход дочерней локальной сессии сообщается открывшей, вкладка вышедшей остаётся видна инструментам | 15-session-mcp | автотест | `src/main/sessions.test.ts`, `test/session-tools.test.ts` |
+| FR-15012 | Инструменты кнопок: list_buttons, add_button, update_button, disable_button | 15-session-mcp | автотест + smoke | `test/buttons-service.test.ts`, `test/buttons.test.ts`, `test/remote-tools.test.ts`, `scripts/smoke.mjs` |
 | FR-16001 | Markdown-файл открывается отрендеренным документом | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |
 | NFR-16001 | Документ из репозитория не исполняет кода, не грузит сеть и не меняет окно | 16-markdown-view | автотест + smoke | `scripts/smoke.mjs`, `test/md-links.test.ts` |
 | FR-16002 | Ссылки и картинки документа | 16-markdown-view | автотест + smoke | `test/md-links.test.ts`, `scripts/smoke.mjs` |
