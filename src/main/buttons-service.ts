@@ -1,7 +1,7 @@
 // Единственный писатель кнопок (фича 12): запись из окна, меню полосы и инструменты сессии идут через те же проверки и сжатие слоя.
 
 import { checkLayer, canonicalJson, MAX_COMMANDS_TEXT, resolveBar, sameEntry, sameLabel, type ButtonIssue, type FileLayer } from './commands';
-import { BUILTIN_LAUNCH, compactPrompts, MAX_PROMPTS_TEXT, parseLaunchButtons, type LaunchPlace, type PromptId } from './prompts';
+import { BUILTIN_LAUNCH, compactPrompts, DEFAULT_PROMPTS, MAX_PROMPTS_TEXT, parseLaunchButtons, type LaunchPlace, type PromptId } from './prompts';
 import { modelText } from './suggestions';
 import {
   addButton,
@@ -79,13 +79,15 @@ export class ButtonsService {
 
   // ---------- состояние ----------
 
-  private state(): { state: ButtonsState; problem?: string } {
+  /** problem - сбой commands.json (мешает кнопкам полосы), promptsProblem - сбой prompts.json (мешает кнопкам запуска): полоса файла промптов не касается. */
+  private state(): { state: ButtonsState; problem?: string; promptsProblem?: string } {
     const global = this.deps.commands.read();
     const prompts = this.deps.prompts.read();
     const ws = this.deps.workspace();
     return {
       state: { commands: { global: global.raw, workspace: ws.open ? ws.load() : undefined }, prompts: prompts.raw, hasWorkspace: ws.open, mac: this.deps.mac },
-      ...((global.problem ?? prompts.problem) ? { problem: (global.problem ?? prompts.problem) as string } : {}),
+      ...(global.problem ? { problem: global.problem } : {}),
+      ...(prompts.problem ? { promptsProblem: prompts.problem } : {}),
     };
   }
 
@@ -186,7 +188,7 @@ export class ButtonsService {
     const out: Record<string, unknown> = { workspace: this.deps.workspace().name, layer: state.hasWorkspace ? 'workspace' : 'all' };
     for (const group of view.groups) {
       out[group.place] = group.rows.map((r) => {
-        const changed = r.kind === 'bar' ? entryLayers(r.label) : r.origin === 'global' && r.builtinId ? ['all'] : [];
+        const changed = r.kind === 'bar' ? entryLayers(r.label) : r.from.text === 'global' && r.builtinId ? ['all'] : [];
         return {
           label: r.label,
           [r.kind === 'bar' ? 'text' : 'prompt']: r.text,
@@ -226,9 +228,9 @@ export class ButtonsService {
 
   /** Одна операция над одной записью одного слоя; отказ - исключение с названием кнопки и поля. */
   private run(name: string, call: ButtonCall): { message: string; notice: ButtonsNotice } {
-    const { state, problem } = this.state();
-    if (problem) throw new Error(problem);
+    const { state, problem, promptsProblem } = this.state();
     const { place, label } = call;
+    if (place === 'bar' ? problem : promptsProblem) throw new Error((place === 'bar' ? problem : promptsProblem) as string);
     const refuse = (field: string, reason: string): never => {
       throw new Error(`«${label}», ${field}: ${reason}`);
     };
@@ -328,6 +330,11 @@ export class ButtonsService {
     const refuse = (field: string, reason: string): never => {
       throw new Error(`«${label}», ${field}: ${reason}`);
     };
+    const resetOf = (field: string): ('text' | 'description')[] => {
+      const fields = call.reset ?? [];
+      if (fields.some((f) => f !== 'text' && f !== 'description')) refuse(field, 'у кнопок запуска сбрасываются text и description');
+      return fields as ('text' | 'description')[];
+    };
     if (call.layer !== 'all') refuse('layer', 'кнопки MR, задачи и Jira бывают только во всех воркспейсах: скажи это человеку и повтори с layer: "all"');
     for (const f of ['submit', 'hotkey'] as const) if (call[f] !== undefined) refuse(f, 'у кнопок запуска сессий этого поля нет');
     const lp = place as LaunchPlace;
@@ -335,7 +342,10 @@ export class ButtonsService {
     const prompts = this.deps.prompts.read();
     const view = buttonsView(state, 'global').groups.find((g) => g.place === place)?.rows ?? [];
     const existing = view.find((r) => sameLabel(r.label, label));
-    if (call.text !== undefined && call.text.trim().startsWith('!')) refuse('text', 'реплика не может начинаться с «!»');
+    if (call.text !== undefined) {
+      const filtered = modelText(call.text, false);
+      if ('refuse' in filtered) refuse('text', filtered.refuse);
+    }
     let next: Record<string, unknown> | null;
     let verb: ButtonsNotice['verb'] = 'changed';
     let key: string;
@@ -351,11 +361,10 @@ export class ButtonsService {
       if (call.newLabel !== undefined) refuse('new_label', 'подпись встроенной кнопки не меняется');
       key = builtin.id;
       const patch: { text?: string; description?: string } = {};
+      for (const f of resetOf('reset')) patch[f] = DEFAULT_PROMPTS[builtin.id][f];
       if (call.text !== undefined) patch.text = call.text;
       if (call.description !== undefined) patch.description = call.description;
-      const reset = call.reset ?? [];
-      if (reset.some((f) => f !== 'text' && f !== 'description')) refuse('reset', 'у кнопок запуска сбрасываются text и description');
-      next = reset.length === 2 ? setBuiltinPrompt(prompts.raw, builtin.id as PromptId, null) : setBuiltinPrompt(prompts.raw, builtin.id as PromptId, patch);
+      next = setBuiltinPrompt(prompts.raw, builtin.id as PromptId, patch);
     } else {
       if (!existing) return refuse('label', 'кнопки нет: завести её - add_button');
       key = `${place}:${existing.label}`;
@@ -364,7 +373,9 @@ export class ButtonsService {
         next = updateLaunchButton(prompts.raw, lp, existing.label, { disabled: off });
         verb = off ? 'disabled' : 'enabled';
       } else {
-        next = updateLaunchButton(prompts.raw, lp, existing.label, { ...(call.text !== undefined ? { text: call.text } : {}), ...(call.description !== undefined ? { description: call.description } : {}), ...(call.newLabel !== undefined ? { label: call.newLabel } : {}) });
+        const reset = resetOf('reset');
+        if (reset.includes('text')) refuse('reset', 'у своей кнопки запуска нет нижнего слоя: text не сбрасывается, его задают или кнопку удаляют');
+        next = updateLaunchButton(prompts.raw, lp, existing.label, { ...(reset.includes('description') ? { description: undefined } : {}), ...(call.text !== undefined ? { text: call.text } : {}), ...(call.description !== undefined ? { description: call.description } : {}), ...(call.newLabel !== undefined ? { label: call.newLabel } : {}) });
         if (call.newLabel !== undefined) finalLabel = call.newLabel;
       }
     }

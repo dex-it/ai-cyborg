@@ -415,6 +415,7 @@ export class TasksView implements PanelView {
         const button = el('button', '', own.label) as HTMLButtonElement;
         button.dataset.action = 'own';
         button.title = launchHint('task', own.label);
+        button.disabled = own.bad === true;
         button.addEventListener('click', (event) => {
           event.stopPropagation();
           this.marks.set(task.key);

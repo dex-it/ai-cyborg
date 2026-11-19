@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ButtonsService, type ButtonsNotice } from '../src/main/buttons-service';
 
-function rig(opts: { workspace?: boolean; global?: unknown; ws?: unknown; prompts?: unknown } = {}) {
+function rig(opts: { workspace?: boolean; global?: unknown; ws?: unknown; prompts?: unknown; promptsProblem?: string } = {}) {
   const files = { global: opts.global, ws: opts.ws, prompts: opts.prompts };
   const writes: string[] = [];
   const notices: ButtonsNotice[] = [];
   const open = opts.workspace !== false;
   const service = new ButtonsService({
     commands: { read: () => ({ raw: files.global }), saveCommands: (c) => { files.global = c; writes.push('global'); } },
-    prompts: { read: () => ({ raw: files.prompts }), savePrompts: (p) => { files.prompts = p; writes.push('prompts'); } },
+    prompts: { read: () => ({ raw: files.prompts, ...(opts.promptsProblem ? { problem: opts.promptsProblem } : {}) }), savePrompts: (p) => { files.prompts = p; writes.push('prompts'); } },
     workspace: () => ({ open, name: open ? 'WS' : null, load: () => files.ws, save: (c) => { files.ws = c; writes.push('ws'); } }),
     mac: false,
     announce: (_caller, notice) => notices.push(notice),
@@ -191,5 +191,48 @@ describe('Кнопки: отмена вызова', () => {
     r.service.undo(r.notices[1].undo);
     assert.deepEqual(r.files.prompts, {});
     assert.match(r.service.undo(999).error ?? '', /журнал/);
+  });
+});
+
+describe('Кнопки: сброс полей кнопок запуска', () => {
+  it('reset по одному полю возвращает встроенное значение и не трогает второе', () => {
+    const r = rig({ prompts: { 'mr.review': { text: 'мой {mr_url}', description: 'моё' } } });
+    r.service.update(1, { place: 'mr', label: 'Ревью', layer: 'all', reset: ['text'] });
+    assert.deepEqual(r.files.prompts, { 'mr.review': { text: '/dex-auto:auto review {mr_url}', description: 'моё' } });
+    r.service.update(1, { place: 'mr', label: 'Ревью', layer: 'all', reset: ['description'] });
+    assert.deepEqual(r.files.prompts, {});
+  });
+
+  it('у своей кнопки запуска reset description исполняется, reset text - отказ с причиной', () => {
+    const r = rig({ prompts: { buttons: [{ place: 'mr', label: 'Своя', text: 'с {mr_url}', description: 'dd' }] } });
+    throws(() => r.service.update(1, { place: 'mr', label: 'Своя', layer: 'all', reset: ['text'] }), /нет нижнего слоя/);
+    r.service.update(1, { place: 'mr', label: 'Своя', layer: 'all', reset: ['description'] });
+    assert.deepEqual(r.files.prompts, { buttons: [{ place: 'mr', label: 'Своя', text: 'с {mr_url}' }] });
+  });
+});
+
+describe('Кнопки: сбой prompts.json не мешает полосе', () => {
+  const broken = { promptsProblem: 'Файл промптов не разобран' };
+
+  it('сохранение полосы воркспейса и add_button для полосы проходят, кнопки запуска отказывают', () => {
+    const r = rig(broken);
+    assert.deepEqual(r.service.save({ scope: 'workspace', commands: [{ label: 'Н', text: 'н' }], base: { commands: undefined } }), {});
+    r.service.add(1, { label: 'Новая', text: 'n' });
+    r.service.disable(1, { label: 'Сливай' });
+    assert.equal((r.files.ws as unknown[]).length, 3);
+    throws(() => r.service.add(1, { place: 'mr', label: 'Х', text: 'x', layer: 'all' }), /не разобран/);
+  });
+});
+
+describe('Кнопки: происхождение кнопок запуска', () => {
+  it('встроенная «Ревью» с правкой в prompts.json остаётся встроенной, правка названа в changed_in', () => {
+    const r = rig({ prompts: { 'mr.review': { text: 'мой {mr_url}' } } });
+    const mr = (JSON.parse(r.service.list(1)) as { mr: { label: string; origin: string; changed_in?: string[] }[] }).mr[0];
+    assert.deepEqual([mr.label, mr.origin, mr.changed_in], ['Ревью', 'builtin', ['all']]);
+  });
+
+  it('реплика с «!» у кнопки запуска отвергается тем же фильтром, что у полосы', () => {
+    const r = rig();
+    throws(() => r.service.add(1, { place: 'mr', label: 'Х', text: '!ls {mr_url}', layer: 'all' }), /«!»/);
   });
 });

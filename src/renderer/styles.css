@@ -2212,6 +2212,40 @@ label.disabled .hint {
   font-size: 11px;
 }
 
+.buttons-grip {
+  color: var(--fg-dim);
+  cursor: grab;
+  user-select: none;
+}
+
+.buttons-field-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.buttons-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.buttons-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.buttons-chip {
+  padding: 0 6px;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+}
+
+.command-announce-close {
+  padding: 0 6px;
+  font-size: 11px;
+}
+
 .command-gear {
   flex: none;
   height: 26px;

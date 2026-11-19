@@ -10,13 +10,13 @@ import {
   PROMPT_IDS,
   PROMPT_PLACEHOLDERS,
   compactPrompts,
-  effectivePrompts,
   fillPrompt,
   launchTemplate,
   launchTitle,
   parseLaunchButtons,
   parsePrompts,
   promptTemplate,
+  promptTextProblem,
 } from '../src/main/prompts';
 import { PromptStore } from '../src/main/prompt-store';
 import { taskPrompt } from '../src/main/trackers';
@@ -146,17 +146,28 @@ describe('Промпты кнопок: подстановка', () => {
   });
 });
 
-describe('Промпты кнопок: действующий набор и compactPrompts', () => {
-  it('действующий набор: все встроенные с описаниями, записи файла на своих местах, лишние в конце, buttons не в счёт', () => {
-    const own = { 'mr.ci': { text: 'свой' }, 'вдруг': 1, buttons: [] };
-    const set = effectivePrompts(own);
-    assert.deepEqual(Object.keys(set), [...PROMPT_IDS, 'вдруг']);
-    assert.deepEqual(set['mr.ci'], { text: 'свой' });
-    assert.deepEqual(set['mr.review'], DEFAULT_PROMPTS['mr.review']);
-  });
-
+describe('Промпты кнопок: compactPrompts', () => {
   it('compactPrompts убирает совпавшие со встроенными и пустой buttons', () => {
     assert.deepEqual(compactPrompts({ 'mr.ci': DEFAULT_PROMPTS['mr.ci'], 'mr.review': { text: 'свой' }, buttons: [] }), { 'mr.review': { text: 'свой' } });
+  });
+});
+
+describe('Правило текста первого сообщения: одно для встроенных и своих кнопок', () => {
+  const allowed = PROMPT_PLACEHOLDERS['mr.review'];
+  const bad = ['', '   ', '-p', ' -x', 'a\nb', 'см {nope}', 5, null];
+
+  it('годный текст проходит, негодный получает причину', () => {
+    assert.equal(promptTextProblem('Ревью {mr_url}', allowed), null);
+    for (const text of bad) assert.notEqual(promptTextProblem(text, allowed), null, String(text));
+  });
+
+  it('parsePrompts и parseLaunchButtons отказывают одинаково на каждом входе правила', () => {
+    for (const text of bad) {
+      const viaPrompts = parsePrompts({ 'mr.review': { text } }).problems.length;
+      const viaButtons = parseLaunchButtons({ buttons: [{ place: 'mr', label: 'Х', text, description: 'д' }] }).bad.length;
+      assert.equal(viaPrompts > 0, viaButtons > 0, String(text));
+      assert.equal(viaPrompts > 0, true, String(text));
+    }
   });
 });
 

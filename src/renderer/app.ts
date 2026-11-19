@@ -18,7 +18,7 @@ import { initSourcesSection } from './sources';
 import { CommandBars, type CommandTarget } from './command-bar';
 import { pickPr } from './command-values';
 import { initButtonsDialog } from './buttons-dialog';
-import { reloadLaunchButtons } from './launch-buttons';
+import { onLaunchButtonsChanged, reloadLaunchButtons } from './launch-buttons';
 import { initClaudeMdEditor } from './claude-md-editor';
 import { ipcErrorText } from './ipc-error';
 import { taskHeader } from './task-header';
@@ -132,8 +132,9 @@ const commandBars = new CommandBars({
   send: (id, data) => api.input(id, data),
   layout: () => requestAnimationFrame(() => active && fitSession(active)),
   openButtons: (request) => void buttonsDialog.open(request),
+  workspaceOpen: () => workspaceFile !== null,
   disableButton: (layer, label) => api.applyButtons({ op: 'disable', place: 'bar', label, layer, disabled: true }).then((reply) => (reply.error ? reply : (void reloadCommands(), reply))),
-  undoButtons: (id) => api.undoButtons(id).then((reply) => (void reloadCommands(), reply)),
+  undoButtons: (id) => api.undoButtons(id).then((reply) => (void reloadCommands(), void reloadLaunchButtons(), void buttonsDialog.refresh(), reply)),
 });
 
 let state: ProjectsState = { projects: [], lastProjectId: null };
@@ -1636,6 +1637,10 @@ const statusHub = new StatusHub({
   startMr,
   startJira,
 });
+onLaunchButtonsChanged(() => {
+  panel.repaint();
+  statusHub.repaint();
+});
 
 // ---------- удалённая сессия ----------
 
@@ -1972,6 +1977,8 @@ window.addEventListener('focus', () => {
 });
 const buttonsDialog = initButtonsDialog({
   mac,
+  isFresh: (key) => commandBars.isFresh(key),
+  seen: (key) => commandBars.seen(key),
   saved: () => {
     void reloadCommands();
     void reloadLaunchButtons();
@@ -1979,7 +1986,7 @@ const buttonsDialog = initButtonsDialog({
 });
 api.on<void>('menu:buttons', () => void buttonsDialog.open());
 api.onButtonsChanged((caller, notice) => {
-  void reloadCommands().then(() => commandBars.announce(caller, notice));
+  void Promise.all([reloadCommands(), reloadLaunchButtons()]).then(() => commandBars.announce(caller, notice));
   void buttonsDialog.refresh();
 });
 const claudeMdEditor = initClaudeMdEditor();

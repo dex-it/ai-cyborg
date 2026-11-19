@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { compactLayer, parseLayer, resolveBar } from '../src/main/commands';
+import { checkLayer, compactLayer, parseLayer, resolveBar } from '../src/main/commands';
 import {
   addButton,
   addLaunchButton,
   buttonsView,
+  composeBar,
   giveBackHotkey,
   layerCtx,
   moveButton,
+  patchAt,
   promptsProblem,
+  removeAt,
   removeButton,
   removeLaunchButton,
   renameButton,
@@ -174,5 +177,61 @@ describe('Инструменты кнопок: форма аргументов',
       assert.ok(typeof r === 'string' && re.test(r), `${name} ${JSON.stringify(args)}: ${String(r)}`);
     }
     assert.deepEqual(validateButtonCall('update_button', { label: 'A', hotkey: null, reset: ['text'], new_label: 'B' }), { place: 'bar', label: 'A', layer: 'workspace', hotkey: null, reset: ['text'], newLabel: 'B' });
+  });
+});
+
+describe('Окно «Кнопки»: путь формы', () => {
+  const global = [{ label: 'Сливай', hotkey: 'F6' }];
+
+  it('замена встроенной через форму окна сохраняет её сочетание у новой кнопки', () => {
+    const s = state({ global });
+    const out = entries(composeBar(layerCtx(s, 'workspace'), { label: 'Слить в release', text: 'x', submit: false, replace: 'Сливай' }));
+    const mine = out.find((e) => (e as { label: string }).label === 'Слить в release');
+    assert.equal((mine as { hotkey?: string }).hotkey, 'F6');
+    const after = resolveBar({ global, workspace: out }, false);
+    assert.equal(after.buttons.find((b) => b.label === 'Слить в release')?.hotkey, 'F6');
+    assert.ok(!after.buttons.some((b) => b.label === 'Сливай'));
+    const own = entries(composeBar(layerCtx(s, 'workspace'), { label: 'Другая', text: 'x', submit: false, replace: 'Сливай', hotkey: 'Alt+Q' }));
+    assert.equal((own.find((e) => (e as { label: string }).label === 'Другая') as { hotkey?: string }).hotkey, 'Alt+Q');
+  });
+
+  it('форма новой кнопки несёт описание', () => {
+    const out = entries(composeBar(layerCtx(state(), 'workspace'), { label: 'Н', text: 'x', submit: true, description: 'д' }));
+    assert.deepEqual(out, [{ label: 'Н', text: 'x', submit: true, description: 'д' }]);
+  });
+
+  it('частичная запись без кнопки ниже видна строкой, её можно поправить и удалить, после чего слой сохраняется', () => {
+    const s = state({ workspace: [{ label: 'Нет такой', hotkey: 'Alt+N' }] });
+    const row = rowOf(s, 'workspace', 'Нет такой');
+    assert.ok(row?.issue && row.rawIndex === 0);
+    const ctx = layerCtx(s, 'workspace');
+    const fixed = entries(patchAt(ctx, 0, { text: 'ок' }));
+    assert.equal(checkLayer('workspace', fixed, { global: undefined, workspace: undefined }, false).ok, true);
+    const gone = entries(removeAt(ctx, 0));
+    assert.equal(checkLayer('workspace', gone, { global: undefined, workspace: undefined }, false).ok, true);
+  });
+
+  it('запись с пустым text видна строкой по номеру, исправляется текстом и удаляется; запись не объект - только удалением', () => {
+    const s = state({ workspace: [{ label: 'X', text: '' }, 5] });
+    const rows = buttonsView(s, 'workspace').groups[0].rows.filter((r) => r.rawIndex !== undefined);
+    assert.deepEqual(rows.map((r) => [r.rawIndex, !!r.issue]), [[0, true], [1, true]]);
+    const ctx = layerCtx(s, 'workspace');
+    assert.deepEqual(entries(patchAt(ctx, 0, { text: 'т' })), [{ label: 'X', text: 'т' }, 5]);
+    assert.ok(!patchAt(ctx, 1, { text: 'т' }).ok);
+    assert.deepEqual(entries(removeAt(ctx, 1)), [{ label: 'X', text: '' }]);
+    assert.ok(!removeAt(ctx, 7).ok);
+  });
+
+  it('негодная запись над встроенной подписью тоже получает свою строку', () => {
+    const rows = buttonsView(state({ workspace: [{ label: 'Сливай', text: '' }] }), 'workspace').groups[0].rows;
+    assert.ok(rows.some((r) => r.key === 'bar:#0' && r.issue));
+    assert.ok(!rows.find((r) => r.key === 'bar:сливай')?.issue);
+  });
+
+  it('встроенная кнопка запуска с правкой в prompts.json остаётся встроенной, правка видна в from и changed', () => {
+    const s = state({}, { 'mr.review': { text: 'мой {mr_url}' } });
+    const row = rowOf(s, 'global', 'Ревью');
+    assert.deepEqual([row?.origin, row?.from.text, row?.changed], ['builtin', 'global', true]);
+    assert.equal(rowOf(s, 'workspace', 'Ревью')?.changed, false);
   });
 });

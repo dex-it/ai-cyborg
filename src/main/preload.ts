@@ -52,7 +52,7 @@ const api = {
   runFile: (file: string): Promise<void> => ipcRenderer.invoke('file:run', file),
   /** http(s)-ссылка - в браузере системы; иные схемы главный процесс отбрасывает. */
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('url:open', url),
-  /** Файл кнопок (воркспейса или общий) либо промптов - в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
+  /** Глобальный CLAUDE.md в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
   revealConfig: (kind: 'claude-md'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
   createSession: (projectId: string, cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
     ipcRenderer.invoke('session:create', projectId, cwd, addDirs, start),

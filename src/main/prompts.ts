@@ -1,4 +1,5 @@
 // Промпты кнопок запуска сессий (фича 12): первое сообщение сессии из «Ревью», «Доработать», «CI», «Взять в работу» и сессии по задаче Jira.
+// Чистый файл без Node: проверку при записи и сборку текста делает главный процесс, подсказки и вид окна «Кнопки» - интерфейс.
 
 import { CONTROL, LABEL_MAX, MAX_COMMANDS, TEXT_MAX, sameLabel, type ButtonIssue } from './commands';
 
@@ -54,6 +55,18 @@ export const BUTTONS_KEY = 'buttons';
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isPromptId = (id: string): id is PromptId => (PROMPT_IDS as string[]).includes(id);
 
+/** Правило первого сообщения сессии, общее для встроенных и своих кнопок запуска: claude берёт его позиционным аргументом, ведущий «-» он принял бы за параметр. */
+export function promptTextProblem(text: unknown, allowed: readonly string[]): string | null {
+  if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX || CONTROL.test(text)) return `text - непустая строка до ${TEXT_MAX} знаков в одну строку без управляющих символов`;
+  if (text.trim().startsWith('-')) return 'text не может начинаться с «-»: claude принял бы его за параметр';
+  const unknown = [...new Set([...text.matchAll(ANY_PLACEHOLDER)].map((m) => m[1]))].filter((name) => !allowed.includes(name));
+  if (unknown.length) return `неизвестная подстановка ${unknown.map((n) => `{${n}}`).join(', ')} (есть: ${allowed.map((n) => `{${n}}`).join(', ')})`;
+  return null;
+}
+
+const descriptionProblem = (description: unknown): string | null =>
+  typeof description === 'string' && description.trim() && description.length <= PROMPT_DESCRIPTION_MAX && !CONTROL.test(description) ? null : `description - непустая строка до ${PROMPT_DESCRIPTION_MAX} знаков в одну строку`;
+
 export interface ParsedPrompts {
   /** Годные записи файла (без встроенных). */
   prompts: Partial<Record<PromptId, PromptTemplate>>;
@@ -78,38 +91,20 @@ export function parsePrompts(raw: unknown): ParsedPrompts {
       continue;
     }
     const { text, description } = item;
-    if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX || CONTROL.test(text)) {
-      problems.push(`${at}: text - непустая строка до ${TEXT_MAX} знаков в одну строку без управляющих символов`);
+    const textProblem = promptTextProblem(text, PROMPT_PLACEHOLDERS[id]);
+    if (textProblem) {
+      problems.push(`${at}: ${textProblem}`);
       continue;
     }
-    // Первое сообщение идёт позиционным аргументом claude: ведущий «-» он принял бы за параметр.
-    if (text.trim().startsWith('-')) {
-      problems.push(`${at}: text не может начинаться с «-»: claude принял бы его за параметр`);
-      continue;
-    }
-    const allowed = PROMPT_PLACEHOLDERS[id];
-    const unknown = [...new Set([...text.matchAll(ANY_PLACEHOLDER)].map((m) => m[1]))].filter((name) => !allowed.includes(name));
-    if (unknown.length) {
-      problems.push(`${at}: неизвестная подстановка ${unknown.map((n) => `{${n}}`).join(', ')} (есть: ${allowed.map((n) => `{${n}}`).join(', ')})`);
-      continue;
-    }
-    const template: PromptTemplate = { text: text.trim() };
-    if (typeof description === 'string' && description.trim() && description.length <= PROMPT_DESCRIPTION_MAX && !CONTROL.test(description)) template.description = description.trim();
-    else if (description !== undefined) problems.push(`${at}: description - непустая строка до ${PROMPT_DESCRIPTION_MAX} знаков в одну строку`);
+    const template: PromptTemplate = { text: (text as string).trim() };
+    const descProblem = description === undefined ? null : descriptionProblem(description);
+    if (descProblem) problems.push(`${at}: ${descProblem}`);
+    else if (typeof description === 'string') template.description = description.trim();
     const extra = Object.keys(item).filter((key) => !KNOWN_FIELDS.has(key));
     if (extra.length) problems.push(`${at}: неизвестное поле ${extra.join(', ')}`);
     prompts[id] = template;
   }
   return { prompts, problems };
-}
-
-/** Действующий набор в том виде, как он записывается в файл: встроенные промпты (с описаниями) и записи файла как они есть. Записи берутся без разбора: негодную можно увидеть и поправить, а не потерять при сохранении. */
-export function effectivePrompts(raw: unknown): Record<string, unknown> {
-  const own = isRecord(raw) ? raw : {};
-  const merged: Record<string, unknown> = {};
-  for (const id of PROMPT_IDS) merged[id] = own[id] ?? DEFAULT_PROMPTS[id];
-  for (const [id, item] of Object.entries(own)) if (!(id in merged) && id !== BUTTONS_KEY) merged[id] = item;
-  return merged;
 }
 
 /** Шаблон промпта для старта сессии: запись файла либо встроенный текст. Негодная запись названа ошибкой, а не заменена встроенной молча: сессия по такой кнопке не стартует, пока файл не исправят. */
@@ -191,16 +186,14 @@ export function parseLaunchButtons(raw: unknown): ParsedLaunchButtons {
     if (named === undefined || named.length > LABEL_MAX || CONTROL.test(label as string)) return reject(`label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`, at, named, 'label');
     if (BUILTIN_LAUNCH[at].some((b) => sameLabel(b.label, named))) return reject('подпись встроенной кнопки этого места', at, named, 'label');
     if (out.buttons.some((b) => b.place === at && sameLabel(b.label, named))) return reject('подпись повторена, действует первая кнопка', at, named, 'label');
-    if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX || CONTROL.test(text)) return reject(`text - непустая строка до ${TEXT_MAX} знаков в одну строку без управляющих символов`, at, named, 'text');
-    if (text.trim().startsWith('-')) return reject('text не может начинаться с «-»: claude принял бы его за параметр', at, named, 'text');
-    const allowed = PLACE_PLACEHOLDERS[at];
-    const unknown = [...new Set([...text.matchAll(ANY_PLACEHOLDER)].map((m) => m[1]))].filter((name) => !allowed.includes(name));
-    if (unknown.length) return reject(`неизвестная подстановка ${unknown.map((n) => `{${n}}`).join(', ')} (есть: ${allowed.map((n) => `{${n}}`).join(', ')})`, at, named, 'text');
-    if (description !== undefined && !(typeof description === 'string' && description.trim() && description.length <= PROMPT_DESCRIPTION_MAX && !CONTROL.test(description))) return reject(`description - непустая строка до ${PROMPT_DESCRIPTION_MAX} знаков в одну строку`, at, named, 'description');
+    const textProblem = promptTextProblem(text, PLACE_PLACEHOLDERS[at]);
+    if (textProblem) return reject(textProblem, at, named, 'text');
+    const descProblem = description === undefined ? null : descriptionProblem(description);
+    if (descProblem) return reject(descProblem, at, named, 'description');
     if (disabled !== undefined && typeof disabled !== 'boolean') return reject('disabled - true или false', at, named, 'disabled');
     const extra = Object.keys(item).filter((key) => !LAUNCH_FIELDS.has(key));
     if (extra.length) return reject(`неизвестное поле ${extra.join(', ')}`, at, named);
-    out.buttons.push({ place: at, label: named, text: text.trim(), ...(typeof description === 'string' ? { description: description.trim() } : {}), ...(disabled === true ? { disabled: true } : {}) });
+    out.buttons.push({ place: at, label: named, text: (text as string).trim(), ...(typeof description === 'string' ? { description: description.trim() } : {}), ...(disabled === true ? { disabled: true } : {}) });
   });
   return out;
 }

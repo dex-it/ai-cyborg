@@ -34,6 +34,8 @@ export interface ButtonRow {
   origin: Layer;
   /** Строка бара правится формой с полями, строка запуска - только текст и описание. */
   kind: 'bar' | 'launch';
+  /** Номер записи в файле слоя: у строки, которой нет в наборе (негодной), адрес один - номер. */
+  rawIndex?: number;
   builtinId?: PromptId;
   text: string;
   submit: boolean;
@@ -115,11 +117,41 @@ export function buttonsView(state: ButtonsState, layer: FileLayer): ButtonsView 
     }
   });
   const rawBar = Array.isArray(cfg[layer]) ? (cfg[layer] as unknown[]) : [];
+  // Запись, которой нет в наборе (негодная либо без кнопки ниже), встаёт строкой по номеру в файле слоя: её можно поправить и удалить.
   for (const issue of here) {
-    const row = issue.label === undefined ? undefined : bar.find((r) => sameLabel(r.label, issue.label as string));
-    if (row) row.issue = row.issue ? `${row.issue}\n${issue.message}` : issue.message;
-    else if (issue.index !== undefined) bar.push({ key: `bar:#${issue.index}`, place: 'bar', label: issue.label ?? labelOf(rawBar[issue.index]) ?? `Запись ${issue.index + 1}`, origin: layer, kind: 'bar', text: '', submit: false, from: {}, changed: true, disabled: false, issue: issue.message });
+    const row = issue.dropped || issue.label === undefined ? undefined : bar.find((r) => sameLabel(r.label, issue.label as string));
+    if (row) {
+      row.issue = row.issue ? `${row.issue}\n${issue.message}` : issue.message;
+      continue;
+    }
+    const at = issue.index ?? (issue.label === undefined ? -1 : rawBar.findIndex((e) => labelOf(e) !== null && sameLabel(labelOf(e) as string, issue.label as string)));
+    if (at < 0) continue;
+    const key = `bar:#${at}`;
+    const shown = bar.find((r) => r.key === key);
+    if (shown) {
+      shown.issue = `${shown.issue}\n${issue.message}`;
+      continue;
+    }
+    const raw = isRecord(rawBar[at]) ? (rawBar[at] as Record<string, unknown>) : {};
+    const str = (k: string): string | undefined => (typeof raw[k] === 'string' ? (raw[k] as string) : undefined);
+    bar.push({
+      key,
+      place: 'bar',
+      label: labelOf(rawBar[at]) ?? `Запись ${at + 1}`,
+      origin: layer,
+      kind: 'bar',
+      rawIndex: at,
+      text: str('text') ?? '',
+      submit: raw.submit === true,
+      ...(str('hotkey') ? { hotkey: str('hotkey') as string } : {}),
+      ...(str('description') ? { description: str('description') as string } : {}),
+      from: {},
+      changed: true,
+      disabled: false,
+      issue: issue.message,
+    });
   }
+  const stray = here.filter((i) => i.index === undefined && i.label === undefined).map((i) => i.message);
   const groups: ButtonGroup[] = [{ place: 'bar', title: GROUP_TITLES.bar, rows: bar }];
   const parsedPrompts = parsePrompts(state.prompts);
   const custom = parseLaunchButtons(state.prompts);
@@ -134,7 +166,7 @@ export function buttonsView(state: ButtonsState, layer: FileLayer): ButtonsView 
         key: keyOf(place, b.label),
         place,
         label: b.label,
-        origin: ownPrompt || rawOwn !== undefined ? 'global' : 'builtin',
+        origin: 'builtin',
         kind: 'launch',
         builtinId: b.id,
         text: ownPrompt?.text ?? (isRecord(rawOwn) && typeof rawOwn.text === 'string' ? rawOwn.text : DEFAULT_PROMPTS[b.id].text),
@@ -171,8 +203,8 @@ export function buttonsView(state: ButtonsState, layer: FileLayer): ButtonsView 
     groups.push({ place, title: GROUP_TITLES[place], rows });
   }
   const loose = [...custom.issues.filter((i) => i.index === undefined).map((i) => i.message), ...custom.bad.filter((b) => b.place === undefined).map((b) => b.message)];
-  const stray = [...here.filter((i) => i.index === undefined && i.label === undefined).map((i) => i.message), ...parsedPrompts.problems.filter((x) => !BUILTIN_LAUNCH.mr.concat(BUILTIN_LAUNCH.task, BUILTIN_LAUNCH.jira).some((b) => x.startsWith(`Промпт «${b.id}»`)))];
-  return { groups, issues: [...stray, ...loose] };
+  const looseLaunch = [...parsedPrompts.problems.filter((x) => !BUILTIN_LAUNCH.mr.concat(BUILTIN_LAUNCH.task, BUILTIN_LAUNCH.jira).some((b) => x.startsWith(`Промпт «${b.id}»`)))];
+  return { groups, issues: [...stray, ...looseLaunch, ...loose] };
 }
 
 // ---------- операции над записями слоя ----------
@@ -255,6 +287,24 @@ export function removeButton(ctx: LayerCtx, label: string): OpResult {
   return { ok: true, entries: ctx.entries.filter((e) => !(labelOf(e) !== null && sameLabel(labelOf(e) as string, label))) };
 }
 
+/** Запись слоя по номеру в файле: негодную, у которой подписи может не быть, адресует только он. */
+export function removeAt(ctx: LayerCtx, index: number): OpResult {
+  if (!Number.isInteger(index) || index < 0 || index >= ctx.entries.length) return fail('записи с таким номером нет');
+  return { ok: true, entries: ctx.entries.filter((_e, i) => i !== index) };
+}
+
+/** Правит поля записи по номеру в файле; undefined убирает поле. Работает и с негодной записью. */
+export function patchAt(ctx: LayerCtx, index: number, patch: Record<string, unknown>): OpResult {
+  const current = ctx.entries[index];
+  if (!isRecord(current)) return fail('запись не объект: её только удаляют');
+  const entry = { ...current };
+  for (const [field, value] of Object.entries(patch)) {
+    if (value === undefined) delete entry[field];
+    else entry[field] = value;
+  }
+  return { ok: true, entries: ctx.entries.map((e, i) => (i === index ? entry : e)) };
+}
+
 export interface BarDraft extends BarPatch {
   label: string;
   text: string;
@@ -301,6 +351,23 @@ export function replaceButton(ctx: LayerCtx, target: string, draft: BarDraft): O
   // Без перечисленных следом кнопок новая ушла бы в конец набора, а не на место заменённой.
   const following = ctx.below.slice(ctx.below.findIndex((b) => sameLabel(b.label, target)) + 1).filter((b) => findAt(off.entries, b.label) < 0).map((b) => ({ label: b.label }));
   return { ok: true, entries: [...off.entries.slice(0, at + 1), entry, ...following, ...off.entries.slice(at + 1)] };
+}
+
+export interface ComposeForm {
+  label: string;
+  text: string;
+  submit: boolean;
+  description?: string;
+  /** Подпись заменяемой кнопки нижнего слоя; нет - новая кнопка. */
+  replace?: string;
+  /** Сочетание задаёт человек; без него замена наследует сочетание заменяемой. */
+  hotkey?: string;
+}
+
+/** Форма новой кнопки полосы: то, что окно делает по «Создать» и «Заменить». Сочетание заменяемой переходит к новой, если человек не назвал своё. */
+export function composeBar(ctx: LayerCtx, form: ComposeForm): OpResult {
+  const draft: BarDraft = { label: form.label, text: form.text, submit: form.submit, ...(form.description ? { description: form.description } : {}), ...(form.hotkey ? { hotkey: form.hotkey } : {}) };
+  return form.replace ? replaceButton(ctx, form.replace, draft) : addButton(ctx, draft);
 }
 
 /** Новый порядок кнопок слоя: каждая нижняя кнопка, чьё место сменилось, получает запись, лишние записи уберёт сжатие. */

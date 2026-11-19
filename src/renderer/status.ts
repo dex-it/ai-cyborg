@@ -96,6 +96,11 @@ export class StatusHub {
   }
 
   /** Проект выбран либо его источники изменились: данные прежнего проекта сброшены, кнопка показана по источникам. */
+  /** Набор кнопок запуска изменился: открытая карточка рисуется заново. */
+  repaint(): void {
+    if (this.opened) this.render();
+  }
+
   onProjectChanged(): void {
     this.seq++;
     this.loading = false;
@@ -305,13 +310,13 @@ export class StatusHub {
       this.close();
       this.host.startJira(issue, linked[0], this.button);
     });
-    if (!open1) start.title = `${launchHint('jira', 'jira.start')}`;
+    if (!open1 && !start.disabled) start.title = launchHint('jira', 'jira.start');
     actions.append(start);
     if (!open1) {
       for (const own of ownLaunchButtons('jira')) {
         const button = el('button', '', own.label) as HTMLButtonElement;
         button.title = launchHint('jira', own.label);
-        button.disabled = !this.host.project()?.repos.length;
+        button.disabled = !this.host.project()?.repos.length || own.bad === true;
         button.addEventListener('click', (event) => {
           event.stopPropagation();
           this.close();
@@ -431,8 +436,10 @@ export class StatusHub {
     meta.append(el('span', 'status-when', `${mr.path} · ${mr.sourceBranch}`));
     main.append(title, meta);
     const actions = el('div', 'status-actions');
-    for (const action of mrActions(mr, why?.kinds ?? [], !!this.host.sessionOf(mr.key))) {
+    const hasSession = !!this.host.sessionOf(mr.key);
+    for (const action of mrActions(mr, why?.kinds ?? [], hasSession)) {
       const button = el('button', action.primary ? 'primary' : '', action.label) as HTMLButtonElement;
+      if (!hasSession) button.title = launchHint('mr', `mr.${action.intent}`);
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         this.close();
@@ -444,6 +451,7 @@ export class StatusHub {
       for (const own of ownLaunchButtons('mr')) {
         const button = el('button', '', own.label) as HTMLButtonElement;
         button.title = launchHint('mr', own.label);
+        button.disabled = own.bad === true;
         button.addEventListener('click', (event) => {
           event.stopPropagation();
           this.close();

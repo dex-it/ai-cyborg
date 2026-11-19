@@ -193,6 +193,8 @@ export interface ButtonIssue {
   index?: number;
   label?: string;
   field?: EntryField;
+  /** Запись разобрать нельзя и она не попала в набор: окно показывает её сырой строкой, чтобы поправить или удалить. */
+  dropped?: boolean;
   message: string;
 }
 
@@ -206,8 +208,8 @@ export interface ParsedLayer {
 export function parseLayer(raw: unknown, mac: boolean, layer: FileLayer = 'global'): ParsedLayer {
   const issues: ButtonIssue[] = [];
   const entries: CommandEntry[] = [];
-  const issue = (index: number | undefined, label: unknown, field: EntryField | undefined, message: string): void => {
-    issues.push({ place: 'bar', layer, ...(index === undefined ? {} : { index }), ...(typeof label === 'string' && label.trim() ? { label: label.trim() } : {}), ...(field ? { field } : {}), message });
+  const issue = (index: number | undefined, label: unknown, field: EntryField | undefined, message: string, dropped = false): void => {
+    issues.push({ place: 'bar', layer, ...(dropped ? { dropped: true } : {}), ...(index === undefined ? {} : { index }), ...(typeof label === 'string' && label.trim() ? { label: label.trim() } : {}), ...(field ? { field } : {}), message });
   };
   if (raw === undefined) return { entries, issues, problems: [] };
   if (!Array.isArray(raw)) {
@@ -217,27 +219,27 @@ export function parseLayer(raw: unknown, mac: boolean, layer: FileLayer = 'globa
   if (raw.length > MAX_COMMANDS) issue(undefined, undefined, undefined, `Кнопок больше ${MAX_COMMANDS}: лишние пропущены`);
   raw.slice(0, MAX_COMMANDS).forEach((item, index) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) {
-      issue(index, undefined, undefined, `${where(index, undefined)}: не объект`);
+      issue(index, undefined, undefined, `${where(index, undefined)}: не объект`, true);
       return;
     }
     const { label, text, submit, hotkey, description, disabled } = item as Record<string, unknown>;
     const at = where(index, label);
-    const bad = (field: EntryField | undefined, reason: string): void => issue(index, label, field, `${at}: ${reason}`);
+    const bad = (field: EntryField | undefined, reason: string, dropped = false): void => issue(index, label, field, `${at}: ${reason}`, dropped);
     if (typeof label !== 'string' || !label.trim() || label.trim().length > LABEL_MAX || CONTROL.test(label)) {
-      bad('label', `label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`);
+      bad('label', `label - непустая строка до ${LABEL_MAX} знаков без управляющих символов`, true);
       return;
     }
     const entry: CommandEntry = { label: label.trim() };
     if (text !== undefined) {
       if (typeof text !== 'string' || !text.trim() || text.length > TEXT_MAX || CONTROL.test(text)) {
-        bad('text', `text - непустая строка до ${TEXT_MAX} знаков в одну строку`);
+        bad('text', `text - непустая строка до ${TEXT_MAX} знаков в одну строку`, true);
         return;
       }
       entry.text = text.trim();
     }
     if (submit !== undefined) {
       if (typeof submit !== 'boolean') {
-        bad('submit', 'submit - true или false');
+        bad('submit', 'submit - true или false', true);
         return;
       }
       entry.submit = submit;
@@ -422,9 +424,13 @@ function assignHotkeys(rows: BarRow[], mac: boolean, issues: ButtonIssue[]): voi
     owners.set(key, owner);
     for (const row of group) {
       if (row === owner) continue;
-      if (rank(row) === top && top > 0) issues.push({ place: 'bar', layer: row.from.hotkey as FileLayer, label: row.label, field: 'hotkey', message: `«${row.label}»: сочетание ${row.hotkey} уже у кнопки «${owner.label}»` });
       row.hotkeyLostTo = owner.label;
       owner.hotkeyTakenFrom = [...(owner.hotkeyTakenFrom ?? []), row.label];
+    }
+    // Повтор внутри слоя - замечание, даже когда сочетание забрала кнопка слоя повыше: она может его отдать.
+    for (const layer of ['global', 'workspace'] as const) {
+      const same = group.filter((r) => r.from.hotkey === layer);
+      for (const row of same.slice(1)) issues.push({ place: 'bar', layer, label: row.label, field: 'hotkey', message: `«${row.label}»: сочетание ${row.hotkey} уже у кнопки «${same[0].label}»` });
     }
   }
   for (const row of rows) {
@@ -513,7 +519,8 @@ export type LayerCheck = { ok: true; entries: CommandEntry[] } | { ok: false; is
 /** Проверка слоя перед записью: любое замечание в этом слое - отказ. Сочетания должны годиться на обеих системах (файл переносят). Повтор сочетания между слоями не замечание: верхняя кнопка забирает его у нижней. */
 export function checkLayer(layer: FileLayer, raw: unknown, config: Pick<CommandsConfig, 'global' | 'workspace'>, mac: boolean): LayerCheck {
   if (!Array.isArray(raw)) return { ok: false, issues: [{ place: 'bar', layer, message: 'Нужен массив кнопок: [ { "label": ..., "text": ... } ]' }] };
-  const resolved = resolveBar(layer === 'global' ? { global: raw, workspace: config.workspace } : { global: config.global, workspace: raw }, mac);
+  // Слой судится сам по себе: кнопка слоя повыше сочетание у него забрала бы, а повтор остался бы в файле.
+  const resolved = resolveBar(layer === 'global' ? { global: raw, workspace: undefined } : { global: config.global, workspace: raw }, mac);
   const issues = resolved.issues.filter((i) => i.layer === layer);
   const parsed = parseLayer(raw, mac, layer);
   for (const entry of parsed.entries) {
@@ -527,6 +534,8 @@ export function checkLayer(layer: FileLayer, raw: unknown, config: Pick<Commands
 // ---------- подстановки ----------
 
 export type Placeholder = 'branch' | 'pr' | 'task';
+/** Подстановки кнопки полосы в порядке показа в окне «Кнопки». */
+export const BAR_PLACEHOLDERS: readonly Placeholder[] = ['branch', 'pr', 'task'];
 export type PlaceholderValues = Partial<Record<Placeholder, string | null>>;
 export type Expanded = { ok: true; text: string } | { ok: false; reason: string };
 

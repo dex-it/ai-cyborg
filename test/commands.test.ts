@@ -344,3 +344,25 @@ describe('Кнопки: сжатие слоя', () => {
     assert.deepEqual(compact([{ label: 'Моя', text: 'м', submit: true }]), [{ label: 'Моя', text: 'м', submit: true }]);
   });
 });
+
+describe('Повтор сочетания внутри слоя', () => {
+  const dup = [{ label: 'A', text: 'a', hotkey: 'Alt+1' }, { label: 'B', text: 'b', hotkey: 'Alt+1' }];
+
+  it('общий слой с повтором отказывает при любом содержимом воркспейса: сочетание забрала кнопка воркспейса, но может отдать', () => {
+    assert.equal(checkLayer('global', dup, { global: undefined, workspace: undefined }, false).ok, false);
+    assert.equal(checkLayer('global', dup, { global: undefined, workspace: [{ label: 'C', text: 'c', hotkey: 'Alt+1' }] }, false).ok, false);
+    assert.equal(checkLayer('global', dup, { global: undefined, workspace: [{ label: 'A', disabled: true }] }, false).ok, false);
+  });
+
+  it('при чтении повтор в нижнем слое назван, даже когда сочетание забрал воркспейс', () => {
+    const resolved = resolveBar({ global: dup, workspace: [{ label: 'C', text: 'c', hotkey: 'Alt+1' }] }, false);
+    assert.deepEqual(resolved.issues.map((i) => [i.layer, i.label]), [['global', 'B']]);
+    assert.equal(resolved.buttons.find((b) => b.label === 'C')?.hotkey, 'Alt+1');
+  });
+
+  it('то же сочетание в разных слоях по-прежнему не замечание', () => {
+    const cfg = { global: [dup[0]], workspace: [{ label: 'C', text: 'c', hotkey: 'Alt+1' }] };
+    assert.deepEqual(resolveBar(cfg, false).issues, []);
+    assert.equal(checkLayer('workspace', cfg.workspace, { global: cfg.global, workspace: undefined }, false).ok, true);
+  });
+});
