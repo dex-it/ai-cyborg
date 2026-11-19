@@ -20,19 +20,11 @@ export const DESCRIPTION_MAX = 200;
 /** Предел текста файла кнопок, принимаемого главным процессом от интерфейса. */
 export const MAX_COMMANDS_TEXT = 200_000;
 
-/** Встроенные кнопки, нижний слой под общим набором и набором воркспейса: фразы, которыми Claude Code понимает типовое действие. */
-export const DEFAULT_COMMANDS: readonly CommandButton[] = [
-  { label: 'Сливай', text: 'сливай', submit: true, hotkey: 'F1', description: 'Фраза «сливай»: слить PR текущей ветки.' },
-  { label: 'Сделай PR', text: 'сделай PR', submit: true, hotkey: 'F2', description: 'Фраза «сделай PR»: открыть PR из текущей ветки.' },
-  {
-    label: 'Мердж',
-    text: 'открой PR текущей ветки, если его ещё нет, и смерджи его в целевую ветку',
-    submit: false,
-    hotkey: 'F3',
-    description: 'Вставляет без Enter просьбу открыть PR ветки, если его нет, и слить его в целевую ветку: проверьте и нажмите Enter сами.',
-  },
-  { label: 'Приберись', text: 'приберись', submit: true, hotkey: 'F4', description: 'Фраза «приберись»: убрать за собой, например слитые ветки.' },
-];
+/** Встроенных кнопок полосы нет: набор задают общий файл и поле commands воркспейса. Список подменяется только в тестах правила слоёв, которым нужен нижний слой. */
+export let DEFAULT_COMMANDS: readonly CommandButton[] = [];
+export function setDefaultCommandsForTest(commands: readonly CommandButton[]): void {
+  DEFAULT_COMMANDS = commands;
+}
 
 const KNOWN_FIELDS = new Set(['label', 'text', 'submit', 'hotkey', 'description', 'disabled']);
 /**
