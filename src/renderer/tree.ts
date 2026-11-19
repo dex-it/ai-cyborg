@@ -250,6 +250,11 @@ export class TreeView {
           this.onOpenFile(childAbs, root);
         }
       });
+      row.addEventListener('contextmenu', (event) => {
+        if (!event.shiftKey) return;
+        event.preventDefault();
+        void navigator.clipboard.writeText(childAbs).catch(() => undefined);
+      });
       container.append(row);
       if (expanded) await this.renderDir(root, state, childAbs, childRel, depth + 1, container);
     }
