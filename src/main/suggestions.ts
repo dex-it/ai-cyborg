@@ -8,6 +8,8 @@ export const SUGGEST_MAX = 2;
 const SUGGEST_BLOCK_MAX = 20_000;
 const MARKER = '<!-- cyborg-buttons:';
 const END = '-->';
+/** Точки и пробелы по краям комментария: модель по привычке закрывает точкой и `]`, и `-->`, а инструкция её не просит. */
+const EDGE = /[\s.]+$/;
 const SHELL_PREFIX = '!';
 const SLASH_PREFIX = '/';
 const ELLIPSIS = '…';
@@ -27,8 +29,9 @@ function fitLabel(label: unknown): unknown {
 
 /** Инструкция сессии: когда и в каком виде предлагать кнопки (дописывается к системному промту, как инструкция об изоляции). */
 export const SUGGEST_PROMPT =
-  `Если после ответа человеку понятны 1-${SUGGEST_MAX} следующих шага, допиши в самом конце ответа, отдельной строкой, комментарий ` +
-  `${MARKER} [{"label":"подпись до ${LABEL_MAX} знаков","text":"реплика человека к тебе, одной строкой"}] ${END} . ` +
+  `Если после ответа человеку понятны 1-${SUGGEST_MAX} следующих шага, допиши в самом конце ответа, отдельной строкой, комментарий. ` +
+  `Строка точно такая: пробел перед ${END}, ни точки, ни других знаков между «]» и ${END} и после него: ` +
+  `${MARKER} [{"label":"подпись до ${LABEL_MAX} знаков","text":"реплика человека к тебе, одной строкой"}] ${END}\n` +
   '"submit":true добавляй, только если реплику можно отправить без правки; иначе поле не пиши, и человек допишет реплику сам. ' +
   'Реплика не начинается с «!». ' +
   'Не очевидно, что делать дальше, - не пиши ничего. В тексте ответа комментарий не упоминай.';
@@ -36,11 +39,11 @@ export const SUGGEST_PROMPT =
 /** Кнопки из хвоста ответа: комментарий должен стоять в самом конце сообщения (процитированный из файла в середине ответа не в счёт). Ответ модели недоверенный: поля проверяются как у кнопок файла, кроме длины подписи (модель промахивается в счёте знаков, длинная обрезается с «…»), лишние поля отбрасываются. `submit` принимается (нажимает по-прежнему человек), сочетание клавиш и отключение - нет. Claude Code выполняет ввод с «!» как команду оболочки без запроса разрешения (режим shell), а с «/» как свою команду: такая реплика от модели отбрасывается («!») либо только вставляется без Enter («/»). */
 export function parseSuggestions(message: unknown): CommandButton[] {
   if (typeof message !== 'string') return [];
-  const trimmed = message.trimEnd();
+  const trimmed = message.replace(EDGE, '');
   if (!trimmed.endsWith(END)) return [];
   const start = trimmed.lastIndexOf(MARKER);
   if (start < 0) return [];
-  const body = trimmed.slice(start + MARKER.length, trimmed.length - END.length).trim();
+  const body = trimmed.slice(start + MARKER.length, trimmed.length - END.length).replace(EDGE, '').trim();
   if (!body || body.length > SUGGEST_BLOCK_MAX) return [];
   let raw: unknown;
   try {
@@ -97,7 +100,7 @@ export function displaySuggestions(delta: string): string | null {
 }
 
 export function withoutSuggestions(message: string): string {
-  const trimmed = message.trimEnd();
+  const trimmed = message.replace(EDGE, '');
   const start = trimmed.endsWith(END) ? trimmed.lastIndexOf(MARKER) : -1;
   return start < 0 ? message : trimmed.slice(0, start).trimEnd();
 }
