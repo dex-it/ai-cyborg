@@ -12,6 +12,7 @@
     "bench": "node scripts/bench.mjs",
     "parity": "node scripts/parity.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs",
+    "smoke:passport": "npm run build && node scripts/smoke-passport.mjs",
     "check:corpus": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-corpus.ts",
     "corpus:matrix": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-corpus.ts --write-matrix",
     "postinstall": "electron-rebuild -f -w node-pty",

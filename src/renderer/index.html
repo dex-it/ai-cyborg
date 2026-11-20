@@ -11,6 +11,7 @@
     <div id="app">
       <aside id="sidebar">
         <div id="project-bar">
+          <button id="passport-dot" class="passport-dot" data-level="unchecked" title="Паспорт не проверен" aria-haspopup="dialog" hidden>–</button>
           <select id="project-select" title="Проект"></select>
         </div>
         <div id="side-tabs" role="tablist">
@@ -185,6 +186,19 @@
           <span class="spacer"></span>
           <button type="button" id="workspace-cancel">Отмена</button>
           <button type="button" id="workspace-create" class="primary" disabled>Создать</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="passport-dialog" aria-labelledby="passport-title">
+      <form method="dialog">
+        <h2 id="passport-title">Паспорт проекта</h2>
+        <div id="passport-note" class="dialog-note" hidden></div>
+        <div id="passport-error" class="dialog-error" role="alert" hidden></div>
+        <div id="passport-body"></div>
+        <footer>
+          <span class="spacer"></span>
+          <button type="button" id="passport-close">Закрыть</button>
         </footer>
       </form>
     </dialog>

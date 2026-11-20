@@ -30,6 +30,7 @@ import { RenderTickets } from './render-ticket';
 import { asMenuItem, bindList, rove } from './list-keys';
 import { bindTabDrag, bindTablist, markTab, selectTab } from './tabs';
 import { ExtensionsDialog, type ExtensionsTab } from './extensions-dialog';
+import { PassportUi } from './passport-dialog';
 import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
@@ -185,6 +186,7 @@ function selectProject(next: Project | null, save = true): void {
   updateBackButton(active);
   panel.onProjectChanged();
   statusHub.onProjectChanged();
+  passportUi.onProjectChanged();
   if (!historyEl.hidden) void loadHistory();
 }
 
@@ -808,7 +810,7 @@ function bindRemotePaste(term: Terminal, host: HTMLElement, paste: RemotePaste):
 
 type TrackerStart = { task: Task; button?: string } | { mr: Mr; intent: MrIntent } | { mr: Mr; button: string } | { jira: JiraIssue; button?: string };
 /** handoff - задача, переданная другой сессией через MCP Cyborg: её текст держит главный процесс. */
-type StartFrom = TrackerStart | { handoff: string; parent: Session };
+type StartFrom = TrackerStart | { handoff: string; parent: Session } | { passport: { kind: 'probe' } | { kind: 'fix'; capability: string } };
 
 const refOf = (x: MrRef): MrRef => ({ kind: x.kind, host: x.host, path: x.path, number: x.number });
 
@@ -842,7 +844,9 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
         repo,
         addDirs,
         start &&
-          ('handoff' in start
+          ('passport' in start
+            ? { passport: start.passport }
+            : 'handoff' in start
             ? { handoff: start.handoff }
             : 'task' in start
               ? { task: refOf(start.task), ...(start.button ? { button: start.button } : {}) }
@@ -944,7 +948,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   if (project !== owner) {
     stripTab.hidden = true;
     alignHidden();
-  } else if (start && (panel.isOpen || 'handoff' in start)) {
+  } else if (start && !('passport' in start) && (panel.isOpen || 'handoff' in start)) {
     // Начатая из открытой панели сессия не уводит с панели, переданная другой сессией - от неё: человек переключается сам.
     if (!active) activateSession(session, true);
     else alignHidden();
@@ -1644,6 +1648,12 @@ const statusHub = new StatusHub({
 onLaunchButtonsChanged(() => {
   panel.repaint();
   statusHub.repaint();
+});
+
+const passportUi = new PassportUi({
+  project: () => project,
+  startProbe: (owner, repo) => void createSessionView(owner, repo, { passport: { kind: 'probe' } }).catch((error) => alert(ipcErrorText(error))),
+  startFix: (owner, repo, capability) => void createSessionView(owner, repo, { passport: { kind: 'fix', capability } }).catch((error) => alert(ipcErrorText(error))),
 });
 
 // ---------- удалённая сессия ----------

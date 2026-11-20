@@ -2,7 +2,7 @@
 id: ADR-0003
 status: review
 date: 2026-10-23
-relates_to: product, 01-tasks-panel, 02-mr-view, 15-session-mcp, 17-ssh-remote-agents, ADR-0020
+relates_to: product, 01-tasks-panel, 02-mr-view, 15-session-mcp, 17-ssh-remote-agents, 20-project-passport, ADR-0020, ADR-0023
 origin: derived
 quality-checks: входных записей нет
 ---
@@ -44,6 +44,7 @@ Cyborg должен показывать сессию так, как её вид
    (`--append-system-prompt`), `--resume` при продолжении сессии (ADR-0012) и `--mcp-config` с конфигом MCP-сервера Cyborg (ADR-0019), нет (внешний источник: решение владельца
    2026-10-23, BRD продукта, раздел 11; расширение - Issue #10). Проверка: аргументы запуска с задачей либо MR -
    промпт первым позиционным (в том числе начинающийся с `/`), затем `--add-dir`; без них - прежние.
+   **Дополнено ADR-0023 п.4, п.5 (D-16 фичи 20):** вкладки пробы и исправления паспорта проекта получают начальный промпт, собранный главным процессом из перечня способностей; новых ключей CLI это не добавляет.
 
 ## Consequences
 

@@ -306,6 +306,95 @@ select:disabled {
   text-overflow: ellipsis;
 }
 
+.passport-dot {
+  flex: none;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--fg-faint);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+.passport-dot[data-level='gaps'] {
+  background: var(--modified);
+}
+
+.passport-dot[data-level='clear'] {
+  background: var(--added);
+}
+
+.passport-dot[data-level='checking'] {
+  background: var(--accent);
+}
+
+#passport-dialog {
+  width: min(760px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+}
+
+.passport-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.passport-group h3 {
+  margin: 14px 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.passport-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+
+.passport-row.gap {
+  border-color: var(--modified);
+}
+
+.passport-row.off {
+  opacity: 0.55;
+}
+
+.passport-name {
+  font-weight: 600;
+}
+
+.passport-question,
+.passport-source {
+  font-size: 12px;
+  color: var(--fg-faint);
+}
+
+.passport-answer {
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+
+.passport-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 #side-tabs {
   display: flex;
   gap: 2px;

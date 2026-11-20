@@ -11,6 +11,7 @@ export const CLOSE_SESSION_TOOL = 'close_session';
 export const SPAWN_AGENT_TOOL = 'spawn_agent';
 export const CLOSE_AGENT_TOOL = 'close_agent';
 export const REPORT_DONE_TOOL = 'report_done';
+export const REPORT_PASSPORT_TOOL = 'report_passport';
 export const LIST_BUTTONS_TOOL = 'list_buttons';
 export const ADD_BUTTON_TOOL = 'add_button';
 export const UPDATE_BUTTON_TOOL = 'update_button';
@@ -27,6 +28,8 @@ export interface ToolContext {
   child?: boolean;
   /** Кнопки полосы правятся инструментами: у сессии есть порт кнопок. */
   buttons?: boolean;
+  /** Вкладка ведёт пробу паспорта проекта: ей отдаётся report_passport. */
+  passport?: boolean;
 }
 
 /** Промпт новой сессии уходит позиционным аргументом claude, а Linux ограничивает один аргумент 128 КиБ (MAX_ARG_STRLEN). */
@@ -44,7 +47,7 @@ export const CLOSE_SELF_DELAY_MS = 1000;
 export function sessionTools(dirs: string[], context: ToolContext = { kind: 'local', hosts: [] }): McpTool[] {
   const all = localTools(dirs);
   const byName = (...names: string[]): McpTool[] => all.filter((t) => names.includes(t.name));
-  const extra = context.buttons ? buttonTools() : [];
+  const extra = [...(context.buttons ? buttonTools() : []), ...(context.passport ? [reportPassportTool()] : [])];
   if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL), reportDoneTool('remote'), ...extra];
   const local = context.child ? [...all, reportDoneTool('local')] : all;
   return context.hosts.length ? [...local, spawnAgentTool(dirs, context.hosts), closeAgentTool(), ...extra] : [...local, ...extra];
@@ -131,6 +134,37 @@ function reportDoneTool(kind: SessionKind): McpTool {
         pr: { type: 'string', description: 'Ссылка https на PR.' },
       },
       required: ['status', 'summary'],
+      additionalProperties: false,
+    },
+  };
+}
+
+function reportPassportTool(): McpTool {
+  return {
+    name: REPORT_PASSPORT_TOOL,
+    description:
+      'Сдаёт итог пробы паспорта проекта одним вызовом: по каждой способности из задания - ответ и источник. ' +
+      'Cyborg сам проверяет источник (файл внутри рабочей копии, строка не за концом файла): несуществующий источник даёт исход «выдумывает». ' +
+      'Ответ - ошибка с причиной: поправь запись и вызови снова.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        capabilities: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Идентификатор способности из задания.' },
+              outcome: { type: 'string', enum: ['found', 'unknown'], description: 'found - ответ найден; unknown - в проекте ответа нет.' },
+              answer: { type: 'string', description: 'Ответ на вопрос способности текстом.' },
+              source: { type: 'string', description: 'Путь файла от корня рабочей копии, при желании со строкой: docs/a.md:12.' },
+            },
+            required: ['id', 'outcome'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['capabilities'],
       additionalProperties: false,
     },
   };
@@ -513,6 +547,12 @@ export interface ButtonsToolsPort {
   disable(caller: number, args: unknown): string;
 }
 
+/** Паспорт проекта: проба ли эта вкладка и приём итога пробы. */
+export interface PassportToolsPort {
+  isProbe(id: number): boolean;
+  report(caller: number, args: unknown): string;
+}
+
 /** Удалённая часть: проверка хоста и лимитов, итог, завершение. Тексты результатов формирует она. */
 export interface RemoteToolsPort {
   prepare(host: string, repo: string, limits?: Limits): Promise<void>;
@@ -528,12 +568,14 @@ export function createSessionTools(
   closeSelfDelayMs = CLOSE_SELF_DELAY_MS,
   remote?: RemoteToolsPort,
   buttons?: ButtonsToolsPort,
+  passport?: PassportToolsPort,
 ): McpBackend {
   const contextOf = (caller: number): ToolContext => ({
     kind: sessions.kindOf?.(caller) ?? 'local',
     hosts: remote ? (sessions.hostsOf?.(caller) ?? []) : [],
     child: !!sessions.reportLocal && (sessions.parentOf?.(caller) ?? null) !== null,
     buttons: !!buttons,
+    passport: !!passport?.isProbe(caller),
   });
   return {
     tools: (caller) => {
@@ -546,6 +588,7 @@ export function createSessionTools(
       if (!dirs || !peers) throw new Error('сессия завершена');
       // tools/call не обязан следовать tools/list: набор инструментов контекста - и есть право вызова.
       if (!sessionTools(dirs, contextOf(caller)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
+      if (name === REPORT_PASSPORT_TOOL && passport) return passport.report(caller, value);
       if (buttons && BUTTON_TOOLS.includes(name)) {
         if (name === LIST_BUTTONS_TOOL) return buttons.list(caller);
         return name === ADD_BUTTON_TOOL ? buttons.add(caller, value) : name === UPDATE_BUTTON_TOOL ? buttons.update(caller, value) : buttons.disable(caller, value);

@@ -32,10 +32,11 @@ import { appMenuTemplate, DOCS_URL, HOST_DISK_MENU_ID, NOTIFICATIONS_MENU_ID, PR
 import { notificationKey, validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
+import { PassportService, systemClaudeAvailable } from './passport';
 import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
 import { McpServer } from './mcp';
-import { createSessionTools, Handoffs, type ButtonsToolsPort, type RemoteToolsPort, type SessionsPort } from './session-tools';
+import { createSessionTools, Handoffs, type ButtonsToolsPort, type PassportToolsPort, type RemoteToolsPort, type SessionsPort } from './session-tools';
 import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
 import { ClaudeTokenStore } from './remote/claude-token';
 import { buildMirror, readMemory } from './remote/claude-config';
@@ -84,7 +85,9 @@ import {
 } from './workspaces';
 
 let win: BrowserWindow | null = null;
+let onSessionExit: ((id: number) => void) | null = null;
 const sessions = new SessionManager(app.getPath('userData'), (channel, payload) => {
+  if (channel === 'session:exit') onSessionExit?.((payload as { id: number }).id);
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
 const childSessions = new ChildSessions(path.join(app.getPath('userData'), 'child-sessions.json'));
@@ -133,7 +136,11 @@ const buttonsPort: ButtonsToolsPort = {
   update: (caller, args) => buttons.update(caller, args),
   disable: (caller, args) => buttons.disable(caller, args),
 };
-const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools, buttonsPort), app.getVersion());
+const passportPort: PassportToolsPort = {
+  isProbe: (id) => passport.isProbe(id),
+  report: (caller, args) => passport.report(caller, args),
+};
+const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools, buttonsPort, passportPort), app.getVersion());
 // На Linux без связки ключей safeStorage шифрует постоянным ключом: такое хранение токен на диск не пускает.
 const claudeToken = new ClaudeTokenStore(path.join(app.getPath('userData'), 'remote-claude-token.bin'), {
   available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
@@ -378,6 +385,15 @@ ipcMain.handle('workspace:open', async (_event, file: unknown) => {
   offeredWorkspace = null;
   return report(await openWorkspaceFile(file, openDeps), file);
 });
+const passport = new PassportService({
+  projects: () => projects.load().projects,
+  localFile: path.join(app.getPath('userData'), 'passport-local.json'),
+  emit: (channel, payload) => sendToWindow(channel, payload),
+  claudeAvailable: systemClaudeAvailable,
+});
+onSessionExit = (id) => passport.sessionEnded(id);
+ipcMain.handle('passport:view', (_event, projectId: unknown) => passport.view(projectId));
+ipcMain.handle('passport:act', (_event, projectId: unknown, action: unknown) => passport.act(projectId, action));
 ipcMain.handle('projects:load', () => projects.load());
 ipcMain.handle('projects:problem', () => {
   projects.load();
@@ -423,10 +439,26 @@ ipcMain.handle('url:open', async (_event, url: unknown) => {
 ipcMain.handle('config:reveal', (_event, kind: unknown) => {
   if (kind === 'claude-md') return showInSystemApp(claudeMd.file, 'Claude Code работает без глобальных инструкций. Сохраните текст в редакторе, чтобы файл появился.');
 });
-ipcMain.handle('session:create', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, start?: unknown) => {
+ipcMain.handle('session:create', async (_event, projectId: unknown, cwd: unknown, addDirs: unknown, start?: unknown) => {
   const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
   if (!project) throw new Error('Каталог не входит в репозитории проекта');
   if (start === undefined) return sessions.create(project, cwd as string, addDirs as string[]);
+  if (typeof start === 'object' && start !== null && 'passport' in start) {
+    // Промпты паспорта строит главный процесс: из окна идут только вид и способность.
+    const request = (start as { passport: unknown }).passport as { kind?: unknown; capability?: unknown };
+    if (request?.kind === 'probe') {
+      const probe = await passport.prepareProbe(project);
+      if (probe.cwd !== cwd) throw new Error('Проба идёт в главном репозитории проекта');
+      const id = sessions.create(project, probe.cwd, probe.addDirs, probe.prompt);
+      passport.registerProbe(id, probe.run);
+      return id;
+    }
+    if (request?.kind === 'fix') {
+      const fix = await passport.prepareFix(project, request.capability, cwd);
+      return sessions.create(project, fix.cwd, fix.addDirs, fix.prompt);
+    }
+    throw new Error('Некорректный старт сессии');
+  }
   if (typeof start === 'object' && start !== null && 'handoff' in start) {
     // Промпт передачи в канал не ходит: интерфейс знает только ключ, текст хранит главный процесс.
     const handoff = handoffs.take(start.handoff, cwd);
