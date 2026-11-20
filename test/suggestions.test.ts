@@ -30,6 +30,15 @@ describe('Кнопки от модели: разбор хвоста ответа
     assert.deepEqual(parseSuggestions('Готово.\n\n<!-- cyborg-buttons: . -->'), []);
   });
 
+  it('длинная серия точек и пробелов в ответе разбирается за линейное время', () => {
+    const started = Date.now();
+    for (const message of ['.'.repeat(200_000) + 'x', ' .'.repeat(100_000) + 'x', 'x' + '.'.repeat(200_000)]) {
+      assert.deepEqual(parseSuggestions(message), []);
+      assert.equal(withoutSuggestions(message), message);
+    }
+    assert.ok(Date.now() - started < 1000, 'квадратичный разбор блокировал бы главный процесс');
+  });
+
   it('submit принимается как у кнопок файла; сочетание и отключение от модели не принимаются: поля отбрасываются', () => {
     const [one] = parseSuggestions(tail(JSON.stringify([{ ...button, submit: true, hotkey: 'Alt+S', disabled: true, extra: 1 }])));
     assert.deepEqual(one, { ...button, submit: true });
