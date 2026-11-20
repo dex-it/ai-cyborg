@@ -1,4 +1,5 @@
 import { cpSync, rmSync } from 'node:fs';
+import { basename } from 'node:path';
 import { build } from 'esbuild';
 import { appVersion as buildVersion } from './app-version.mjs';
 
@@ -48,7 +49,8 @@ await build({
 });
 
 cpSync('assets/icon.png', 'dist/icon.png');
-cpSync('plugin', 'dist/plugin', { recursive: true });
+// Тесты модов гоняет `claude plugin test` по исходникам, в поставку они не идут.
+cpSync('plugins', 'dist/plugins', { recursive: true, filter: (src) => basename(src) !== 'tests' });
 cpSync('src/renderer/index.html', 'dist/renderer/index.html');
 cpSync('src/renderer/styles.css', 'dist/renderer/styles.css');
 cpSync('node_modules/@xterm/xterm/css/xterm.css', 'dist/renderer/xterm.css');

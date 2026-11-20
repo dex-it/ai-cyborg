@@ -186,8 +186,8 @@ export class SessionManager {
   private readonly stopDelayMs: number;
   /** Ставится, когда MCP-сервер слушает; сессии до этого стартуют без него. */
   mcp: McpLink | null = null;
-  /** Каталог плагина Cyborg со скиллами сессии; подключается ключом --plugin-dir только на время сессии. */
-  pluginDir: string | null = null;
+  /** Включённые встроенные плагины: каталоги идут ключами --plugin-dir только на время сессии; core - включено ядро. */
+  plugins: () => { dirs: string[]; core: boolean } = () => ({ dirs: [], core: false });
   /** dist/agentd.js: им хук MessageDisplay прячет комментарий кнопок; нет файла - комментарий виден. */
   agentd: string | null = null;
   outboxDelayMs = 2000;
@@ -235,13 +235,13 @@ export class SessionManager {
     createEventsFile(eventsFile);
     const shell = process.env.SHELL || '/bin/bash';
     const mcp = this.mcp;
-    const pluginDir = this.pluginDir;
-    const args = claudeArgs(addDirs, prompt, resume, mcp && pluginDir ? MCP_SESSION_PROMPT : SESSION_PROMPT);
+    const plugins = this.plugins();
+    const args = [...plugins.dirs.flatMap((dir) => ['--plugin-dir', dir]), ...claudeArgs(addDirs, prompt, resume, mcp && plugins.core ? MCP_SESSION_PROMPT : SESSION_PROMPT)];
     // Токен в файле 0600, а не в аргументе: командную строку процесса видят все пользователи машины.
     const mcpFile = mcp ? path.join(this.eventsDir, `${process.pid}-${id}.mcp.json`) : undefined;
     if (mcp && mcpFile) createEventsFile(mcpFile, JSON.stringify(mcp.connect(id)));
-    // --mcp-config вариадический: за ним в args всегда идёт ключ (claudeArgs начинается с --resume или --append-system-prompt).
-    const command = `exec claude --settings "$CYBORG_SETTINGS"${pluginDir ? ' --plugin-dir "$CYBORG_PLUGIN"' : ''}${mcpFile ? ' --mcp-config "$CYBORG_MCP"' : ''} "$@"`;
+    // --mcp-config вариадический: за ним в args всегда идёт ключ (--plugin-dir, --resume или --append-system-prompt).
+    const command = `exec claude --settings "$CYBORG_SETTINGS"${mcpFile ? ' --mcp-config "$CYBORG_MCP"' : ''} "$@"`;
     // Логин-шелл даёт PATH пользователя: из меню приложений Electron стартует без ~/.local/bin.
     const proc = this.spawn(shell, ['-lc', command, 'cyborg', ...args], {
       name: 'xterm-256color',
@@ -253,7 +253,6 @@ export class SessionManager {
         COLORTERM: 'truecolor',
         CYBORG_EVENTS: eventsFile,
         CYBORG_SETTINGS: this.settingsFile,
-        ...(pluginDir ? { CYBORG_PLUGIN: pluginDir } : {}),
         ...(this.agentd ? { CYBORG_NODE: process.execPath, CYBORG_AGENTD: this.agentd } : {}),
         ...(mcpFile ? { CYBORG_MCP: mcpFile } : {}),
       }),

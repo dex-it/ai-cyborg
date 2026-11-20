@@ -3,7 +3,7 @@
  * и фильтруются запросом. Без DOM: чистые функции, которые проверяют тесты (FR-14002, FR-14005, FR-14007).
  */
 
-import type { Component, ExtensionsReply, Hub, HubContent, InstalledPlugin, Marketplace, McpHealth, McpServer, ProbeEntry, Scope, StandaloneComponent, UsageCount } from '../shared/extensions';
+import type { BuiltinPlugin, Component, ExtensionsReply, Hub, HubContent, InstalledPlugin, Marketplace, McpHealth, McpServer, ProbeEntry, Scope, StandaloneComponent, UsageCount } from '../shared/extensions';
 import { basename } from './dom';
 import type { Matcher } from './search-model';
 
@@ -34,6 +34,7 @@ export type NodeAction =
   | { type: 'market-remove'; market: Marketplace; installed: string[] }
   | { type: 'market-add'; source: string; name: string }
   | { type: 'hub-toggle'; hub: Hub }
+  | { type: 'builtin-toggle'; plugin: BuiltinPlugin }
   | { type: 'hub-remove'; hub: Hub }
   | { type: 'open-url'; url: string };
 
@@ -230,6 +231,7 @@ export interface ExtData {
   health: Map<string, ProbeEntry>;
   /** Вызовы по ключам callKey и mcpKey; null - не прочитаны. */
   usage?: Record<string, UsageCount> | null;
+  builtins?: BuiltinPlugin[];
 }
 
 const enabledText = (p: InstalledPlugin, view: ExtView, ctx: ExtContext): string | null => {
@@ -310,7 +312,28 @@ export function installedTree(data: ExtData, view: ExtView, ctx: ExtContext): Ex
     if (!where) continue;
     groups.of(where).children.push(standaloneNode(s, data.usage));
   }
-  return groups.result();
+  const builtins = data.builtins?.length ? [builtinGroup(data.builtins, data.usage)] : [];
+  return [...builtins, ...groups.result()];
+}
+
+const HOOK_LABEL = { hook: 'хук', mod: 'мод' } as const;
+
+/** Встроенные плагины Cyborg одинаковы в любой области: их получают все сессии Cyborg и только они. */
+function builtinGroup(plugins: BuiltinPlugin[], usage: ExtData['usage']): ExtNode {
+  const group = node('installed/builtin', 1, 'group', 'Встроенные Cyborg · в сессиях Cyborg', { open: true });
+  for (const p of plugins) {
+    const n = node(`installed/builtin/${p.name}`, 2, 'plugin', p.name, {
+      detail: p.version,
+      description: p.description,
+      badges: ['Cyborg', ...(p.core ? ['ядро'] : []), ...(p.enabled ? [] : ['выключен'])],
+      calls: callsOf(usage, p.components.map((c) => callKey(p.name, c))),
+    });
+    n.actions.push({ label: p.enabled ? 'Выключить' : 'Включить', action: { type: 'builtin-toggle', plugin: p } });
+    p.components.forEach((c, i) => n.children.push(componentNode(`${n.key}/c${i}`, 3, p.name, c, usage)));
+    p.hooks.forEach((h, i) => n.children.push(node(`${n.key}/h${i}`, 3, 'component', h.name, { detail: HOOK_LABEL[h.kind] })));
+    group.children.push(n);
+  }
+  return group;
 }
 
 function standaloneNode(s: StandaloneComponent, usage: ExtData['usage']): ExtNode {

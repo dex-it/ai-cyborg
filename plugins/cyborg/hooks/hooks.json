@@ -12,8 +12,5 @@
         ]
       }
     ]
-  },
-  "modules": [
-    "./limits-footer.tsx"
-  ]
+  }
 }

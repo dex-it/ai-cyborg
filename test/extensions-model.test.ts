@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { ExtensionsReply, Hub, HubContent, InstalledPlugin, McpServer, ProbeEntry } from '../src/shared/extensions';
+import type { BuiltinPlugin, ExtensionsReply, Hub, HubContent, InstalledPlugin, McpServer, ProbeEntry } from '../src/shared/extensions';
 import {
   addableSource,
   compact,
@@ -159,6 +159,26 @@ describe('вкладка «Установленные»', () => {
     assert.deepEqual(state('everywhere'), ['везде']);
     assert.deepEqual(state('project'), ['везде', 'выключен в repoB']);
     assert.deepEqual(state('session'), ['везде']);
+  });
+
+  it('встроенные плагины Cyborg: первая группа в любой области, переключатель, состав и хуки', () => {
+    const builtins: BuiltinPlugin[] = [
+      { name: 'cyborg', description: 'ядро', version: '0.1.0', enabled: true, core: true, components: [{ kind: 'skill', name: 'parallel-sessions', description: '' }], hooks: [{ kind: 'hook', name: 'PostToolUse · lsp-reap.sh' }] },
+      { name: 'cyborg-limits', description: 'лимиты', enabled: false, core: false, components: [], hooks: [{ kind: 'mod', name: 'limits-footer.tsx' }] },
+    ];
+    for (const view of ['everywhere', 'project', 'session'] as const) {
+      const tree = installedTree(data(reply(), { builtins, usage: { '/cyborg:parallel-sessions': { count: 2, last: 5 } } }), view, ctx);
+      assert.equal(tree[0].label, 'Встроенные Cyborg · в сессиях Cyborg', view);
+      const [core, limits] = tree[0].children;
+      assert.deepEqual(core.badges, ['Cyborg', 'ядро']);
+      assert.deepEqual(core.actions.map((a) => [a.label, a.action.type]), [['Выключить', 'builtin-toggle']]);
+      assert.deepEqual(core.children.map((n) => [n.label, n.detail]), [['/cyborg:parallel-sessions', 'скилл'], ['PostToolUse · lsp-reap.sh', 'хук']]);
+      assert.deepEqual(core.calls, { count: 2, last: 5 });
+      assert.deepEqual(limits.badges, ['Cyborg', 'выключен']);
+      assert.equal(limits.actions[0].label, 'Включить');
+      assert.deepEqual(limits.children.map((n) => n.detail), ['мод']);
+    }
+    assert.notEqual(installedTree(data(), 'everywhere', ctx)[0].label, 'Встроенные Cyborg · в сессиях Cyborg');
   });
 });
 

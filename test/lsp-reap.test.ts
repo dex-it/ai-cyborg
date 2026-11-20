@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-const script = path.join(process.cwd(), 'plugin', 'hooks', 'lsp-reap.sh');
-const hooks = path.join(process.cwd(), 'plugin', 'hooks', 'hooks.json');
+const script = path.join(process.cwd(), 'plugins', 'cyborg', 'hooks', 'lsp-reap.sh');
+const hooks = path.join(process.cwd(), 'plugins', 'cyborg', 'hooks', 'hooks.json');
 
 function alive(pid: number): boolean {
   try {

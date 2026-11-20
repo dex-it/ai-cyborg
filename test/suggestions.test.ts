@@ -135,13 +135,13 @@ describe('Кнопки от модели: инструкция сессии', ()
 
   it('скилл, названный в инструкции, лежит в плагине под этим именем, сборка кладёт плагин в dist', () => {
     const [plugin, skill] = PARALLEL_SKILL.split(':');
-    assert.equal(JSON.parse(fs.readFileSync('plugin/.claude-plugin/plugin.json', 'utf8')).name, plugin);
-    const body = fs.readFileSync(`plugin/skills/${skill}/SKILL.md`, 'utf8');
+    assert.equal(JSON.parse(fs.readFileSync(`plugins/${plugin}/.claude-plugin/plugin.json`, 'utf8')).name, plugin);
+    const body = fs.readFileSync(`plugins/${plugin}/skills/${skill}/SKILL.md`, 'utf8');
     assert.match(body, new RegExp(`^---\\nname: ${skill}\\ndescription: .+\\n---\\n`));
     for (const tool of [OPEN_SESSION_TOOL, SPAWN_AGENT_TOOL, LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL, CLOSE_SESSION_TOOL, CLOSE_AGENT_TOOL, REPORT_DONE_TOOL]) assert.ok(body.includes(`\`${tool}\``), tool);
     assert.match(body, /наименее занятую площадку/);
     assert.match(body, /сохрани в постоянную память/);
-    assert.match(fs.readFileSync('scripts/build.mjs', 'utf8'), /cpSync\('plugin', 'dist\/plugin'/);
+    assert.match(fs.readFileSync('scripts/build.mjs', 'utf8'), /cpSync\('plugins', 'dist\/plugins'/);
   });
 
   it('пример из инструкции сам разбирается', () => {

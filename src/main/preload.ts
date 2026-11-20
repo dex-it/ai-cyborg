@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { ActionReply, ExtensionsAction, ExtensionsReply, ExtensionsRequest, Hub, HubContent, HubOp, ProbeReply, UsageReply } from '../shared/extensions';
+import type { ActionReply, BuiltinPlugin, ExtensionsAction, ExtensionsReply, ExtensionsRequest, Hub, HubContent, HubOp, ProbeReply, UsageReply } from '../shared/extensions';
 import type { SearchReply, SearchRequest } from '../shared/search-pattern';
 import type { ButtonsNotice, ButtonsSaveRequest } from './buttons-service';
 import type { ButtonIssue, CommandsConfig, CommandsScope } from './commands';
@@ -122,6 +122,8 @@ const api = {
   extensionsUsage: (): Promise<UsageReply> => ipcRenderer.invoke('extensions:usage'),
   listHubs: (): Promise<Hub[]> => ipcRenderer.invoke('hubs:list'),
   changeHubs: (op: HubOp): Promise<{ hubs?: Hub[]; error?: string }> => ipcRenderer.invoke('hubs:change', op),
+  listBuiltins: (): Promise<BuiltinPlugin[]> => ipcRenderer.invoke('builtins:list'),
+  setBuiltin: (name: string, enabled: boolean): Promise<{ plugins?: BuiltinPlugin[]; error?: string }> => ipcRenderer.invoke('builtins:set', name, enabled),
   fetchHub: (id: string, force = false): Promise<HubContent> => ipcRenderer.invoke('hubs:fetch', id, force),
   readFile: (file: string): Promise<{ content?: string; error?: string }> => ipcRenderer.invoke('fs:read', file),
   /** Перезапись Markdown правкой; разошёлся с base - conflict, если не force. */

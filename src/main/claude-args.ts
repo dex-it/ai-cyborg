@@ -8,7 +8,7 @@ export const ISOLATION_PROMPT =
 /** Всё, что Cyborg дописывает к системному промту сессии: изоляция и кнопки от модели. */
 export const SESSION_PROMPT = `${ISOLATION_PROMPT}\n\n${SUGGEST_PROMPT}`;
 
-/** Имя скилла, каким его видит сессия: плагин `plugin/` и каталог скилла в нём. */
+/** Имя скилла, каким его видит сессия: встроенный плагин `plugins/cyborg` и каталог скилла в нём. */
 export const PARALLEL_SKILL = 'cyborg:parallel-sessions';
 
 /** Только повод: порядок работы лежит в скилле, а его описание в длинном списке скиллов сессии обрезается. */
