@@ -1,6 +1,6 @@
 /** Паспорт проекта (ADR-0023): проверка файлов, состояние в репозитории, проба вкладкой сессии; содержимое паспорта Cyborg не пишет (D-23, D-46). */
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -109,7 +109,16 @@ export function saveState(repo: string, change: (state: PassportState) => void):
   change(state);
   state.notNeeded = [...new Set(state.notNeeded)].sort();
   fs.mkdirSync(passportDir(repo), { recursive: true });
-  writeJsonAtomic(stateFile(repo), sortKeys(state));
+  if (fs.realpathSync(passportDir(repo)) !== path.join(fs.realpathSync(repo), PASSPORT_DIR)) throw new Error(`${PASSPORT_DIR} ведёт за пределы репозитория: запись не выполнена`);
+  // wx не идёт по ссылке: подложенный в репозиторий временный файл не принимается.
+  const tmp = `${stateFile(repo)}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(sortKeys(state), null, 2), { flag: 'wx' });
+    fs.renameSync(tmp, stateFile(repo));
+  } catch (error) {
+    fs.rmSync(tmp, { force: true });
+    throw error;
+  }
 }
 
 const sha = (text: string): string => createHash('sha256').update(text).digest('hex');
