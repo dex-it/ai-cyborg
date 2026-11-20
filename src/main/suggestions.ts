@@ -8,8 +8,12 @@ export const SUGGEST_MAX = 2;
 const SUGGEST_BLOCK_MAX = 20_000;
 const MARKER = '<!-- cyborg-buttons:';
 const END = '-->';
-/** Точки и пробелы по краям комментария: модель по привычке закрывает точкой и `]`, и `-->`, а инструкция её не просит. */
-const EDGE = /[\s.]+$/;
+/** Точки и пробелы по краям комментария: модель по привычке закрывает точкой и `]`, и `-->`, а инструкция её не просит. Цикл, не регэксп `[\s.]+$`: на длинной серии точек он квадратичен, а ответ модели недоверенный. */
+function stripEdge(text: string): string {
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '.' || /\s/.test(text[end - 1]))) end--;
+  return text.slice(0, end);
+}
 const SHELL_PREFIX = '!';
 const SLASH_PREFIX = '/';
 const ELLIPSIS = '…';
@@ -39,11 +43,11 @@ export const SUGGEST_PROMPT =
 /** Кнопки из хвоста ответа: комментарий должен стоять в самом конце сообщения (процитированный из файла в середине ответа не в счёт). Ответ модели недоверенный: поля проверяются как у кнопок файла, кроме длины подписи (модель промахивается в счёте знаков, длинная обрезается с «…»), лишние поля отбрасываются. `submit` принимается (нажимает по-прежнему человек), сочетание клавиш и отключение - нет. Claude Code выполняет ввод с «!» как команду оболочки без запроса разрешения (режим shell), а с «/» как свою команду: такая реплика от модели отбрасывается («!») либо только вставляется без Enter («/»). */
 export function parseSuggestions(message: unknown): CommandButton[] {
   if (typeof message !== 'string') return [];
-  const trimmed = message.replace(EDGE, '');
+  const trimmed = stripEdge(message);
   if (!trimmed.endsWith(END)) return [];
   const start = trimmed.lastIndexOf(MARKER);
   if (start < 0) return [];
-  const body = trimmed.slice(start + MARKER.length, trimmed.length - END.length).replace(EDGE, '').trim();
+  const body = stripEdge(trimmed.slice(start + MARKER.length, trimmed.length - END.length)).trim();
   if (!body || body.length > SUGGEST_BLOCK_MAX) return [];
   let raw: unknown;
   try {
@@ -96,7 +100,7 @@ export function displaySuggestions(delta: string): string | null {
 }
 
 export function withoutSuggestions(message: string): string {
-  const trimmed = message.replace(EDGE, '');
+  const trimmed = stripEdge(message);
   const start = trimmed.endsWith(END) ? trimmed.lastIndexOf(MARKER) : -1;
   return start < 0 ? message : trimmed.slice(0, start).trimEnd();
 }
