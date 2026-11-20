@@ -74,8 +74,22 @@ function sortKeys(value: unknown): unknown {
   return Object.fromEntries(Object.keys(value).sort().map((k) => [k, sortKeys(value[k])]));
 }
 
+// Ссылка в .cyborg, .cyborg/passport или state.json увела бы запись и чтение за пределы репозитория.
+function symlinkIn(repo: string): string | null {
+  for (const p of [path.join(repo, '.cyborg'), passportDir(repo), stateFile(repo)]) {
+    try {
+      if (fs.lstatSync(p).isSymbolicLink()) return p;
+    } catch {
+      // звена нет: ссылкой оно быть не может
+    }
+  }
+  return null;
+}
+
 /** Состояние репозитория: файла нет - пустое; повреждён - пустое и problem, перезаписывать его молча нельзя. */
 export function loadState(repo: string): { state: PassportState; problem: string | null } {
+  const link = symlinkIn(repo);
+  if (link) return { state: emptyState(), problem: `${link} - символьная ссылка, состояние паспорта не читается` };
   let text: string;
   try {
     text = fs.readFileSync(stateFile(repo), 'utf8');

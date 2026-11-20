@@ -127,6 +127,22 @@ test('состояние: повреждённый файл не читаетс�
   assert.equal(typeof parseState('[]'), 'string');
 });
 
+test('символьная ссылка на месте каталога паспорта или state.json: не читается и не пишется', (t) => {
+  const f = fixture(t, 2);
+  const [repo, other] = f.dirs;
+  fs.mkdirSync(path.join(repo, '.cyborg'));
+  fs.symlinkSync(other, path.join(repo, '.cyborg', 'passport'));
+  assert.match(String(loadState(repo).problem), /символьная ссылка/);
+  assert.throws(() => saveState(repo, (s) => s.notNeeded.push('why')), /запись не выполнена/);
+  assert.deepEqual(fs.readdirSync(other).sort(), ['.git', 'docs']);
+  const third = path.join(f.base, 'third');
+  fs.mkdirSync(path.join(third, '.cyborg', 'passport'), { recursive: true });
+  fs.writeFileSync(path.join(f.base, 'secret.json'), '{}');
+  fs.symlinkSync(path.join(f.base, 'secret.json'), path.join(third, '.cyborg', 'passport', 'state.json'));
+  assert.throws(() => saveState(third, (s) => s.notNeeded.push('why')), /запись не выполнена/);
+  assert.equal(fs.readFileSync(path.join(f.base, 'secret.json'), 'utf8'), '{}');
+});
+
 test('состояние пишется с отсортированными ключами', (t) => {
   const f = fixture(t);
   const [repo] = f.dirs;
