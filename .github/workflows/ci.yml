@@ -37,10 +37,14 @@ jobs:
       # Окно Electron: на macOS есть сессия WindowServer, на Linux нужен виртуальный дисплей и запуск без песочницы.
       - name: smoke (macOS)
         if: runner.os == 'macOS'
-        run: node scripts/smoke.mjs
+        run: |
+          node scripts/smoke.mjs
+          node scripts/smoke-passport.mjs
       - name: smoke (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum node scripts/smoke.mjs --no-sandbox
+        run: |
+          xvfb-run --auto-servernum node scripts/smoke.mjs --no-sandbox
+          xvfb-run --auto-servernum node scripts/smoke-passport.mjs --no-sandbox
 
   # Корпус docs/ согласован с собой и с репозиторием; зависимости не нужны, один раз на всю матрицу ОС.
   corpus:

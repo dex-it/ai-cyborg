@@ -9,6 +9,7 @@ import type { HistoryEntry } from './history';
 import type { JiraDetailsResult, JiraListResult, JiraProjectsResult, JiraStatus, JiraSuggestion } from './jira';
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsProblem, ProjectsState } from './projects';
+import type { PassportView } from '../shared/passport';
 import type { TaskDetailsResult } from './task-details';
 import type { ClaudeTokenStatus } from './remote/claude-token';
 import type { HostDisk, PurgeResult } from '../shared/host-disk';
@@ -35,6 +36,8 @@ const api = {
   loadProjects: (): Promise<ProjectsState> => ipcRenderer.invoke('projects:load'),
   projectsProblem: (): Promise<ProjectsProblem | null> => ipcRenderer.invoke('projects:problem'),
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),
+  passportView: (projectId: string): Promise<PassportView> => ipcRenderer.invoke('passport:view', projectId),
+  passportAct: (projectId: string, action: unknown): Promise<PassportView> => ipcRenderer.invoke('passport:act', projectId, action),
   loadCommands: (): Promise<CommandsConfig> => ipcRenderer.invoke('commands:load'),
   saveCommands: (text: string, scope: CommandsScope): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text, scope),
   loadPrompts: (): Promise<{ raw: unknown; problem?: string }> => ipcRenderer.invoke('prompts:load'),
@@ -54,7 +57,7 @@ const api = {
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('url:open', url),
   /** Глобальный CLAUDE.md в приложении системы по умолчанию; о неудаче сообщает главный процесс. */
   revealConfig: (kind: 'claude-md'): Promise<void> => ipcRenderer.invoke('config:reveal', kind),
-  createSession: (projectId: string, cwd: string, addDirs: string[], start?: SessionStart): Promise<number> =>
+  createSession: (projectId: string, cwd: string, addDirs: string[], start?: SessionStart | { passport: { kind: 'probe' } | { kind: 'fix'; capability: string } }): Promise<number> =>
     ipcRenderer.invoke('session:create', projectId, cwd, addDirs, start),
   /** Удалённая сессия: либо {projectId, host, repo, branch, prompt?}, либо {projectId, handoff, repo} по передаче от сессии. */
   createRemoteSession: (request: { projectId: string; host?: string; repo: string; branch?: string; handoff?: string }): Promise<RemoteInfo> =>
