@@ -512,18 +512,18 @@ test('SessionManager с MCP: конфиг сессии в файле 0600, кл�
   const { userData, manager, pty, box } = spawningManager(t);
   const log: string[] = [];
   manager.mcp = { connect: (id) => (log.push(`connect ${id}`), { token: `t${id}` }), disconnect: (id) => void log.push(`disconnect ${id}`) };
-  manager.pluginDir = '/app/plugin';
+  manager.plugins = () => ({ dirs: ['/app/plugins/cyborg', '/app/plugins/cyborg-limits'], core: true });
   const id = manager.create('p', '/repo/a', ['/repo/b']);
-  assert.equal(box.call.env.CYBORG_PLUGIN, '/app/plugin');
-  assert.match(box.call.args[1], /^exec claude --settings "\$CYBORG_SETTINGS" --plugin-dir "\$CYBORG_PLUGIN" --mcp-config /);
+  assert.equal('CYBORG_PLUGIN' in box.call.env, false);
+  assert.match(box.call.args[1], /^exec claude --settings "\$CYBORG_SETTINGS" --mcp-config /);
   const file = box.call.env.CYBORG_MCP;
   assert.equal(file, path.join(userData, 'sessions', `${process.pid}-${id}.mcp.json`));
   assert.equal(mode(file), 0o600);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { token: `t${id}` });
   assert.match(box.call.args[1], /--mcp-config "\$CYBORG_MCP" "\$@"$/);
   // Вариадический --mcp-config заканчивается на первом ключе args.
-  assert.match(box.call.args[3], /^--/);
-  assert.equal(box.call.args[4], MCP_SESSION_PROMPT);
+  assert.deepEqual(box.call.args.slice(3, 7), ['--plugin-dir', '/app/plugins/cyborg', '--plugin-dir', '/app/plugins/cyborg-limits']);
+  assert.equal(box.call.args[8], MCP_SESSION_PROMPT);
   assert.deepEqual(manager.dirsOf(id), ['/repo/a', '/repo/b']);
   pty.kill();
   assert.equal(fs.existsSync(file), false);
@@ -558,10 +558,20 @@ test('SessionManager без MCP и плагина не наследует их �
 
 test('SessionManager с плагином без MCP: скиллы подключены, инструкции о параллельных сессиях нет', (t) => {
   const { manager, box } = spawningManager(t);
-  manager.pluginDir = '/app/plugin';
+  manager.plugins = () => ({ dirs: ['/app/plugins/cyborg'], core: true });
   manager.create('p', os.tmpdir(), []);
-  assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" --plugin-dir "$CYBORG_PLUGIN" "$@"');
-  assert.equal(box.call.args[4], SESSION_PROMPT);
+  assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" "$@"');
+  assert.deepEqual(box.call.args.slice(3, 5), ['--plugin-dir', '/app/plugins/cyborg']);
+  assert.equal(box.call.args[6], SESSION_PROMPT);
+});
+
+test('SessionManager с MCP и выключенным ядром: прочие плагины подключены, инструкции о параллельных сессиях нет', (t) => {
+  const { manager, box } = spawningManager(t);
+  manager.mcp = { connect: () => ({}), disconnect: () => {} };
+  manager.plugins = () => ({ dirs: ['/app/plugins/cyborg-limits'], core: false });
+  manager.create('p', os.tmpdir(), []);
+  assert.deepEqual(box.call.args.slice(3, 5), ['--plugin-dir', '/app/plugins/cyborg-limits']);
+  assert.equal(box.call.args[6], SESSION_PROMPT);
 });
 
 test('SessionManager с MCP без плагина: инструкции о параллельных сессиях нет - скилла, на который она ссылается, у сессии нет', (t) => {

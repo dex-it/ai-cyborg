@@ -1,5 +1,5 @@
 import type { ExtensionsTab } from '../main/menu';
-import type { ActionScope, ExtensionsAction, ExtensionsReply, Hub, HubContent, ProbeEntry, UsageCount, UsageReply } from '../shared/extensions';
+import type { ActionScope, BuiltinPlugin, ExtensionsAction, ExtensionsReply, Hub, HubContent, ProbeEntry, UsageCount, UsageReply } from '../shared/extensions';
 import { marketplaceSourceProblem } from '../shared/extensions';
 import { queryProblem } from '../shared/search-pattern';
 import { ago } from './ago';
@@ -80,6 +80,7 @@ export class ExtensionsDialog {
   private reply: ExtensionsReply = EMPTY;
   private loaded = false;
   private hubs: Hub[] = [];
+  private builtins: BuiltinPlugin[] = [];
   private readonly hubContent = new Map<string, HubContent>();
   private readonly health = new Map<string, ProbeEntry>();
   private readonly overrides = new Map<string, boolean>();
@@ -189,10 +190,11 @@ export class ExtensionsDialog {
     this.loaded = false;
     this.status.textContent = 'Читаю магазины, плагины и серверы…';
     try {
-      const [reply, hubs] = await Promise.all([api.loadExtensions({ dirs: requestedDirs(this.ctx) }), api.listHubs()]);
+      const [reply, hubs, builtins] = await Promise.all([api.loadExtensions({ dirs: requestedDirs(this.ctx) }), api.listHubs(), api.listBuiltins().catch(() => [])]);
       if (ticket !== this.ticket) return;
       this.reply = reply;
       this.hubs = hubs;
+      this.builtins = builtins;
     } catch (error) {
       if (ticket !== this.ticket) return;
       this.reply = { ...EMPTY, claude: { problem: String(error instanceof Error ? error.message : error) } };
@@ -232,7 +234,7 @@ export class ExtensionsDialog {
   }
 
   private data(): ExtData {
-    return { reply: this.reply, hubs: this.hubs, hubContent: this.hubContent, health: this.health, usage: this.usage?.calls ?? null };
+    return { reply: this.reply, hubs: this.hubs, hubContent: this.hubContent, health: this.health, usage: this.usage?.calls ?? null, builtins: this.builtins };
   }
 
   private build(): ExtNode[] {
@@ -428,6 +430,14 @@ export class ExtensionsDialog {
     if (action.type === 'hub-toggle') {
       const result = await api.changeHubs({ op: action.hub.enabled ? 'disable' : 'enable', id: action.hub.id });
       this.afterHubChange(result);
+      return;
+    }
+    if (action.type === 'builtin-toggle') {
+      const enable = !action.plugin.enabled;
+      const result = await api.setBuiltin(action.plugin.name, enable);
+      if (result.plugins) this.builtins = result.plugins;
+      this.message = result.error ?? `${action.plugin.name} ${enable ? 'включён' : 'выключен'} для новых сессий Cyborg; открытые сессии не меняются`;
+      this.render();
       return;
     }
     this.openPanel({ kind: 'node', action });

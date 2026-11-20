@@ -21,6 +21,7 @@ import { createActionRunner } from './extensions-act';
 import { createExtensionsHandlers } from './extensions-handlers';
 import { UsageStore } from './extensions-usage';
 import { fetchHub, HubStore } from './hubs';
+import { BuiltinPlugins } from './builtin-plugins';
 import type { SearchReply } from '../shared/search-pattern';
 import { ChildSessions } from './child-sessions';
 import { deleteHistory, historyExists, isSessionId, listHistory, type HistoryEntry } from './history';
@@ -92,9 +93,8 @@ const markChildren = (entries: HistoryEntry[]): HistoryEntry[] => {
   const children = childSessions.all();
   return entries.map((e) => (children.has(e.id) ? { ...e, child: true } : e));
 };
-// Несуществующий каталог в --plugin-dir - на усмотрение claude; сессия без скиллов Cyborg лучше сессии, которая не запустилась.
-const pluginDir = path.join(__dirname, 'plugin');
-if (fs.existsSync(path.join(pluginDir, '.claude-plugin', 'plugin.json'))) sessions.pluginDir = pluginDir;
+const builtinPlugins = new BuiltinPlugins(path.join(__dirname, 'plugins'), path.join(app.getPath('userData'), 'builtin-plugins.json'));
+sessions.plugins = () => builtinPlugins.forSession();
 if (fs.existsSync(path.join(__dirname, 'agentd.js'))) sessions.agentd = path.join(__dirname, 'agentd.js');
 const handoffs = new Handoffs((request) => {
   if (!win || win.isDestroyed()) return false;
@@ -651,6 +651,14 @@ ipcMain.handle('hubs:list', () => extensions.hubList());
 ipcMain.handle('hubs:change', (_event, op: unknown) => {
   try {
     return { hubs: extensions.hubApply(op) };
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+});
+ipcMain.handle('builtins:list', () => builtinPlugins.list());
+ipcMain.handle('builtins:set', async (_event, name: unknown, enabled: unknown) => {
+  try {
+    return { plugins: await builtinPlugins.set(name, enabled) };
   } catch (error) {
     return { error: (error as Error).message };
   }

@@ -172,6 +172,26 @@ export function marketplaceSourceProblem(source: string): string | null {
   }
 }
 
+// ---------- встроенные плагины Cyborg ----------
+
+/** hook - классический хук (событие и скрипты), mod - модуль мода (файл). */
+export interface BuiltinHook {
+  kind: 'hook' | 'mod';
+  name: string;
+}
+
+/** Плагин из поставки Cyborg: его получают только сессии Cyborg, пока он включён. */
+export interface BuiltinPlugin {
+  name: string;
+  description: string;
+  version?: string;
+  enabled: boolean;
+  /** Без ядра у сессий нет скилла параллельных сессий и инструкции о нём. */
+  core: boolean;
+  components: Component[];
+  hooks: BuiltinHook[];
+}
+
 // ---------- хабы: каталоги магазинов ----------
 
 /** Хаб - список магазинов, в котором ищут и откуда подключают. builtin: встроенный, удалить нельзя, отключить можно. */

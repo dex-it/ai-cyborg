@@ -4,8 +4,8 @@ import type { Register, SessionRateLimit, SessionContextUsage } from 'claude-cod
 import type { LimitsReading } from '../types'
 
 // Окна лимитов подписки и заполнение контекста справа в строке режима под промптом, рядом с режимом разрешений.
-const reading = atom({ plugin: 'cyborg', key: 'limitsReading' } as const, null)
-const now = atom({ plugin: 'cyborg', key: 'limitsNow' } as const, 0)
+const reading = atom({ plugin: 'cyborg-limits', key: 'limitsReading' } as const, null)
+const now = atom({ plugin: 'cyborg-limits', key: 'limitsNow' } as const, 0)
 
 const LABEL: Record<string, string> = { five_hour: '5ч', seven_day: 'нед', spend_limit: 'спенд' }
 const ORDER = ['five_hour', 'seven_day', 'spend_limit']

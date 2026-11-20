@@ -9,7 +9,7 @@ Cyborg - Electron-приложение на TypeScript вокруг обычно
 
 | Принцип | Что это значит в коде | Решение |
 |---|---|---|
-| Сессия нативная | `claude` запускается как есть; добавляются только `--settings` с хуками, `--append-system-prompt`, `--add-dir`, `--plugin-dir` (плагин Cyborg) и `--mcp-config` (инструменты сессий). Вывод терминала не оборачивается. | ADR-0003, ADR-0012, ADR-0019 |
+| Сессия нативная | `claude` запускается как есть; добавляются только `--settings` с хуками, `--append-system-prompt`, `--add-dir`, `--plugin-dir` (встроенные плагины Cyborg) и `--mcp-config` (инструменты сессий). Вывод терминала не оборачивается. | ADR-0003, ADR-0012, ADR-0019 |
 | Чужое - через программы пользователя | `git`, `gh`, `glab`, `jira-cli`, `claude`. Токенов Cyborg не хранит и не читает. | ADR-0005, ADR-0007, ADR-0013 |
 | По умолчанию только чтение | Единственная изменяющая команда git - `git switch` по вашему клику. Перечень записей Cyborg - в [данных](/concepts/data/#что-cyborg-пишет). | ADR-0011 |
 | Интерфейсу не доверяют | Каждый канал главного процесса проверяет форму аргументов и пути. | ADR-0002 |
@@ -64,7 +64,7 @@ flowchart LR
 | Трекеры | `trackers`, `mrs`, `mrs-service`, `task-details`, `jira`, `jira-service` | Задачи, MR, Jira, снимки списков. |
 | Кнопки | `commands`, `command-store`, `prompts`, `prompt-store`, `suggestions` | Наборы кнопок, промпты, предложения модели. |
 | Расширения | `extensions*`, `hubs` | Магазины, плагины, скиллы, MCP, хабы, статистика вызовов. |
-| Инструменты сессий | `mcp`, `session-tools`, `session-state`, `report-text`, `child-sessions`; плагин - `plugin/` | MCP-сервер на `127.0.0.1`, инструменты `open_session`, `send_to_session`, `report_done` и другие, состояние сессии, дочерние сессии ([делегирование](/features/delegation/)). |
+| Инструменты сессий | `mcp`, `session-tools`, `session-state`, `report-text`, `child-sessions`, `builtin-plugins`; плагины - `plugins/` | MCP-сервер на `127.0.0.1`, инструменты `open_session`, `send_to_session`, `report_done` и другие, состояние сессии, дочерние сессии ([делегирование](/features/delegation/)). |
 | Удалённые сессии | `remote/` (канал, установка агента, запуск, микрофон); агент на хосте - `src/agentd` | Хосты SSH, демон на хосте, сон и пробуждение, токены, зеркало настройки Claude ([удалённые сессии](/features/remote/)). |
 | Запуск файла | `run-file`, `run-terminal`, `run-approvals` | Проверка файла, команда для терминала системы, одобрения по хэшу ([запуск файла](/features/run-file/)). |
 
@@ -96,7 +96,7 @@ sequenceDiagram
 
 Шаги 3-6 идут всё время, пока сессия работает; шаги 7-9 - по событиям хуков.
 
-- **Запуск.** `$SHELL -lc 'exec claude --settings "$CYBORG_SETTINGS" "$@"'`: логин-шелл даёт `PATH` пользователя. К аргументам добавляются `--plugin-dir "$CYBORG_PLUGIN"` и `--mcp-config "$CYBORG_MCP"`, если плагин и MCP-сервер Cyborg подняты (подробнее - [хуки](/concepts/hooks/)). Каталог сессии принимается, только если он входит в репозитории проекта.
+- **Запуск.** `$SHELL -lc 'exec claude --settings "$CYBORG_SETTINGS" "$@"'`: логин-шелл даёт `PATH` пользователя. К аргументам добавляются `--plugin-dir <каталог>` на каждый включённый встроенный плагин и `--mcp-config "$CYBORG_MCP"`, если MCP-сервер Cyborg поднят (подробнее - [хуки](/concepts/hooks/)). Каталог сессии принимается, только если он входит в репозитории проекта.
 - **События.** Хуки `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `Notification` дописывают JSON в файл этой сессии (каталог `0700`, файл `0600`). Файл удаляется вместе с сессией.
 - **Что берётся из события.** Рабочий каталог (дерево идёт за сессией в worktree), факт активности (обновление git), кнопки, предложенные моделью в хвосте ответа, и ожидание человека (уведомление). Подробности - в [хуках](/concepts/hooks/).
 - **Чего хуки не дают.** Правки вне сессии событий не порождают, их подхватывает опрос `git status` раз в 5 секунд, пока окно в фокусе, и сразу при возврате фокуса.
@@ -146,7 +146,7 @@ flowchart LR
 | Где | Что | Кто пишет |
 |---|---|---|
 | Файл воркспейса | Проекты, источники задач, кнопки воркспейса | Cyborg, по вашим действиям |
-| Папка настроек Cyborg | `commands.json`, `prompts.json`, `hubs.json`, `extensions-usage.json`, `child-sessions.json`, `run-approvals.json`, «Недавние», события сессий, хуки | Cyborg |
+| Папка настроек Cyborg | `commands.json`, `prompts.json`, `hubs.json`, `builtin-plugins.json`, `extensions-usage.json`, `child-sessions.json`, `run-approvals.json`, «Недавние», события сессий, хуки | Cyborg |
 | Хост SSH, `~/.cyborg` | Агент, клоны, каталоги сессий, зеркало настройки Claude | Cyborg по вашему запуску удалённой сессии |
 | Настройки окна (`localStorage`) | Размер шрифта, фильтры, вид окон; отдельно у каждого воркспейса | Интерфейс |
 | `~/.claude`, `.claude/`, `.mcp.json` | Настройки, плагины, журналы Claude Code | Claude Code; Cyborg читает, а меняет вызовом `claude plugin` |
