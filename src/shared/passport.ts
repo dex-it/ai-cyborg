@@ -47,16 +47,23 @@ export type ProbeOutcome = 'found' | 'invented' | 'unknown';
 export const OUTCOME_TEXT: Record<ProbeOutcome, string> = { found: 'нашёл с источником', invented: 'выдумывает', unknown: 'не знает' };
 
 /** Причины пробела по файлу словами (FR-20002). */
-export const REASON_TEXT = { missing: 'файла нет', empty: 'файл пуст', warn: 'есть ⚠', approx: '≈ не подтверждено' } as const;
+export const REASON_TEXT = {
+  missing: 'файла нет',
+  empty: 'файл пуст',
+  warn: 'есть ⚠',
+  approx: '≈ не подтверждено',
+  nolink: 'нет ссылки на документ проекта',
+} as const;
 export type FileReason = keyof typeof REASON_TEXT;
 
 /** Метки «⚠» и «≈» в тексте файла; «≈» в цитате кода тоже метка (D-32). */
-export function fileReasons(content: string | null, approxConfirmed: boolean): FileReason[] {
+export function fileReasons(content: string | null, approxConfirmed: boolean, hasDocLink: boolean): FileReason[] {
   if (content === null) return ['missing'];
   if (!content.trim()) return ['empty'];
   const out: FileReason[] = [];
   if (content.includes('⚠')) out.push('warn');
   if (content.includes('≈') && !approxConfirmed) out.push('approx');
+  if (!hasDocLink) out.push('nolink');
   return out;
 }
 
