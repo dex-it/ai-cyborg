@@ -12,6 +12,10 @@ import { PromptStore } from './prompt-store';
 import { RunApprovals } from './run-approvals';
 import { createRunHandlers, registerRunChannels, runChannel, runConfirm } from './run-file';
 import { launcherFor } from './run-terminal';
+import { childEnvNow, envReady, useManagedEnv } from './child-env';
+import { loginPath } from './env-eval';
+import { ManagedEnv } from './managed-env';
+import { openTarget } from './open-external';
 import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile, walkFiles, writeTextFile } from './files';
 import { gitDiffSearch, gitGrep } from './git-search';
@@ -90,6 +94,17 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
   if (channel === 'session:exit') onSessionExit?.((payload as { id: number }).id);
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
+const managedEnv = new ManagedEnv({
+  file: path.join(app.getPath('userData'), 'env-vars.json'),
+  home: os.homedir(),
+  loginPath: () => loginPath(process.env as Record<string, string>, process.env.SHELL || '/bin/sh'),
+  onChange: () => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('env:changed', managedEnv.view());
+    win.webContents.send('session:env-stale', sessions.staleSessions());
+  },
+});
+useManagedEnv(managedEnv);
 const childSessions = new ChildSessions(path.join(app.getPath('userData'), 'child-sessions.json'));
 sessions.onChild = (sid) => childSessions.add(sid);
 const markChildren = (entries: HistoryEntry[]): HistoryEntry[] => {
@@ -186,8 +201,9 @@ const remote = new RemoteSessions({
   alert: (title, text) => void dialog.showMessageBox({ type: 'warning', message: title, detail: text }),
   gitAuth: (urls) => collectGitAuth(urls, createCliRunner(app.getPath('userData'), undefined, HOST_AGNOSTIC_TOKEN_ENV)),
   claudeToken: () => claudeToken.get(),
-  mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
-  memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),
+  env: managedEnv,
+  mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), childEnvNow(), process.platform) }),
+  memory: (repo) => readMemory(claudePaths(os.homedir(), childEnvNow(), process.platform).configDir, repo),
   mic: (host) => (voiceOn(host) ? mic.socketFor(host) : null),
   onChild: (sid) => childSessions.add(sid),
 });
@@ -277,7 +293,7 @@ const trackers = new TrackersService({
 
 const mrs = new MrsService(trackers, runCli);
 const jira = new JiraService(runCli, () => projects.load());
-const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), (url) => shell.openExternal(url));
+const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), openUrl);
 
 let quitting = false;
 app.on('before-quit', () => {
@@ -435,12 +451,13 @@ ipcMain.handle('path:open', async (_event, file: unknown) => {
 });
 ipcMain.handle('url:open', async (_event, url: unknown) => {
   const target = webUrl(url);
-  if (target) await shell.openExternal(target);
+  if (target) await openUrl(target);
 });
 ipcMain.handle('config:reveal', (_event, kind: unknown) => {
   if (kind === 'claude-md') return showInSystemApp(claudeMd.file, 'Claude Code работает без глобальных инструкций. Сохраните текст в редакторе, чтобы файл появился.');
 });
 ipcMain.handle('session:create', async (_event, projectId: unknown, cwd: unknown, addDirs: unknown, start?: unknown) => {
+  await envReady();
   const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
   if (!project) throw new Error('Каталог не входит в репозитории проекта');
   if (start === undefined) return sessions.create(project, cwd as string, addDirs as string[]);
@@ -546,6 +563,29 @@ ipcMain.handle('remote:purge', (_event, projectId: unknown, host: unknown, sids:
   if (!project || typeof host !== 'string' || !Array.isArray(sids)) throw new Error('Некорректное удаление сессий');
   return remote.purge(project, host, sids as string[], force === true);
 });
+ipcMain.handle('env:view', () => managedEnv.view());
+ipcMain.handle('env:save', (_event, defs: unknown) => (managedEnv.save(defs), managedEnv.view()));
+ipcMain.handle('env:select', (_event, name: unknown, candidate: unknown) => managedEnv.select(name, candidate));
+ipcMain.handle('env:unset', (_event, name: unknown) => managedEnv.unset(name));
+ipcMain.handle('env:untouch', (_event, name: unknown) => managedEnv.untouch(name));
+ipcMain.handle('env:remove', (_event, name: unknown) => managedEnv.remove(name));
+ipcMain.handle('env:cancel', (_event, name: unknown) => managedEnv.cancel(name));
+ipcMain.handle('env:reveal', (_event, name: unknown) => managedEnv.reveal(name));
+ipcMain.handle('env:stale', () => sessions.staleSessions());
+// Перезапуск с новым окружением: локальная продолжается с --resume, удалённая засыпает и просыпается на хосте.
+ipcMain.handle('session:restart', async (_event, projectId: unknown, id: unknown) => {
+  await envReady();
+  if (typeof id !== 'number') throw new Error('Некорректный перезапуск сессии');
+  if (remote.hostOf(id)) {
+    const project = projects.load().projects.find((p) => p.id === projectId);
+    if (!project) throw new Error('Проект не найден');
+    return { remote: await remote.restart(project, id) };
+  }
+  const info = sessions.restartInfo(id);
+  if (!info) throw new Error('Сессию нельзя перезапустить: разговор в ней ещё не начат');
+  await sessions.terminate(id);
+  return { resume: info.resume };
+});
 ipcMain.handle('remote:claude-token:status', () => claudeToken.status());
 ipcMain.handle('remote:claude-token:set', (_event, value: unknown) => claudeToken.set(value));
 ipcMain.handle('remote:claude-token:clear', () => claudeToken.clear());
@@ -554,7 +594,8 @@ ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id:
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
   deleteHistory(repo, id);
 });
-ipcMain.handle('session:resume', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown) => {
+ipcMain.handle('session:resume', async (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown) => {
+  await envReady();
   const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
   if (!isSessionId(id) || !project) throw new Error('Некорректное продолжение сессии');
   if (!historyExists(cwd as string, id)) throw new Error('Журнал сессии не найден');
@@ -590,7 +631,7 @@ ipcMain.handle('jira:open', async (_event, projectId: unknown, key: unknown) => 
   const res = await jira.url(projectId, key);
   if ('error' in res) return { error: res.error };
   try {
-    await shell.openExternal(res.url);
+    await openUrl(res.url);
     return {};
   } catch (error) {
     return { error: (error as Error).message || 'браузер не открылся' };
@@ -605,7 +646,7 @@ ipcMain.handle('mrs:open', async (_event, arg: unknown) => {
   const ref = validateRef(arg);
   if (!ref) throw new Error('Некорректные аргументы mrs:open');
   try {
-    await shell.openExternal(mrUrl(ref));
+    await openUrl(mrUrl(ref));
     return {};
   } catch (error) {
     return { error: (error as Error).message || 'браузер не открылся' };
@@ -736,12 +777,17 @@ function quitWithConfirm(): void {
 
 const tell = (options: Electron.MessageBoxOptions) => (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
 
+async function openUrl(url: string): Promise<void> {
+  const error = await openTarget(url, { fallback: (target) => shell.openExternal(target).then(() => '', (e: Error) => e.message || 'браузер не открылся') });
+  if (error) throw new Error(error);
+}
+
 async function showInSystemApp(file: string, missing = 'Действуют встроенные значения. Сохраните их в редакторе, чтобы файл появился.'): Promise<void> {
   if (!fs.existsSync(file)) {
     await tell({ type: 'info', message: `Файла ${file} ещё нет`, detail: missing });
     return;
   }
-  const error = await shell.openPath(file);
+  const error = await openTarget(file, { fallback: (target) => shell.openPath(target) });
   if (error) await tell({ type: 'error', message: `Не удалось открыть ${file}`, detail: error });
 }
 
@@ -763,7 +809,8 @@ function rebuildMenu(): void {
     hostDisk: () => win?.webContents.send('menu:host-disk'),
     search: (mode) => win?.webContents.send('menu:search', mode),
     extensions: (tab) => win?.webContents.send('menu:extensions', tab),
-    openUrl: (url) => void shell.openExternal(url),
+    env: () => win?.webContents.send('menu:env'),
+    openUrl: (url) => void openUrl(url).catch(() => undefined),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
@@ -808,10 +855,13 @@ const openDeps: OpenDeps = {
   hasWorkspace: () => current.file !== null,
   openHere,
   launch: (file) =>
-    launchInstance(
-      spawn as unknown as SpawnFn,
-      process.execPath,
-      launchArgs({ packaged: app.isPackaged, appPath: app.getAppPath(), userData, argv: process.argv, file }),
+    envReady().then(() =>
+      launchInstance(
+        spawn as unknown as SpawnFn,
+        process.execPath,
+        launchArgs({ packaged: app.isPackaged, appPath: app.getAppPath(), userData, argv: process.argv, file }),
+        { env: childEnvNow() },
+      ),
     ),
 };
 
@@ -934,10 +984,12 @@ app.whenReady().then(() => {
   rebuildMenu();
   // Список «Недавних» общий для инстансов: другой мог изменить его, пока это окно было в фоне.
   app.on('browser-window-focus', rebuildMenu);
+  void managedEnv.start();
   void trackers.warmAuth();
   createWindow();
 });
 app.on('window-all-closed', () => {
+  managedEnv.dispose();
   sessions.killAll();
   remote.closeLinks();
   mic.close();

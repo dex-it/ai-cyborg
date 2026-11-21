@@ -10,6 +10,7 @@ import type { JiraDetailsResult, JiraListResult, JiraProjectsResult, JiraStatus,
 import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } from './mrs';
 import type { ProjectsProblem, ProjectsState } from './projects';
 import type { PassportView } from '../shared/passport';
+import type { EnvView } from '../shared/env-vars';
 import type { TaskDetailsResult } from './task-details';
 import type { ClaudeTokenStatus } from './remote/claude-token';
 import type { HostDisk, PurgeResult } from '../shared/host-disk';
@@ -38,6 +39,17 @@ const api = {
   saveProjects: (state: ProjectsState): Promise<void> => ipcRenderer.invoke('projects:save', state),
   passportView: (projectId: string): Promise<PassportView> => ipcRenderer.invoke('passport:view', projectId),
   passportAct: (projectId: string, action: unknown): Promise<PassportView> => ipcRenderer.invoke('passport:act', projectId, action),
+  envView: (): Promise<EnvView> => ipcRenderer.invoke('env:view'),
+  envSave: (defs: unknown): Promise<EnvView> => ipcRenderer.invoke('env:save', defs),
+  envSelect: (name: string, candidate: string): Promise<{ ok: true } | { ok: false; reason: string; stderr: string }> => ipcRenderer.invoke('env:select', name, candidate),
+  envUnset: (name: string): Promise<void> => ipcRenderer.invoke('env:unset', name),
+  envUntouch: (name: string): Promise<void> => ipcRenderer.invoke('env:untouch', name),
+  envRemove: (name: string): Promise<void> => ipcRenderer.invoke('env:remove', name),
+  envCancel: (name: string): Promise<void> => ipcRenderer.invoke('env:cancel', name),
+  envReveal: (name: string): Promise<string | null> => ipcRenderer.invoke('env:reveal', name),
+  envStale: (): Promise<{ id: number; names: string[] }[]> => ipcRenderer.invoke('env:stale'),
+  /** Перезапуск сессии с новым окружением: локальная продолжается с --resume, удалённая засыпает и просыпается. */
+  restartSession: (projectId: string, id: number): Promise<{ resume?: string; remote?: RemoteInfo }> => ipcRenderer.invoke('session:restart', projectId, id),
   loadCommands: (): Promise<CommandsConfig> => ipcRenderer.invoke('commands:load'),
   saveCommands: (text: string, scope: CommandsScope): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text, scope),
   loadPrompts: (): Promise<{ raw: unknown; problem?: string }> => ipcRenderer.invoke('prompts:load'),

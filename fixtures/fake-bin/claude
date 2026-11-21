@@ -9,6 +9,7 @@
 #   `link`          - строки со ссылкой и абсолютным путём к файлу (для кликов по выводу);
 #   `flood N [W]`   - N строк по W символов (по умолчанию 100) с цветом и номером, в конце строка `FLOOD-DONE N`;
 #   `trickle N`     - N коротких строк по одной записи в pty на строку (поток мелких кусков, как токены ответа), в конце `FLOOD-DONE N`;
+#   `env ИМЯ`      - значение переменной окружения сессии: `envval ИМЯ=[значение]` (UNSET, если не задана);
 #   остальное       - эхом `got: [строка]`.
 # FAKE_FLOOD_ON_START=N - вывести N строк сразу при старте, до чтения ввода (вывод, пришедший раньше, чем окно создало вкладку);
 # FAKE_FLOOD_STYLE=trickle - сделать это мелкими кусками (как `trickle`), а не одним потоком.
@@ -66,6 +67,7 @@ while IFS= read -r line; do
     *suggest) cat "$FAKE_SUGGEST" >> "$CYBORG_EVENTS"; echo "suggested";;
     perm) printf '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow Bash(rm -rf /)?"}\n' >> "$CYBORG_EVENTS"; echo "asking permission";;
     link) echo "ссылка:"; echo "https://example.com/docs/start"; echo "файл:"; echo "$PWD/a.txt";;
+    "env "*) name=${line#env }; eval "v=\${$name-UNSET}"; echo "envval $name=[$v]";;
     *ask) printf '{"hook_event_name":"UserPromptSubmit"}\n' >> "$CYBORG_EVENTS"; echo "asked";;
     *) echo "got: [$line]";;
   esac

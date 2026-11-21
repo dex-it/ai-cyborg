@@ -36,6 +36,8 @@ export interface HostLinkDeps {
   onReconnect: () => void;
   /** Задан токен Claude: вход claude на хосте не требуется. */
   claudeToken?: () => boolean;
+  /** Управляемое окружение досчитано: выбранный CLAUDE_CODE_OAUTH_TOKEN может быть выражением, и проверка хоста ждёт его значения. */
+  ready?: () => Promise<void>;
   /** Локальный сокет микрофона, если голосовой ввод для хоста включён; null - туннеля микрофона нет. */
   mic?: () => string | null;
   timers?: Timers;
@@ -50,6 +52,10 @@ export class HostLink {
   config: string | null = null;
   /** Место на диске ~/.cyborg хоста по ответу на hello. */
   disk: DiskSpace | null = null;
+  /** claude на хосте залогинен без токена Cyborg: по последней проверке. */
+  claudeLoggedIn = false;
+  /** Возможности демона из ответа на hello; демон старой сборки их не называет. */
+  features: string[] = [];
   /** Канал открыт с туннелем микрофона. */
   voice = false;
   private channel: SshChannel | null = null;
@@ -99,12 +105,14 @@ export class HostLink {
 
   private async dial(): Promise<void> {
     const { host, ssh, bundle } = this.deps;
+    await this.deps.ready?.();
     const pre = await ssh.run(host, PREFLIGHT_SCRIPT);
     if (pre.code !== 0) throw new Error(classifySshError(pre.stderr));
     const checked = parsePreflight(pre.stdout, this.deps.claudeToken?.() ?? false);
     if ('missing' in checked) throw new Error(checked.missing.join('; '));
     this.home = checked.home;
     this.tools = checked.tools;
+    this.claudeLoggedIn = checked.loggedIn;
     if (!checked.installed.includes(bundle.version)) {
       const done = await ssh.run(host, installScript(bundle));
       if (done.code !== 0) throw new Error(`установка агента на хосте: ${classifySshError(done.stderr)}`);
@@ -112,6 +120,7 @@ export class HostLink {
     for (let attempt = 0; attempt < RESTART_ATTEMPTS; attempt++) {
       const hello = await this.open();
       this.config = typeof hello.config === 'string' ? hello.config : null;
+      this.features = Array.isArray(hello.features) ? hello.features.filter((f): f is string => typeof f === 'string') : [];
       const disk = hello.disk as DiskSpace | null | undefined;
       this.disk = disk && Number.isFinite(disk.free) && Number.isFinite(disk.total) ? { free: disk.free, total: disk.total } : null;
       const sessions = Number(hello.sessions ?? 0);

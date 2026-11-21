@@ -742,6 +742,32 @@ async function main() {
   await waitFor('сброс размера шрифта на 13', async () => (await fontSize()) === '13');
   log('размер шрифта: колесо и сброс клавишей своей системы');
 
+  // Окружение: значение выражения из хранилища секретов видно новой сессии, прежние вкладки помечены устаревшими.
+  mkdirSync(join(base, 'pass', 'smoke'), { recursive: true });
+  writeFileSync(join(base, 'pass', 'smoke', 'token'), 'smoke-secret\n');
+  const staleBefore = await ev('document.querySelectorAll("#session-list .env-stale").length');
+  assert.equal(staleBefore, 0, 'вкладка помечена устаревшей до смены окружения');
+  assert.equal(await clickMenu(mainEv, 'Окружение…'), true, '«Окружение…» недоступно');
+  await waitFor('окно «Окружение» открыто', async () => (await ev('document.querySelector("#env-dialog").open')) === true);
+  await ev('(() => { document.querySelector("#env-new-name").value = "SMOKE_ENV"; document.querySelector("#env-add").click(); })()');
+  await waitFor('переменная появилась в окне', async () => /SMOKE_ENV/.test(await text('#env-body')));
+  const envView = await ev('window.cyborg.envSave([{ name: "SMOKE_ENV", candidates: [{ kind: "literal", value: "smoke-value" }, { kind: "expr", command: "pass show smoke/token" }] }])');
+  const exprId = envView.vars[0].candidates[1].id;
+  assert.deepEqual(await ev(`window.cyborg.envSelect("SMOKE_ENV", ${JSON.stringify(exprId)})`), { ok: true });
+  await waitFor('индикатор показывает одну выбранную', async () => /\+1/.test(await text('#env-indicator')));
+  assert.equal(await ev('window.cyborg.envReveal("SMOKE_ENV")'), 'smoke-secret', 'значение выражения не вычислено');
+  assert.ok(!readFileSync(join(userData, 'env-vars.json'), 'utf8').includes('smoke-secret'), 'значение выражения попало на диск');
+  await waitFor('прежняя вкладка помечена устаревшей', async () => (await ev('document.querySelectorAll("#session-list .env-stale").length')) >= 1);
+  await ev('document.querySelector("#env-close").click()');
+  const envTabs = await tabs();
+  await combo(commandModifier | SHIFT, 'N', 'KeyN', 78);
+  await waitFor('вкладка новой сессии', async () => (await tabs()) === envTabs + 1);
+  await waitFor('новая сессия запущена', async () => (await visibleTerminal()).includes('fake-claude ready'));
+  await send('Input.insertText', { text: 'env SMOKE_ENV' });
+  await combo(0, 'Enter', 'Enter', 13);
+  await waitFor('новая сессия видит выбранное значение', async () => (await visibleTerminal()).replace(/\s+/g, '').includes('envvalSMOKE_ENV=[smoke-secret]'));
+  log('окружение: окно, выбор значения выражения, индикатор, пометка прежних вкладок, значение в новой сессии, не на диске');
+
   await terminate(app, () => stderrOfMain());
   assert.ok(!existsSync(`${legacyFile}.lock`), 'замок остался после SIGTERM');
   log('SIGTERM снял замок');

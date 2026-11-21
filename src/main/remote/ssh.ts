@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { childEnvNow } from '../child-env';
 
 /** Аргументы системного ssh: без оболочки и без запросов (BatchMode), алиас после «--», токена и промпта здесь нет. */
 export function sshArgs(alias: string, remoteCommand: string, extra: string[] = []): string[] {
@@ -51,7 +52,8 @@ export const RUN_LIMIT_MS = 30_000;
 /** Сколько канал ждёт выхода ssh после EOF: открытые соединения туннеля держат клиент, тогда его снимает SIGTERM. */
 export const CLOSE_GRACE_MS = 5_000;
 
-const sshEnv = (): NodeJS.ProcessEnv => ({ ...process.env, SSH_ASKPASS_REQUIRE: 'never' });
+// Вызывающий (HostLink.dial) уже дождался готовности управляемого окружения.
+const sshEnv = (): NodeJS.ProcessEnv => childEnvNow({ set: { SSH_ASKPASS_REQUIRE: 'never' } });
 
 export const systemSsh: SshTransport = {
   run: (alias, script, timeoutMs = RUN_LIMIT_MS) =>

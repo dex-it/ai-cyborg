@@ -1,0 +1,5 @@
+#!/bin/sh
+# Подставная логин-оболочка: команду читает из stdin, как `$SHELL -l` проверки PATH, печатает шум профиля и PATH со своим каталогом.
+cat > /dev/null
+echo "шум профиля"
+echo "${FAKE_LOGIN_PATH:-/opt/fake-login/bin:/usr/bin:/bin}"

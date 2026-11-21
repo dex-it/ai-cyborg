@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { DEFAULT_LIMITS, type Auth, type GitCred, type MirrorFile, type Msg, type RepoSpec } from '../../agentd/protocol';
+import { DEFAULT_LIMITS, type Auth, type GitCred, type MirrorFile, type Msg, type RepoSpec, type Vars } from '../../agentd/protocol';
+import type { EnvPort } from '../child-env';
 import { cleanMessage } from '../clean-text';
 import { lowSpace, readHostDisk, readPurge, type HostDisk, type PurgeResult } from '../../shared/host-disk';
 import type { Project } from '../projects';
@@ -11,6 +12,7 @@ import { parseRemote } from '../trackers';
 import { sameDirs, type SessionManager, type TermPort } from '../sessions';
 import { marketplaceUrl, type ClaudeMirror } from './claude-config';
 import type { AgentdBundle } from './install';
+import { CLAUDE_TOKEN_ENV } from './auth';
 import { HostLink, realTimers, type Timers } from './host-link';
 import { hostCloneUrl, readSearchReply, type RemoteCreateArgs, type RemoteFsOp } from './remote-args';
 import type { SearchReply, SearchRequest } from '../../shared/search-pattern';
@@ -40,6 +42,8 @@ export interface RemoteDeps {
   gitAuth?: (urls: string[]) => Promise<GitCred[]>;
   /** Токен claude setup-token для входа агента. */
   claudeToken?: () => string | null;
+  /** Управляемое окружение (окно «Окружение»): уходит на хост с запуском и пробуждением; выбранный CLAUDE_CODE_OAUTH_TOKEN заменяет сохранённый токен, снятый - убирает его. */
+  env?: EnvPort;
   /** Настройка Claude оператора для хоста: собирается на каждый запуск, на хост уходит при смене хэша. */
   mirror?: () => Promise<ClaudeMirror | null>;
   /** Память проекта репозитория: уходит на хост с запуском сессии. */
@@ -119,6 +123,8 @@ interface Entry {
   ghost?: boolean;
   /** Окно об отказе уборки уже показано: демон кладёт один и тот же результат уборки и в exit, и в ended. */
   refusalShown?: boolean;
+  /** Сон по запросу Cyborg ради перезапуска: об уснувшей сессии ни открывшую, ни человека не уведомляют. */
+  restarting?: boolean;
   /** Итог close применён: повторный close и поздний ответ первого несут один результат демона. */
   settled?: boolean;
 }
@@ -183,7 +189,8 @@ export class RemoteSessions implements RemoteToolsPort {
       mcpPort: () => this.deps.mcp.boundPort,
       wanted: () => [...this.byId.values()].some((e) => e.host === host),
       timers: this.deps.timers,
-      claudeToken: () => !!this.deps.claudeToken?.(),
+      claudeToken: () => !!this.claude(),
+      ready: () => this.deps.env?.ready() ?? Promise.resolve(),
       mic: () => this.deps.mic?.(host) ?? null,
       onMessage: (msg) => this.route(msg),
       onState: ({ online, reason }) => {
@@ -225,6 +232,7 @@ export class RemoteSessions implements RemoteToolsPort {
     const selected = project.repos.indexOf(args.repo);
     const link = this.link(args.host);
     await link.ensure();
+    this.requireLogin(link);
     const sid = randomUUID();
     const dirs = [args.repo, ...project.repos.filter((d) => d !== args.repo)];
     const entry: Entry = { id: 0, sid, host: args.host, origin: extra.origin, keep: extra.keep === true, spawnedBy: extra.spawnedBy, reported: false, outPos: 0, evPos: 0, roots: [] };
@@ -234,6 +242,7 @@ export class RemoteSessions implements RemoteToolsPort {
       dirs,
       cwd: args.repo,
       remote: { host: args.host, origin: extra.origin, keep: entry.keep, spawnedBy: extra.spawnedBy, online: true },
+      envStamp: this.deps.env?.stamp(true),
     });
     this.register(entry);
     if (extra.origin === 'tool') this.deps.onChild?.(sid);
@@ -241,6 +250,7 @@ export class RemoteSessions implements RemoteToolsPort {
       const mirror = await this.mirror();
       const setupNotes = await this.configure(link, mirror);
       const auth = await this.auth(repos.map((r) => r.url), repos[selected].url);
+      const vars = this.vars();
       const token = this.deps.mcp.issue(entry.id);
       const reply = await link.request({
         type: 'spawn',
@@ -260,13 +270,14 @@ export class RemoteSessions implements RemoteToolsPort {
         },
         ...START_SIZE,
         auth,
+        vars,
         ...(mirror ? { env: mirror.env, mcp: mirror.mcp } : {}),
         memory: (await this.deps.memory?.(args.repo).catch(() => [])) ?? [],
       });
       entry.roots = (reply.clones as string[]) ?? [];
       const cwd = String(reply.cwd ?? args.repo);
       this.deps.sessions.setCwd(entry.id, cwd);
-      return { id: entry.id, host: args.host, dirs, cwd, roots: [cwd, ...entry.roots.filter((r) => r !== cwd)], notes: [...withCredentials.map((dir) => `адрес origin ${dir} содержит учётные данные: на хост они не переданы, клон идёт токеном gh или glab`), ...this.notes(link, repos.map((r) => r.url), auth), ...setupNotes], size: START_SIZE };
+      return { id: entry.id, host: args.host, dirs, cwd, roots: [cwd, ...entry.roots.filter((r) => r !== cwd)], notes: [...withCredentials.map((dir) => `адрес origin ${dir} содержит учётные данные: на хост они не переданы, клон идёт токеном gh или glab`), ...this.notes(link, repos.map((r) => r.url), auth), ...this.varNotes(link, vars), ...setupNotes], size: START_SIZE };
     } catch (error) {
       this.forget(entry);
       this.deps.sessions.discard(entry.id);
@@ -279,8 +290,31 @@ export class RemoteSessions implements RemoteToolsPort {
   private async auth(urls: string[], primaryUrl: string | undefined): Promise<Auth> {
     const git = this.deps.gitAuth ? await this.deps.gitAuth(urls).catch(() => []) : [];
     const primary = primaryUrl ? parseRemote(primaryUrl)?.host : undefined;
-    const claude = this.deps.claudeToken?.();
+    const claude = this.claude();
     return { git, ...(primary ? { primary } : {}), ...(claude ? { claude } : {}) };
+  }
+
+  /** Токен входа агента: выбранный в «Окружении» заменяет сохранённый, снятый - убирает; нетронутый - сохранённый. */
+  private claude(): string | null {
+    const overlay = this.deps.env?.overlay();
+    if (overlay?.unset.has(CLAUDE_TOKEN_ENV)) return null;
+    return overlay?.set.get(CLAUDE_TOKEN_ENV) ?? this.deps.claudeToken?.() ?? null;
+  }
+
+  /** Без токена агенту нужен вход на самом хосте: проверка при подключении могла пройти с прежним токеном. */
+  private requireLogin(link: HostLink): void {
+    if (!this.claude() && !link.claudeLoggedIn) throw new Error('claude на хосте не залогинен, а токен входа для хостов снят: выполните на хосте claude auth login либо выберите CLAUDE_CODE_OAUTH_TOKEN в «Окружении»');
+  }
+
+  /** Управляемое окружение для процессов сессии на хосте; демон держит его в памяти. */
+  private vars(): Vars {
+    const overlay = this.deps.env?.overlay();
+    return { set: Object.fromEntries(overlay?.set ?? []), unset: [...(overlay?.unset ?? [])] };
+  }
+
+  private varNotes(link: HostLink, vars: Vars): string[] {
+    const named = Object.keys(vars.set).length + vars.unset.length;
+    return named && !link.features.includes('vars') ? ['демон на хосте старой версии не принял переменные окружения: сессия идёт без них, обновление демона - после закрытия сессий хоста'] : [];
   }
 
   private async mirror(): Promise<ClaudeMirror | null> {
@@ -470,6 +504,7 @@ export class RemoteSessions implements RemoteToolsPort {
   private async wakeOn(project: Project, host: string, sid: string): Promise<RemoteInfo> {
     const link = this.link(host);
     await link.ensure();
+    this.requireLogin(link);
     const list = await link.request({ type: 'list' });
     const item = (list.sessions as Record<string, unknown>[]).find((s) => s.sid === sid);
     const dirs = item?.dirs as string[] | undefined;
@@ -477,7 +512,7 @@ export class RemoteSessions implements RemoteToolsPort {
     // Номер вызвавшей из прошлого сна указывал бы на чужую вкладку: разбуженную ведёт человек, и демон снимает с неё таймеры задачи.
     const entry: Entry = { id: 0, sid, host, origin: 'human', keep: item.keep === true, reported: false, outPos: 0, evPos: 0, roots: [] };
     const cwd0 = String(item.cwd);
-    entry.id = this.deps.sessions.adopt({ project: project.id, term: this.term(entry), dirs, cwd: cwd0, remote: { host, origin: entry.origin, keep: entry.keep, online: true } });
+    entry.id = this.deps.sessions.adopt({ project: project.id, term: this.term(entry), dirs, cwd: cwd0, remote: { host, origin: entry.origin, keep: entry.keep, online: true }, envStamp: this.deps.env?.stamp(true) });
     this.register(entry);
     try {
       const urls = new Map<string, string>();
@@ -489,11 +524,12 @@ export class RemoteSessions implements RemoteToolsPort {
       const setupNotes = await this.configure(link, mirror);
       const auth = await this.auth([...urls.values()], urls.get(dirs[0]));
       const extra = mirror ? { env: mirror.env, mcp: mirror.mcp } : {};
-      const reply = await link.request({ type: 'wake', sid, token: this.deps.mcp.issue(entry.id), ...START_SIZE, auth, ...extra });
+      const vars = this.vars();
+      const reply = await link.request({ type: 'wake', sid, token: this.deps.mcp.issue(entry.id), ...START_SIZE, auth, vars, ...extra });
       entry.roots = (reply.clones as string[]) ?? [];
       const cwd = String(reply.cwd ?? cwd0);
       this.deps.sessions.setCwd(entry.id, cwd);
-      return { id: entry.id, host, dirs, cwd, roots: [cwd, ...entry.roots.filter((r) => r !== cwd)], reported: false, notes: [...this.notes(link, [...urls.values()], auth), ...setupNotes], size: START_SIZE };
+      return { id: entry.id, host, dirs, cwd, roots: [cwd, ...entry.roots.filter((r) => r !== cwd)], reported: false, notes: [...this.notes(link, [...urls.values()], auth), ...this.varNotes(link, vars), ...setupNotes], size: START_SIZE };
     } catch (error) {
       this.forget(entry);
       this.deps.sessions.discard(entry.id);
@@ -568,6 +604,7 @@ export class RemoteSessions implements RemoteToolsPort {
     this.deps.mcp.disconnect(entry.id);
     this.deps.sessions.finish(entry.id, 0, 'сессия уснула');
     this.deps.closeTab(entry.id);
+    if (entry.restarting) return;
     const text = `Удалённая сессия CC${entry.id} (${entry.host}) уснула после простоя: клоны и разговор остались на хосте, продолжить её можно из «Истории».`;
     if (entry.spawnedBy === undefined || !this.deps.sessions.enqueue(entry.spawnedBy, text)) {
       this.deps.emit('remote:report', { id: entry.id, host: entry.host, title: `CC${entry.id} · ${entry.host}`, body: 'Сессия уснула после простоя: продолжить её можно из «Истории».' });
@@ -723,6 +760,30 @@ export class RemoteSessions implements RemoteToolsPort {
   /** Настройка голосового ввода сменилась: каналы, у которых туннель микрофона разошёлся с ней, открываются заново. */
   refreshVoice(): void {
     for (const link of this.links.values()) link.relink().catch((error: Error) => this.deps.emit('remote:link', { host: link.host, online: false, reason: error.message }));
+  }
+
+  /** Хост удалённой сессии; undefined - сессия не удалённая либо уже забыта. */
+  hostOf(id: number): string | undefined {
+    const entry = this.byId.get(id);
+    return entry && !entry.ghost && !entry.gone ? entry.host : undefined;
+  }
+
+  /** Перезапуск с новым окружением: сессия усыпляется (процесс остановлен, клоны и разговор целы) и тут же будится, вкладка нужна новая. */
+  async restart(project: Project, id: number): Promise<RemoteInfo> {
+    const entry = this.byId.get(id);
+    if (!entry || entry.ghost || entry.gone) throw new Error('Удалённая сессия не найдена');
+    const link = this.link(entry.host);
+    if (link.state !== 'online') throw new Error(`нет связи с ${entry.host}`);
+    if (!link.features.includes('sleep')) throw new Error('демон на хосте старой версии не усыпляет сессию по запросу: закройте её и откройте заново');
+    const { host, sid } = entry;
+    entry.restarting = true;
+    try {
+      await link.request({ type: 'sleep', sid });
+    } catch (error) {
+      entry.restarting = false;
+      throw error;
+    }
+    return this.wake(project, host, sid);
   }
 
   /** Номер вкладки сессии хоста по её идентификатору там. */

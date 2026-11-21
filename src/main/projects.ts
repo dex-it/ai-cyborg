@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { MAX_JIRA_PROJECTS, PROJECT_KEY } from './jira-keys';
-import { writeJsonAtomic } from './jsonfile';
+import { keepCorruptCopy, writeJsonAtomic } from './jsonfile';
 
 export { MAX_JIRA_PROJECTS, PROJECT_KEY } from './jira-keys';
 
@@ -125,11 +125,6 @@ function shapeProblem(state: unknown): string | null {
   return null;
 }
 
-/** Метка UTC для имени копии: 20261026T081530. */
-function utcStamp(date: Date): string {
-  return date.toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '');
-}
-
 /** Поля файла воркспейса, которыми владеют свои каналы, а не состояние проектов окна. */
 const OWN_FIELDS = ['commands'] as const;
 
@@ -242,17 +237,8 @@ export class ProjectStore {
   /** Копия байт повреждённого файла рядом с ним; существующие копии не перезаписываются. Те же байты - прежняя копия. */
   private keepCopy(raw: Buffer): string {
     if (this.copied?.equals(raw) && this.lastProblem?.copy) return this.lastProblem.copy;
-    const base = `${this.file}.corrupt-${utcStamp(this.now())}`;
-    for (let n = 0; ; n++) {
-      const target = n === 0 ? base : `${base}-${n}`;
-      try {
-        fs.writeFileSync(target, raw, { flag: 'wx' });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
-        throw error;
-      }
-      this.copied = raw;
-      return target;
-    }
+    const target = keepCorruptCopy(this.file, raw, this.now());
+    this.copied = raw;
+    return target;
   }
 }

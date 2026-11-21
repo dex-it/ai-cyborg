@@ -6,6 +6,9 @@ const TOKEN = /^[\x21-\x7e]{1,4096}$/;
 /** Переменные токена, которые gh и glab отдают для любого хоста: с ними токен оператора ушёл бы хосту origin или маркетплейса, где он не входил. */
 export const HOST_AGNOSTIC_TOKEN_ENV = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN'] as const;
 
+/** Токен входа Claude: на хостах выбранное в «Окружении» значение заменяет сохранённый токен, снятое - убирает его. */
+export const CLAUDE_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
+
 const tokenOf = async (run: CliRunner, cmd: 'gh' | 'glab', args: string[]): Promise<string> => {
   const res = await run(cmd, args);
   const token = res.code === 0 ? res.stdout.trim() : '';

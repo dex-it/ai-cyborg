@@ -1240,3 +1240,86 @@ describe('daemon: голосовой ввод', () => {
     assert.equal(fs.existsSync(live), true);
   });
 });
+
+describe('daemon: переменные окружения от Cyborg', () => {
+  it('vars: снятые удаляются из окружения процесса, заданные ставятся, собственные значения Cyborg и доступ хостинга сильнее', async (t) => {
+    const prev = { A: process.env.ENVT_INHERITED, B: process.env.ENVT_KEEP, T: process.env.TERM };
+    process.env.ENVT_INHERITED = 'from-host';
+    process.env.ENVT_KEEP = 'kept';
+    t.after(() => {
+      for (const [k, v] of [['ENVT_INHERITED', prev.A], ['ENVT_KEEP', prev.B]] as const) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    });
+    const r = rig(t);
+    await open(r, {
+      vars: { set: { ENVT_NEW: 'new', TERM: 'dumb', GH_TOKEN: 'user-token' }, unset: ['ENVT_INHERITED'] },
+      auth: { git: [{ kind: 'github', host: 'github.com', token: 'gho_HOSTAUTH' }], primary: 'github.com' },
+    } as Partial<SpawnMsg>);
+    const env = r.spawned[0].env;
+    assert.equal(env.ENVT_NEW, 'new');
+    assert.equal('ENVT_INHERITED' in env, false);
+    assert.equal(env.ENVT_KEEP, 'kept');
+    assert.equal(env.TERM, 'xterm-256color');
+    assert.equal(env.GH_TOKEN, 'gho_HOSTAUTH');
+  });
+
+  it('vars лежат только в памяти: ни в meta.json, ни в launch.sh, ни в аргументах', async (t) => {
+    const r = rig(t);
+    const { sid } = await open(r, { vars: { set: { ENVT_SECRET: 'sekret-value-1' }, unset: [] } } as Partial<SpawnMsg>);
+    const dir = sessDir(r, sid);
+    for (const file of fs.readdirSync(dir)) if (fs.statSync(path.join(dir, file)).isFile()) assert.equal(fs.readFileSync(path.join(dir, file), 'utf8').includes('sekret-value-1'), false, file);
+    assert.equal(JSON.stringify(r.spawned[0].args).includes('sekret-value-1'), false);
+  });
+
+  it('мусор в vars отбрасывается, сессия стартует: плохое имя, значение с NUL, не строка', async (t) => {
+    const r = rig(t);
+    await open(r, { vars: { set: { 'bad name': 'x', ENVT_NUL: 'a\0b', ENVT_NUM: 5, ENVT_OK: 'ok' }, unset: ['bad name', 7] } } as unknown as Partial<SpawnMsg>);
+    const env = r.spawned[0].env;
+    assert.equal(env.ENVT_OK, 'ok');
+    for (const name of ['bad name', 'ENVT_NUL', 'ENVT_NUM']) assert.equal(name in env, false, name);
+  });
+
+  it('сон стирает vars, wake берёт новые: прежние значения не возвращаются', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { vars: { set: { ENVT_OLD: 'old' }, unset: [] } } as Partial<SpawnMsg>);
+    assert.equal(r.spawned[0].env.ENVT_OLD, 'old');
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30, vars: { set: { ENVT_NEW: 'new' }, unset: [] } } as Msg);
+    await until(() => r.spawned.length === 2);
+    assert.equal(r.spawned[1].env.ENVT_NEW, 'new');
+    assert.equal('ENVT_OLD' in r.spawned[1].env, false);
+  });
+
+  it('wake без vars: переменных Cyborg нет', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { vars: { set: { ENVT_OLD: 'old' }, unset: [] } } as Partial<SpawnMsg>);
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    assert.equal('ENVT_OLD' in r.spawned[1].env, false);
+  });
+
+  it('sleep: работающая сессия засыпает по требованию, slept приходит, запись остаётся; не работающая - отказ', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { origin: 'human' });
+    talked(r, sid);
+    conn.receive({ type: 'sleep', rid: 7, sid } as Msg);
+    await until(() => c.got.some((m) => m.rid === 7));
+    assert.equal(c.got.find((m) => m.rid === 7)?.message, undefined);
+    assert.equal(c.of('slept').length, 1);
+    assert.equal(readMeta(r, sid).state, 'asleep');
+    conn.receive({ type: 'sleep', rid: 8, sid } as Msg);
+    await until(() => c.got.some((m) => m.rid === 8));
+    assert.match(String(c.got.find((m) => m.rid === 8)?.message), /не работает/);
+    conn.receive({ type: 'sleep', rid: 9, sid: 'нет-такой' } as Msg);
+    await until(() => c.got.some((m) => m.rid === 9));
+    assert.match(String(c.got.find((m) => m.rid === 9)?.message), /не найдена/);
+  });
+
+  it('hello сообщает возможности демона: vars и sleep, без смены номера протокола', async (t) => {
+    const r = rig(t);
+    const c = client();
+    r.daemon.connect(c).receive({ type: 'hello', rid: 0, proto: 1, instance: 'i' } as Msg);
+    const reply = c.got.find((m) => m.rid === 0) as Msg & { features?: string[] };
+    assert.deepEqual(reply.features, ['vars', 'sleep']);
+  });
+});

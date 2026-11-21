@@ -31,6 +31,8 @@ import { asMenuItem, bindList, rove } from './list-keys';
 import { bindTabDrag, bindTablist, markTab, selectTab } from './tabs';
 import { ExtensionsDialog, type ExtensionsTab } from './extensions-dialog';
 import { PassportUi } from './passport-dialog';
+import { EnvDialog } from './env-dialog';
+import { indicatorText, staleTitle, type EnvView } from '../shared/env-vars';
 import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
@@ -1755,6 +1757,56 @@ claudeTokenClear.addEventListener('click', async () => {
   }
 });
 api.on<void>('menu:claude-token', () => void openClaudeTokenDialog());
+
+// ---------- окружение ----------
+
+const envIndicator = byId<HTMLButtonElement>('env-indicator');
+const envDialog = new EnvDialog(api, (view) => {
+  envIndicator.textContent = indicatorText(view);
+  envIndicator.dataset.active = String(view.vars.some((v) => v.choice.kind !== 'untouched'));
+  envIndicator.dataset.failed = String(view.vars.some((v) => v.unapplied || v.status.kind === 'failed'));
+});
+envIndicator.addEventListener('click', () => void envDialog.open());
+api.on<EnvView>('env:changed', (view) => envDialog.update(view));
+api.on<void>('menu:env', () => void envDialog.open());
+void api.envView().then((view) => envDialog.update(view));
+
+/** Вкладка сессии, запущенной с прежним окружением, помечена и предлагает перезапуск: разговор продолжается с новым. */
+async function restartSession(s: Session): Promise<void> {
+  if (!confirm('Перезапустить сессию с новым окружением? Разговор продолжится, процесс Claude Code начнётся заново.')) return;
+  try {
+    const reply = await api.restartSession(s.project.id, s.id);
+    if (sessions.includes(s)) closeSession(s, true);
+    if (reply.remote) await createSessionView(s.project, reply.remote.dirs[0], undefined, undefined, reply.remote);
+    else if (reply.resume) await createSessionView(s.project, s.repo, undefined, reply.resume);
+  } catch (err) {
+    alert(`Сессия не перезапущена: ${ipcErrorText(err)}`);
+  }
+}
+
+function markStale(s: Session, names: string[] | undefined): void {
+  s.stripTab.classList.toggle('env-stale', !!names);
+  const old = s.stripTab.querySelector('.env-restart');
+  if (!names) return old?.remove();
+  const title = staleTitle(names);
+  if (old) return void old.setAttribute('title', title);
+  const restart = el('button', 'env-restart', '↻');
+  restart.setAttribute('title', title);
+  restart.setAttribute('aria-label', 'Перезапустить сессию с новым окружением');
+  restart.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void restartSession(s);
+  });
+  s.stripTab.querySelector('.close')?.before(restart);
+  if (!restart.parentElement) s.stripTab.append(restart);
+}
+
+function applyStale(list: { id: number; names: string[] }[]): void {
+  const names = new Map(list.map((x) => [x.id, x.names]));
+  for (const s of sessions) markStale(s, names.get(s.id));
+}
+api.on<{ id: number; names: string[] }[]>('session:env-stale', applyStale);
+void api.envStale().then(applyStale);
 
 // ---------- место на хостах ----------
 

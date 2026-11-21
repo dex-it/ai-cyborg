@@ -1,16 +1,18 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { childEnvNow, envReady } from './child-env.ts';
 
 // Конфиг репозитория из cwd не доверенный: ключи, исполняющие команды, отключаются при каждом вызове.
 export const SAFE_CONFIG = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
 
-function gitRaw(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<Buffer> {
+async function gitRaw(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<Buffer> {
+  await envReady();
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       [...SAFE_CONFIG, '-C', cwd, ...args],
-      { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer', env: env ? { ...process.env, ...env } : process.env },
+      { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer', env: childEnvNow({ set: env }) },
       (error, stdout) => (error ? reject(error) : resolve(stdout)),
     );
   });
@@ -79,7 +81,8 @@ async function repoFilterKeys(dir: string, depth = 0): Promise<Set<string>> {
 }
 
 export async function filterOverrides(root: string): Promise<NodeJS.ProcessEnv> {
-  const base = Number(process.env.GIT_CONFIG_COUNT) || 0;
+  await envReady();
+  const base = Number(childEnvNow().GIT_CONFIG_COUNT) || 0;
   const keys = [...(await repoFilterKeys(root))];
   const env: NodeJS.ProcessEnv = { GIT_CONFIG_COUNT: String(base + keys.length) };
   keys.forEach((key, i) => {

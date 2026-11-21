@@ -14,6 +14,8 @@ import type { Project } from '../src/main/projects';
 import { SessionManager } from '../src/main/sessions';
 import { projectDirName } from '../src/main/history';
 import { rig, until, type Rig } from './daemon-rig';
+import { literal, managed, selected } from './env-rig';
+import { useManagedEnv } from '../src/main/child-env';
 
 const BUNDLE = bundleOf('// agentd stub\n');
 const TOKEN = (n: number): string => String(n).padStart(43, 'T');
@@ -1172,5 +1174,139 @@ describe('голосовой ввод: туннель микрофона', () =>
     await until(() => ssh.seen.filter((m) => m.type === 'attach').length >= 1);
     a.sessions.write(info.id, 'x');
     await until(() => r.procs[0].written.includes('x'));
+  });
+});
+
+describe('удалённые сессии и окружение Cyborg', () => {
+  const lit = (name: string, value: string) => ({ name, candidates: [literal(1, value)], choice: selected(1) });
+  const unsetDef = (name: string) => ({ name, choice: { kind: 'unset' as const } });
+  const spawnOf = (ssh: FakeSsh) => ssh.seen.find((m) => m.type === 'spawn') as any;
+
+  it('spawn несёт выбранные и снятые переменные, процесс на хосте получает их', async (t) => {
+    const { r, ssh } = world(t);
+    process.env.ENVT_REMOTE_GONE = 'x';
+    t.after(() => void delete process.env.ENVT_REMOTE_GONE);
+    const { env } = managed(t, [lit('ENVT_REMOTE_SET', 'v1'), unsetDef('ENVT_REMOTE_GONE')]);
+    const a = side(t, ssh, { deps: { env } });
+    await a.remote.create(project, human, { origin: 'human' });
+    assert.deepEqual(spawnOf(ssh).vars, { set: { ENVT_REMOTE_SET: 'v1' }, unset: ['ENVT_REMOTE_GONE'] });
+    await until(() => r.spawned.length === 1);
+    assert.equal(r.spawned[0].env.ENVT_REMOTE_SET, 'v1');
+    assert.equal('ENVT_REMOTE_GONE' in r.spawned[0].env, false);
+  });
+
+  it('без выбранного spawn несёт пустые vars', async (t) => {
+    const { ssh } = world(t);
+    const { env } = managed(t, [{ name: 'ENVT_REMOTE_IDLE', candidates: [literal(1, 'v')] }]);
+    await side(t, ssh, { deps: { env } }).remote.create(project, human, { origin: 'human' });
+    assert.deepEqual(spawnOf(ssh).vars, { set: {}, unset: [] });
+  });
+
+  describe('токен входа Claude на хостах', () => {
+    const token = 'CLAUDE_CODE_OAUTH_TOKEN';
+    const loggedOut = (ssh: FakeSsh): void => {
+      ssh.preflight = (home) => `home=${home}\nuname=Linux\nnode=v20.1.0\ngit=/usr/bin/git\nclaude=/usr/bin/claude\nscript=/usr/bin/script\nauth={"loggedIn":false}\nagentd=${ssh.installed.join(' ')}\n`;
+    };
+
+    it('выбранный заменяет сохранённый, и демон отдаёт агенту его', async (t) => {
+      const { r, ssh } = world(t);
+      loggedOut(ssh);
+      const { env } = managed(t, [lit(token, 'sk-ant-oat01-SELECTED')]);
+      await side(t, ssh, { deps: { env, claudeToken: () => 'sk-ant-oat01-SAVED' } }).remote.create(project, human, { origin: 'human' });
+      assert.equal(spawnOf(ssh).auth.claude, 'sk-ant-oat01-SELECTED');
+      await until(() => r.spawned.length === 1);
+      assert.equal(r.spawned[0].env[token], 'sk-ant-oat01-SELECTED');
+    });
+
+    it('не тронутый - сохранённый', async (t) => {
+      const { r, ssh } = world(t);
+      const { env } = managed(t, [{ name: token, candidates: [literal(1, 'sk-ant-oat01-SELECTED')] }]);
+      await side(t, ssh, { deps: { env, claudeToken: () => 'sk-ant-oat01-SAVED' } }).remote.create(project, human, { origin: 'human' });
+      assert.equal(spawnOf(ssh).auth.claude, 'sk-ant-oat01-SAVED');
+      await until(() => r.spawned.length === 1);
+      assert.equal(r.spawned[0].env[token], 'sk-ant-oat01-SAVED');
+    });
+
+    it('снятый: токена агенту нет, а хост без входа отвергается при подключении', async (t) => {
+      const { ssh } = world(t);
+      loggedOut(ssh);
+      const { env } = managed(t, [unsetDef(token)]);
+      const a = side(t, ssh, { deps: { env, claudeToken: () => 'sk-ant-oat01-SAVED' } });
+      await assert.rejects(a.remote.create(project, human, { origin: 'human' }), /не залогинен/);
+      assert.equal(ssh.seen.some((m) => m.type === 'spawn'), false);
+    });
+
+    it('снятый на хосте, где проверка прошла с прежним токеном: создание отвергнуто, сессия в менеджере не осталась', async (t) => {
+      const { ssh } = world(t);
+      loggedOut(ssh);
+      const { env } = managed(t, [{ name: token, candidates: [literal(1, 'sk-ant-oat01-SELECTED')], choice: selected(1) }]);
+      const a = side(t, ssh, { deps: { env, claudeToken: () => null } });
+      await a.remote.create(project, human, { origin: 'human' });
+      env.unset(token);
+      await assert.rejects(a.remote.create(project, human, { origin: 'human' }), /токен входа для хостов снят/);
+      assert.equal(ssh.seen.filter((m) => m.type === 'spawn').length, 1);
+    });
+
+    it('снятый на хосте, где claude залогинен сам: сессия создаётся без токена', async (t) => {
+      const { r, ssh } = world(t);
+      const { env } = managed(t, [unsetDef(token)]);
+      await side(t, ssh, { deps: { env, claudeToken: () => 'sk-ant-oat01-SAVED' } }).remote.create(project, human, { origin: 'human' });
+      assert.equal(spawnOf(ssh).auth.claude, undefined);
+      await until(() => r.spawned.length === 1);
+      assert.equal(token in r.spawned[0].env, false);
+    });
+  });
+
+  it('демон без возможности vars: сессия создаётся, вкладка получает заметку', async (t) => {
+    const { ssh } = world(t);
+    const { env } = managed(t, [lit('ENVT_REMOTE_SET', 'v1')]);
+    const a = side(t, ssh, { deps: { env } });
+    await a.remote.create(project, human, { origin: 'human' });
+    (a.remote as any).links.get('dev1').features = [];
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    assert.ok((info.notes ?? []).some((n) => /старой версии[\s\S]*переменные окружения/.test(n)));
+  });
+
+  it('перезапуск: сессия засыпает и просыпается с новым окружением, прежняя вкладка закрыта, «уснула» никому не пишется', async (t) => {
+    const r = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r.daemon, r.home);
+    const { env } = managed(t, [{ name: 'ENVT_REMOTE_SET', candidates: [literal(1, 'v1')] }]);
+    useManagedEnv(env);
+    t.after(() => useManagedEnv(null));
+    const a = side(t, ssh, { deps: { env } });
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    await until(() => r.spawned.length === 1);
+    const sid = sidOf(ssh);
+    const cwd = JSON.parse(fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', sid, 'meta.json'), 'utf8')).cwd;
+    const journal = path.join(r.home, '.claude', 'projects', projectDirName(cwd));
+    fs.mkdirSync(journal, { recursive: true });
+    fs.writeFileSync(path.join(journal, `${sid}.jsonl`), JSON.stringify({ type: 'ai-title', aiTitle: 'разговор' }) + '\n');
+    assert.equal('ENVT_REMOTE_SET' in r.spawned[0].env, false);
+    await env.select('ENVT_REMOTE_SET', '00000001');
+    assert.deepEqual(a.sessions.staleSessions().map((s) => [s.id, s.names]), [[info.id, ['ENVT_REMOTE_SET']]]);
+    const woke = await a.remote.restart(project, info.id);
+    await until(() => r.spawned.length === 2);
+    assert.equal(r.spawned[1].env.ENVT_REMOTE_SET, 'v1');
+    assert.notEqual(woke.id, info.id);
+    assert.ok(a.closedTabs.includes(info.id));
+    assert.equal(a.events.some((e) => e.channel === 'remote:report'), false);
+    assert.deepEqual(a.sessions.staleSessions(), []);
+    assert.ok(fs.readFileSync(path.join(r.home, '.cyborg', 'sessions', sid, 'launch.sh'), 'utf8').includes(`'--resume' '${sid}'`));
+  });
+
+  it('перезапуск: демон без sleep - отказ с причиной, сессия работает', async (t) => {
+    const { r, ssh } = world(t);
+    const a = side(t, ssh);
+    const info = await a.remote.create(project, human, { origin: 'human' });
+    (a.remote as any).links.get('dev1').features = [];
+    await assert.rejects(a.remote.restart(project, info.id), /старой версии/);
+    assert.equal(ssh.seen.some((m) => m.type === 'sleep'), false);
+    assert.equal(a.remote.isRemote(info.id), true);
+    await until(() => r.spawned.length === 1);
+  });
+
+  it('перезапуск: сессии нет - отказ', async (t) => {
+    const { ssh } = world(t);
+    await assert.rejects(side(t, ssh).remote.restart(project, 4242), /не найдена/);
   });
 });

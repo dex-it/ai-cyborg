@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { AllowedPaths } from '../src/main/allowed-paths';
 import { RunApprovals } from '../src/main/run-approvals';
-import { createRunHandlers, displayCommand, registerRunChannels, runChannel, runConfirm, runnableOf, warningText, type RunReply, type Tell, type RunDeps, type RunWarning } from '../src/main/run-file';
+import { createRunHandlers, displayCommand, registerRunChannels, runChannel, runConfirm, runnableOf, warningText, writeEnvFile, type RunReply, type Tell, type RunDeps, type RunWarning } from '../src/main/run-file';
 import { shellQuote, shQuote } from '../src/shared/shell-quote';
 import { shQuote as agentdShQuote } from '../src/agentd/protocol';
 import { findTerminal, launcherFor, launchAndWait, RUN_SCRIPT, terminalLaunch, TERMINALS } from '../src/main/run-terminal';
@@ -188,7 +188,7 @@ describe('findTerminal и terminalLaunch', () => {
     };
     for (const [name, head] of Object.entries(forms)) {
       const r = terminalLaunch('linux', { PATH: '/a', SHELL: '/bin/zsh' }, '/d', ['/d/f'], have(`/a/${name}`));
-      assert.deepEqual(r, { cmd: `/a/${name}`, args: [...head, '/bin/zsh', '-lc', RUN_SCRIPT, 'cyborg-run', '/d', '/d/f'] }, name);
+      assert.deepEqual(r, { cmd: `/a/${name}`, args: [...head, '/bin/zsh', '-lc', RUN_SCRIPT, 'cyborg-run', '', '/d', '/d/f'] }, name);
     }
   });
 
@@ -214,7 +214,7 @@ describe('findTerminal и terminalLaunch', () => {
     const r = terminalLaunch('darwin', {}, path.dirname(file), ['bash', file]);
     assert.ok('args' in r);
     assert.equal(r.cmd, 'osascript');
-    assert.deepEqual(r.args.slice(-6), ['-c', RUN_SCRIPT, 'cyborg-run', path.dirname(file), 'bash', file]);
+    assert.deepEqual(r.args.slice(-7), ['-c', RUN_SCRIPT, 'cyborg-run', '', path.dirname(file), 'bash', file]);
     assert.equal(r.args.filter((a) => a.includes('PWNED')).length, 1);
   });
 
@@ -235,7 +235,7 @@ describe('findTerminal и terminalLaunch', () => {
       fs.rmSync(link, { force: true });
       fs.symlinkSync(real, link);
       const r = terminalLaunch('linux', { PATH: bin, SHELL: '/bin/sh' }, '/d', ['/d/f'], (f) => f === link);
-      assert.deepEqual(r, { cmd: link, args: [...head, '/bin/sh', '-lc', RUN_SCRIPT, 'cyborg-run', '/d', '/d/f'] }, target);
+      assert.deepEqual(r, { cmd: link, args: [...head, '/bin/sh', '-lc', RUN_SCRIPT, 'cyborg-run', '', '/d', '/d/f'] }, target);
     }
   });
 
@@ -245,8 +245,8 @@ describe('findTerminal и terminalLaunch', () => {
 });
 
 describe('RUN_SCRIPT', () => {
-  const sh = (dir: string, command: string[], env: NodeJS.ProcessEnv = {}) =>
-    spawnSync('bash', ['-c', RUN_SCRIPT, 'cyborg-run', dir, ...command], { input: '', encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
+  const sh = (dir: string, command: string[], env: NodeJS.ProcessEnv = {}, envFile = '') =>
+    spawnSync('bash', ['-c', RUN_SCRIPT, 'cyborg-run', envFile, dir, ...command], { input: '', encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
 
   it('unset всех переменных сессии', () => {
     for (const name of [...INHERITED_SESSION_VARS, 'CYBORG_EVENTS', 'CYBORG_SETTINGS']) assert.ok(RUN_SCRIPT.includes(name), name);
@@ -276,7 +276,7 @@ describe('RUN_SCRIPT', () => {
       'script, cwd = sys.argv[1], sys.argv[2]',
       'pid, fd = pty.fork()',
       'if pid == 0:',
-      "    os.execvp('bash', ['bash', '-c', script, 'cyborg-run', cwd, 'bash', '-c', 'echo started; sleep 30'])",
+      "    os.execvp('bash', ['bash', '-c', script, 'cyborg-run', '', cwd, 'bash', '-c', 'echo started; sleep 30'])",
       "out = b''",
       'def pump(marker):',
       '    global out',
@@ -310,6 +310,17 @@ describe('RUN_SCRIPT', () => {
     const r = spawnSync('python3', ['-I', '-c', probe, RUN_SCRIPT, base], { encoding: 'utf8', timeout: 30_000, env: { PATH: process.env.PATH } });
     assert.match(r.stdout, /\[Код выхода 130\]/, r.stdout + r.stderr);
     assert.match(r.stdout, /ALIVE=True CLOSED=True/);
+  });
+
+  it('файл окружения читается до запуска и удаляется вместе с каталогом; снятая переменная у команды отсутствует', () => {
+    const overlay = { set: new Map([['MANAGED_A', "va'l $x"]]), unset: new Set(['GONE_B']) };
+    const env = writeEnvFile(overlay, base);
+    assert.ok(env);
+    const r = sh(base, ['bash', '-c', 'echo "a=$MANAGED_A b=${GONE_B-unset}"'], { GONE_B: 'inherited' }, env.file);
+    assert.match(r.stdout, /a=va'l \$x b=unset/);
+    assert.equal(fs.existsSync(env.file), false);
+    assert.equal(fs.existsSync(path.dirname(env.file)), false);
+    env.remove();
   });
 
   it('каталога нет - сообщение, не запуск', () => {
@@ -395,6 +406,59 @@ describe('createRunHandlers', () => {
     assert.equal(launches[0].cmd, '/t/xterm');
     assert.equal('CLAUDECODE' in launches[0].env, false);
     assert.match(fs.readFileSync(approvals.file, 'utf8'), /[0-9a-f]{64}/);
+  });
+
+  describe('управляемое окружение терминала', () => {
+    const overlay = { set: new Map([['ENVT_SECRET', "tok'en $1"]]), unset: new Set(['ENVT_GONE']) };
+    let tmp: string;
+    beforeEach(() => {
+      tmp = path.join(base, 'tmp');
+      fs.mkdirSync(tmp);
+    });
+    const envFileOf = (args: string[]): string => args[args.indexOf('cyborg-run') + 1];
+
+    it('файл окружения 0600 в каталоге 0700 передан скрипту первым аргументом; значение в argv не попадает', async () => {
+      const f = script();
+      assert.deepEqual(await handlers({ overlay: () => overlay, tmpDir: tmp }).run(f), { ok: true });
+      const file = envFileOf(launches[0].args);
+      assert.equal(path.dirname(path.dirname(file)), tmp);
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
+      const text = fs.readFileSync(file, 'utf8');
+      assert.match(text, /^unset ENVT_GONE$/m);
+      assert.ok(text.includes(`export ENVT_SECRET=${shQuote("tok'en $1")}`));
+      assert.equal(launches[0].args.join(' ').includes('tok'), false);
+      assert.equal(launches[0].args.includes('ENVT_SECRET'), false);
+    });
+
+    it('без управляемых переменных файла нет, скрипту уходит пустой аргумент', async () => {
+      const f = script();
+      await handlers({ overlay: () => ({ set: new Map(), unset: new Set() }), tmpDir: tmp }).run(f);
+      assert.equal(envFileOf(launches[0].args), '');
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    });
+
+    it('файл пишется после одобрения: отказ человека не оставляет ни файла, ни каталога', async () => {
+      const f = script();
+      answer = false;
+      assert.deepEqual(await handlers({ overlay: () => overlay, tmpDir: tmp }).run(f), { cancelled: true });
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    });
+
+    it('отказ запуска эмулятора убирает файл окружения', async () => {
+      const f = script();
+      const r = await handlers({ overlay: () => overlay, tmpDir: tmp, launch: async () => ({ error: 'нет эмулятора' }) }).run(f);
+      assert.deepEqual(r, { error: 'нет эмулятора' });
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    });
+
+    it('настоящий sh: скрипт читает файл, команда видит выбранное и не видит снятого, файл и каталог удалены', () => {
+      const env = writeEnvFile(overlay, tmp);
+      assert.ok(env);
+      const r = spawnSync('sh', ['-c', RUN_SCRIPT, 'cyborg-run', env.file, base, 'sh', '-c', 'echo "s=$ENVT_SECRET g=${ENVT_GONE-unset}"'], { input: '', encoding: 'utf8', env: { PATH: process.env.PATH, ENVT_GONE: 'inherited' } });
+      assert.ok(r.stdout.includes("s=tok'en $1 g=unset"), r.stdout + r.stderr);
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    });
   });
 
   it('тот же хэш - без предупреждения', async () => {

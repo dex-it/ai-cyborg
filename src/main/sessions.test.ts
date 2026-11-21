@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
+import { useManagedEnv, type EnvPort, type Overlay } from './child-env.ts';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
 import { SessionManager, SETTINGS_TTL_MS, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
 import { DISPLAY_HOOK_COMMAND, HOOK_COMMAND, hookSettings } from './session-state.ts';
@@ -876,4 +877,87 @@ test('SessionManager: открывшей - сообщение о выходе д
   manager.killAll();
   assert.equal(writes.length, 8, 'killAll гасит и открывшую: сообщать некому');
   for (const id of [parent, other, self, last]) assert.equal(manager.projectOf(id), null, 'killAll не оставляет записей вкладок');
+});
+
+const portOf = (overlay: Overlay, stale: (digests: Map<string, string>) => string[] = () => []): EnvPort => ({
+  overlay: () => overlay,
+  ready: () => Promise.resolve(),
+  stamp: (remote) => ({ digests: new Map([['ENVT_MARK', 'd1']]), remote }),
+  stale: (stamp) => stale(stamp.digests),
+});
+
+test('SessionManager: сессия получает управляемое окружение: выбранное ставится, снятое убирается, собственные значения Cyborg сильнее', (t) => {
+  process.env.ENVT_PARENT = 'parent';
+  t.after(() => {
+    delete process.env.ENVT_PARENT;
+    useManagedEnv(null);
+  });
+  useManagedEnv(portOf({ set: new Map([['ENVT_NEW', 'n'], ['TERM', 'dumb'], ['CYBORG_EVENTS', 'evil']]), unset: new Set(['ENVT_PARENT']) }));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  let env: Record<string, string> = {};
+  let shell = '';
+  const manager = new SessionManager(userData, () => {}, ((file: string, _args: string[], opts: { env: Record<string, string> }) => ((shell = file), (env = opts.env), fakePty())) as any);
+  t.after(() => manager.killAll());
+  manager.create('p', os.tmpdir(), []);
+  assert.equal(env.ENVT_NEW, 'n');
+  assert.equal('ENVT_PARENT' in env, false);
+  assert.equal(env.TERM, 'xterm-256color');
+  assert.notEqual(env.CYBORG_EVENTS, 'evil');
+  assert.equal(process.env.ENVT_NEW, undefined);
+  assert.ok(shell);
+});
+
+test('SessionManager: оболочка запуска берётся из окружения сессии: управляемый SHELL действует', (t) => {
+  t.after(() => useManagedEnv(null));
+  useManagedEnv(portOf({ set: new Map([['SHELL', '/opt/managed/shell']]), unset: new Set() }));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  let shell = '';
+  const manager = new SessionManager(userData, () => {}, ((file: string) => ((shell = file), fakePty())) as any);
+  t.after(() => manager.killAll());
+  manager.create('p', os.tmpdir(), []);
+  assert.equal(shell, '/opt/managed/shell');
+});
+
+test('SessionManager: устаревшие сессии - те, чьё окружение при запуске отличается от нынешнего; вышедшие не в счёт', (t) => {
+  t.after(() => useManagedEnv(null));
+  let changed = false;
+  useManagedEnv(portOf({ set: new Map(), unset: new Set() }, (digests) => (changed && digests.get('ENVT_MARK') === 'd1' ? ['ENVT_MARK'] : [])));
+  const { manager } = managerIn(t);
+  const a = manager.create('p', '/a', []);
+  const b = manager.create('p', '/a', []);
+  assert.deepEqual(manager.staleSessions(), []);
+  changed = true;
+  assert.deepEqual(manager.staleSessions(), [{ id: a, names: ['ENVT_MARK'] }, { id: b, names: ['ENVT_MARK'] }]);
+  manager.kill(b);
+  assert.deepEqual(manager.staleSessions().map((s) => s.id), [a]);
+});
+
+test('SessionManager: данные для перезапуска - проект, каталоги и номер разговора из хука; без разговора, у вышедшей и у чужого номера - null', (t) => {
+  const { manager } = managerIn(t);
+  const id = manager.create('p', '/a', ['/b', '/c']);
+  assert.equal(manager.restartInfo(id), null, 'разговор не начат');
+  manager.ingest(id, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'conv-1' })], { replay: false });
+  assert.deepEqual(manager.restartInfo(id), { project: 'p', cwd: '/a', addDirs: ['/b', '/c'], resume: 'conv-1' });
+  assert.equal(manager.restartInfo(9999), null);
+  assert.equal(manager.restartInfo('1'), null);
+  manager.kill(id);
+  assert.equal(manager.restartInfo(id), null, 'вышла');
+});
+
+test('SessionManager: удалённая вкладка перезапуску через restartInfo не подлежит', (t) => {
+  const { manager } = managerIn(t);
+  const id = manager.adopt({ project: 'p', term: { write() {}, resize() {}, kill() {} }, dirs: ['/a'], cwd: '/a', remote: { host: 'h', origin: 'human', keep: false, online: true } });
+  manager.ingest(id, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'conv-2' })], { replay: false });
+  assert.equal(manager.restartInfo(id), null);
+});
+
+test('SessionManager.terminate: завершает процесс и возвращается, когда вкладка вышла; чужой номер - сразу', async (t) => {
+  const { manager } = managerIn(t);
+  const id = manager.create('p', '/a', []);
+  await manager.terminate(id);
+  assert.equal(manager.count(), 0);
+  await manager.terminate(424242);
+  await manager.terminate('x');
 });

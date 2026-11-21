@@ -4,6 +4,7 @@ import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
+import { childEnvNow, envStampNow, staleNames, type EnvStamp } from './child-env.ts';
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
 import { childExitText, REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
@@ -49,6 +50,8 @@ export interface AdoptOptions {
   dirs: string[];
   cwd: string;
   remote: RemoteMeta;
+  /** Окружение сессии при запуске: по нему видно, что управляемые переменные с тех пор менялись. */
+  envStamp?: EnvStamp;
 }
 
 interface Session {
@@ -95,6 +98,9 @@ interface Session {
   closedBy?: number;
   /** Гасится вместе со всеми (killAll). */
   ending?: boolean;
+  /** Номер разговора Claude Code из событий: по нему сессия продолжается с --resume. */
+  claudeSid?: string;
+  envStamp?: EnvStamp;
 }
 
 export interface SessionInfo {
@@ -128,6 +134,8 @@ export type SayResult = 'sent' | 'sent-working' | 'queued';
 /** Пауза между текстом и Enter, как у кнопок команд (command-bar.ts): пакет «текст и Enter» TUI вправе принять за вставку. */
 export const SUBMIT_DELAY_MS = 150;
 
+const TERMINATE_WAIT_MS = 5000;
+
 export const SETTINGS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const EXITED_TERM: TermPort = { write: () => {}, resize: () => {}, kill: () => {} };
@@ -154,10 +162,9 @@ export const PARENT_SESSION_VARS = [
  */
 export const INHERITED_SESSION_VARS = [...PARENT_SESSION_VARS, 'CYBORG_CWD', 'CYBORG_MCP', 'CYBORG_PLUGIN'];
 
+/** Окружение сессии и других процессов Cyborg: унаследованное, управляемое, поверх - свои значения; метки родительской сессии снимаются у всех. */
 export function sessionEnv(extra: Record<string, string>): Record<string, string> {
-  const env = { ...(process.env as Record<string, string>) };
-  for (const name of INHERITED_SESSION_VARS) delete env[name];
-  return { ...env, ...extra };
+  return childEnvNow({ unset: INHERITED_SESSION_VARS, set: extra });
 }
 
 // Внешний вызов не спрашивает человека, а вызовы внутри него дают свои PreToolUse: держать очередь на всё время REPL или субагента незачем.
@@ -242,7 +249,14 @@ export class SessionManager {
     const id = this.nextId++;
     const eventsFile = path.join(this.eventsDir, `${process.pid}-${id}.jsonl`);
     createEventsFile(eventsFile);
-    const shell = process.env.SHELL || '/bin/bash';
+    const env = sessionEnv({
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      CYBORG_EVENTS: eventsFile,
+      CYBORG_SETTINGS: this.settingsFile,
+      ...(this.agentd ? { CYBORG_NODE: process.execPath, CYBORG_AGENTD: this.agentd } : {}),
+    });
+    const shell = env.SHELL || '/bin/bash';
     const mcp = this.mcp;
     const plugins = this.plugins();
     const args = [...plugins.dirs.flatMap((dir) => ['--plugin-dir', dir]), ...claudeArgs(addDirs, prompt, resume, mcp && plugins.core ? MCP_SESSION_PROMPT : SESSION_PROMPT)];
@@ -257,20 +271,14 @@ export class SessionManager {
       cols: 120,
       rows: 40,
       cwd,
-      env: sessionEnv({
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor',
-        CYBORG_EVENTS: eventsFile,
-        CYBORG_SETTINGS: this.settingsFile,
-        ...(this.agentd ? { CYBORG_NODE: process.execPath, CYBORG_AGENTD: this.agentd } : {}),
-        ...(mcpFile ? { CYBORG_MCP: mcpFile } : {}),
-      }),
+      env: mcpFile ? { ...env, CYBORG_MCP: mcpFile } : env,
     });
     const session: Session = {
       id,
       project,
       term: { write: (data) => proc.write(data), resize: (cols, rows) => proc.resize(cols, rows), kill: () => proc.kill() },
       eventsFile,
+      envStamp: envStampNow(false),
       offset: 0,
       cwd,
       dirs: [cwd, ...addDirs],
@@ -325,6 +333,22 @@ export class SessionManager {
   noteClosing(id: number, caller: number): void {
     const session = this.sessions.get(id);
     if (session) session.closedBy = caller;
+  }
+
+  /** Сессии, чьё окружение при запуске отличается от нынешнего управляемого: имена переменных по каждой. */
+  staleSessions(): { id: number; names: string[] }[] {
+    return [...this.sessions.values()]
+      .filter((s) => s.envStamp && s.state !== 'exited')
+      .map((s) => ({ id: s.id, names: staleNames(s.envStamp as EnvStamp) }))
+      .filter((s) => s.names.length);
+  }
+
+  /** Что нужно для продолжения локальной сессии с её разговором; null - продолжать нечего (удалённая, разговор не начат, вышла). */
+  restartInfo(id: unknown): { project: string; cwd: string; addDirs: string[]; resume: string } | null {
+    const valid = validateSessionId(id);
+    const session = valid === null ? undefined : this.sessions.get(valid);
+    if (!session || session.remote || session.state === 'exited' || !session.claudeSid) return null;
+    return { project: session.project, cwd: session.cwd, addDirs: session.dirs.slice(1), resume: session.claudeSid };
   }
 
   /** Работающие сессии: у завершившейся вкладка может оставаться, но процесса нет. */
@@ -490,6 +514,16 @@ export class SessionManager {
     if (valid !== null) this.guarded(valid, (t) => t.kill());
   }
 
+  /** Завершить сессию и дождаться выхода процесса (предел 5 с): перезапуск начинает новую после старой. */
+  async terminate(id: unknown): Promise<void> {
+    const valid = validateSessionId(id);
+    if (valid === null) return;
+    this.kill(valid);
+    for (let waited = 0; waited < TERMINATE_WAIT_MS && this.sessions.get(valid)?.state !== 'exited' && this.sessions.has(valid); waited += 50) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
   private guarded(id: number, action: (term: TermPort) => void): void {
     const proc = this.sessions.get(id)?.term;
     if (!proc) return;
@@ -552,6 +586,7 @@ export class SessionManager {
       project: options.project,
       term: options.term,
       remote: options.remote,
+      envStamp: options.envStamp,
       ...(options.remote.spawnedBy !== undefined ? { parent: options.remote.spawnedBy } : {}),
       offset: 0,
       cwd: options.cwd,
@@ -682,6 +717,7 @@ export class SessionManager {
     }
     if (notify) this.emit('session:activity', { id: session.id, event: event.hook_event_name, tool: event.tool_name });
     session.lastEventAt = Date.now();
+    if (event.session_id) session.claudeSid = event.session_id;
     if (session.parent !== undefined && !session.remote && event.session_id && event.session_id !== session.childSid) {
       session.childSid = event.session_id;
       this.onChild?.(event.session_id);

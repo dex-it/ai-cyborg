@@ -51,6 +51,10 @@
     <div id="status-popover" class="popover" role="dialog" aria-label="Статус проекта" tabindex="-1" hidden></div>
     <div id="repo-menu" class="menu" hidden></div>
 
+    <div id="status-bar">
+      <button id="env-indicator" type="button" aria-haspopup="dialog" title="Переменные окружения процессов Cyborg (Ctrl+Shift+E)">Окружение</button>
+    </div>
+
     <dialog id="project-dialog" aria-labelledby="project-dialog-title">
       <form method="dialog">
         <h2 id="project-dialog-title"></h2>
@@ -126,6 +130,27 @@
           <span class="spacer"></span>
           <button type="button" id="claude-token-cancel">Закрыть</button>
           <button type="button" id="claude-token-save" class="primary">Сохранить</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="env-dialog" aria-labelledby="env-dialog-title">
+      <form method="dialog">
+        <h2 id="env-dialog-title">Окружение</h2>
+        <p class="hint">
+          Переменные, которые получают все процессы, запускаемые Cyborg: сессии (локальные и на хостах), терминал запуска, git, gh, glab, jira, claude plugin, ssh.
+          Выражение (команда sh) вычисляется при выборе и при каждом запуске Cyborg; значения хранятся в памяти, а файл содержит только значения-литералы и команды.
+        </p>
+        <div id="env-error" class="dialog-error" role="alert" hidden></div>
+        <div id="env-body"></div>
+        <div class="env-new">
+          <input id="env-new-name" type="text" spellcheck="false" autocomplete="off" placeholder="ИМЯ_ПЕРЕМЕННОЙ" aria-label="Имя переменной" />
+          <button type="button" id="env-add">Добавить переменную</button>
+          <button type="button" id="env-unset-new">Снять унаследованную</button>
+        </div>
+        <footer>
+          <span class="spacer"></span>
+          <button type="button" id="env-close">Закрыть</button>
         </footer>
       </form>
     </dialog>

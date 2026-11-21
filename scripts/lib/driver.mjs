@@ -39,6 +39,7 @@ export function prepareFixtures(base, extraEnv = {}) {
     FAKE_PLUGIN_LOG: pluginLog,
     FAKE_GH_LOG: ghLog,
     FAKE_JIRA_LOG: jiraLog,
+    FAKE_PASS_DIR: join(base, 'pass'),
     FAKE_MARKET: market,
     CLAUDE_CONFIG_DIR: claudeHome,
     ...extraEnv,
