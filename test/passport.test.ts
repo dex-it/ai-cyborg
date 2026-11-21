@@ -130,6 +130,25 @@ test('ссылка паспорта (от каталога паспорта ил
   assert.deepEqual(view.capabilities.find((c) => c.id === 'why')!.reasons, ['нет ссылки на документ проекта']);
 });
 
+test('найденный ответ пробы заменяет файл: принятый человеком снимает и метки, непринятый смысловой ждёт подтверждения', async (t) => {
+  const f = fixture(t);
+  const [repo] = f.dirs;
+  f.put(repo, 'why.md', 'описание без ссылки ⚠');
+  const state = { version: 1, approxConfirmed: {}, notNeeded: [], probe: { at: 'x', outcomes: {
+    why: { outcome: 'found', answer: 'a', source: 'docs/a.md:1', confirmed: true },
+    done: { outcome: 'found', answer: 'a', source: 'docs/a.md:1' },
+    behavior: { outcome: 'found', answer: 'a', source: 'docs/a.md:1' },
+    domain: { outcome: 'unknown', answer: 'a', source: '' },
+  } } };
+  f.put(repo, 'state.json', JSON.stringify(state));
+  const view = await f.service.view('p');
+  const reasons = (id: string) => view.capabilities.find((c) => c.id === id)!.reasons;
+  assert.deepEqual(reasons('why'), []);
+  assert.deepEqual(reasons('done'), ['ждёт подтверждения']);
+  assert.deepEqual(reasons('behavior'), []);
+  assert.deepEqual(reasons('domain'), ['файла нет', 'не знает']);
+});
+
 test('«Не нужно»: способность снята и не считается, «Нужно» возвращает, запись только в .cyborg/passport/', async (t) => {
   const f = fixture(t);
   const [repo] = f.dirs;

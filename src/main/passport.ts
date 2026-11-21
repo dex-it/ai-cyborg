@@ -379,9 +379,11 @@ export class PassportService {
           const file = await readCapabilityFile(repo, cap);
           if (file.problem) problems.push(file.problem);
           const confirmed = file.content !== null && state.approxConfirmed[cap.id] === sha(file.content);
-          const fileWhy = fileReasons(file.content, confirmed, file.content === null || (await docLinkOk(repo, file.content)));
-          const reasons: string[] = fileWhy.map((r) => REASON_TEXT[r]);
           const probe = state.probe?.outcomes[cap.id] ?? null;
+          const fileAll = fileReasons(file.content, confirmed, file.content === null || (await docLinkOk(repo, file.content)));
+          // Найденный проверенный ответ заменяет паспортный файл, принятый человеком - и его метки (D-53).
+          const fileWhy = probe?.outcome !== 'found' ? fileAll : probe.confirmed ? [] : fileAll.filter((r) => r === 'warn' || r === 'approx');
+          const reasons: string[] = fileWhy.map((r) => REASON_TEXT[r]);
           if (probe) {
             if (probe.outcome !== 'found') reasons.push(OUTCOME_TEXT[probe.outcome]);
             else if (cap.semantic && !probe.confirmed) reasons.push('ждёт подтверждения');
