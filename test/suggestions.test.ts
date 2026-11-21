@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
-import { ISOLATION_PROMPT, MCP_SESSION_PROMPT, PARALLEL_PROMPT, PARALLEL_SKILL, SESSION_PROMPT, claudeArgs } from '../src/main/claude-args';
+import { COORDINATION_PROMPT, COORDINATION_SKILL, ISOLATION_PROMPT, MCP_SESSION_PROMPT, PARALLEL_PROMPT, PARALLEL_SKILL, PEER_MESSAGE_RULE, REMOTE_SYSTEM_PROMPT, SESSION_PROMPT, TASK_RULE, claudeArgs } from '../src/main/claude-args';
 import { LABEL_MAX, TEXT_MAX } from '../src/main/commands';
-import { CLOSE_AGENT_TOOL, CLOSE_SESSION_TOOL, LIST_SESSIONS_TOOL, OPEN_SESSION_TOOL, REPORT_DONE_TOOL, SEND_TO_SESSION_TOOL, SPAWN_AGENT_TOOL } from '../src/main/session-tools';
+import { CLOSE_AGENT_TOOL, CLOSE_SESSION_TOOL, LIST_SESSIONS_TOOL, OPEN_SESSION_TOOL, REPORT_DONE_TOOL, SEND_TO_SESSION_TOOL, SET_TASK_TOOL, SPAWN_AGENT_TOOL } from '../src/main/session-tools';
 import { displaySuggestions, parseSuggestions, SUGGEST_MAX, SUGGEST_PROMPT } from '../src/main/suggestions';
 
 const tail = (json: string, before = 'Готово.\n\n'): string => `${before}<!-- cyborg-buttons: ${json} -->`;
@@ -142,6 +142,18 @@ describe('Кнопки от модели: инструкция сессии', ()
     assert.match(body, /наименее занятую площадку/);
     assert.match(body, /сохрани в постоянную память/);
     assert.match(fs.readFileSync('scripts/build.mjs', 'utf8'), /cpSync\('plugins', 'dist\/plugins'/);
+  });
+
+  it('скилл координации назван в промпте сессии с MCP, метку сообщения соседки знает и удалённая', () => {
+    assert.ok(COORDINATION_PROMPT.includes(`скилл ${COORDINATION_SKILL}`));
+    assert.ok(MCP_SESSION_PROMPT.includes(COORDINATION_PROMPT) && !SESSION_PROMPT.includes(COORDINATION_PROMPT));
+    assert.ok(REMOTE_SYSTEM_PROMPT.includes(PEER_MESSAGE_RULE) && REMOTE_SYSTEM_PROMPT.includes(TASK_RULE) && COORDINATION_PROMPT.includes(TASK_RULE));
+    assert.ok(TASK_RULE.includes(SET_TASK_TOOL));
+    const [plugin, skill] = COORDINATION_SKILL.split(':');
+    const body = fs.readFileSync(`plugins/${plugin}/skills/${skill}/SKILL.md`, 'utf8');
+    assert.match(body, new RegExp(`^---\\nname: ${skill}\\ndescription: .+\\n---\\n`));
+    for (const tool of [LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL, SET_TASK_TOOL]) assert.ok(body.includes(`\`${tool}\``), tool);
+    assert.ok(body.includes('[CC5 → CC7]') && PEER_MESSAGE_RULE.includes('[CCn → CCm]'), 'метка в скилле и в промпте одного вида');
   });
 
   it('пример из инструкции сам разбирается', () => {

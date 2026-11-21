@@ -18,7 +18,7 @@ const peer = (id: number, state: SessionInfo['state'], extra: Partial<SessionInf
 
 describe('набор инструментов по виду сессии', () => {
   it('локальная без хостов проекта - прежний набор, без spawn_agent и close_agent', () => {
-    assert.deepEqual(names(sessionTools(DIRS)), ['open_session', 'list_sessions', 'send_to_session', 'close_session']);
+    assert.deepEqual(names(sessionTools(DIRS)), ['open_session', 'list_sessions', 'send_to_session', 'set_task', 'close_session']);
   });
 
   it('локальная с хостами - плюс spawn_agent с перечнем хостов и close_agent', () => {
@@ -30,7 +30,7 @@ describe('набор инструментов по виду сессии', () =>
   });
 
   it('удалённая - список, сообщение и report_done; порождать и закрывать агентов нельзя', () => {
-    assert.deepEqual(names(sessionTools(DIRS, { kind: 'remote', hosts: ['dev1'] })), ['list_sessions', 'send_to_session', 'report_done']);
+    assert.deepEqual(names(sessionTools(DIRS, { kind: 'remote', hosts: ['dev1'] })), ['list_sessions', 'send_to_session', 'set_task', 'report_done']);
   });
 });
 
@@ -38,11 +38,11 @@ describe('инструменты кнопок', () => {
   const buttonNames = ['list_buttons', 'add_button', 'update_button', 'disable_button'];
 
   it('с портом локальная получает прежние инструменты и четыре инструмента кнопок', () => {
-    assert.deepEqual(names(sessionTools(DIRS, { kind: 'local', hosts: [], buttons: true })), ['open_session', 'list_sessions', 'send_to_session', 'close_session', ...buttonNames]);
+    assert.deepEqual(names(sessionTools(DIRS, { kind: 'local', hosts: [], buttons: true })), ['open_session', 'list_sessions', 'send_to_session', 'set_task', 'close_session', ...buttonNames]);
   });
 
   it('с портом удалённая получает list_sessions, send_to_session, report_done и кнопки', () => {
-    assert.deepEqual(names(sessionTools(DIRS, { kind: 'remote', hosts: [], buttons: true })), ['list_sessions', 'send_to_session', 'report_done', ...buttonNames]);
+    assert.deepEqual(names(sessionTools(DIRS, { kind: 'remote', hosts: [], buttons: true })), ['list_sessions', 'send_to_session', 'set_task', 'report_done', ...buttonNames]);
   });
 
   it('без порта перечни прежние', () => {

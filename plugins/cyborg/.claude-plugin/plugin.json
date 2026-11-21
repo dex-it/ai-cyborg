@@ -1,5 +1,5 @@
 {
   "name": "cyborg",
-  "description": "Ядро Cyborg для его сессий: работа в параллельных сессиях (скилл parallel-sessions) и перезапуск LSP после смены или снятия worktree.",
+  "description": "Ядро Cyborg для его сессий: работа в параллельных сессиях (скилл parallel-sessions), договорённости соседних сессий (скилл session-coordination) и перезапуск LSP после смены или снятия worktree.",
   "version": "0.1.0"
 }
