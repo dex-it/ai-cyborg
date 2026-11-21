@@ -787,11 +787,13 @@ async function main() {
   await ev('document.querySelector("#env-close").click()');
   await waitFor('окно «Окружение» закрыто снова', async () => (await envOpen()) === false);
   await ev('(async () => { const view = await window.cyborg.envView(); await window.cyborg.envSave([...view.vars.map((v) => ({ name: v.name, candidates: v.candidates })), { name: "SMOKE_ENV2", candidates: [] }]); })()');
-  // Сочетание нажимается как клавиша окна: его ловит ускоритель пункта меню, а не обработчик страницы.
-  await mainEv(`(() => { const w = process.mainModule.require('electron').BrowserWindow.getAllWindows()[0]; const modifiers = [${mac ? "'meta'" : "'control'"}, 'shift']; w.webContents.sendInputEvent({ type: 'rawKeyDown', keyCode: 'E', modifiers }); w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'E', modifiers }); })()`);
-  await waitFor('окно «Окружение» по сочетанию клавиш', async () => (await envOpen()) === true);
-  await ev('document.querySelector("#env-close").click()');
-  await waitFor('окно «Окружение» закрыто после сочетания', async () => (await envOpen()) === false);
+  // На macOS ускорители меню ловит NSMenu, а sendInputEvent идёт мимо него: там проверено назначение сочетания выше.
+  if (!mac) {
+    await mainEv(`(() => { const w = process.mainModule.require('electron').BrowserWindow.getAllWindows()[0]; const modifiers = [${mac ? "'meta'" : "'control'"}, 'shift']; w.webContents.sendInputEvent({ type: 'rawKeyDown', keyCode: 'E', modifiers }); w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'E', modifiers }); })()`);
+    await waitFor('окно «Окружение» по сочетанию клавиш', async () => (await envOpen()) === true);
+    await ev('document.querySelector("#env-close").click()');
+    await waitFor('окно «Окружение» закрыто после сочетания', async () => (await envOpen()) === false);
+  }
   await ev('document.querySelector("#env-indicator").click()');
   await waitFor('окно «Окружение» по индикатору', async () => (await envOpen()) === true);
   assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV]").length'), 1, 'по индикатору нет карточки переменной');
