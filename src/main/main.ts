@@ -128,6 +128,7 @@ const sessionsPort: SessionsPort = {
   parentOf: (id) => sessions.parentOf(id),
   reportLocal: (id, report) => sessions.reportLocal(id, report),
   noteClosing: (id, caller) => sessions.noteClosing(id, caller),
+  setTask: (id, task) => sessions.setTask(id, task),
 };
 // Служба создаётся ниже, когда готовы хранилища: порт обращается к ней при вызове.
 const buttonsPort: ButtonsToolsPort = {

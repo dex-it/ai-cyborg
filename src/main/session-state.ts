@@ -38,9 +38,13 @@ export const isToolEvent = (name: string | undefined): boolean => name === 'PreT
 // Claude Code ждёт хук на каждой порции ответа: процесс разбора запускается только на порции с комментарием кнопок; сбой - порция показывается как есть.
 export const DISPLAY_HOOK_COMMAND = 'i=$(cat); case "$i" in *cyborg-buttons:*) printf "%s" "$i" | ELECTRON_RUN_AS_NODE=1 "$CYBORG_NODE" "$CYBORG_AGENTD" display-hook ;; esac; true';
 
-/** Содержимое --settings: те же хуки у локальной сессии и у демона на хосте. */
-export function hookSettings(): { hooks: Record<string, unknown[]> } {
+/** set_task только подписывает сессию для соседок: запрос разрешения на каждую смену этапа отвлекал бы человека зря. */
+export const AUTO_ALLOWED_TOOLS = ['mcp__cyborg__set_task'];
+
+/** Содержимое --settings: те же хуки и разрешения у локальной сессии и у демона на хосте. */
+export function hookSettings(): { hooks: Record<string, unknown[]>; permissions: { allow: string[] } } {
   return {
+    permissions: { allow: [...AUTO_ALLOWED_TOOLS] },
     hooks: Object.fromEntries(
       HOOK_EVENTS.map((event) => [
         event,

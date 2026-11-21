@@ -13,7 +13,10 @@ import {
   validateClose,
   validateOpenSession,
   validateSend,
+  validateSetTask,
+  TASK_SUMMARY_MAX,
 } from '../src/main/session-tools';
+import { AUTO_ALLOWED_TOOLS, hookSettings } from '../src/main/session-state';
 
 const DIRS = ['/repo/a', '/repo/b'];
 
@@ -112,6 +115,13 @@ describe('describePeers', () => {
     assert.deepEqual(['parent' in list[3], 'child' in list[3]], [false, false]);
   });
 
+  it('чем занята: title и task - когда известны, last_request - только если отличается от task', () => {
+    const list = JSON.parse(describePeers([peer(1, 'working'), peer(2, 'waiting', { title: 'Ревью', task: 'сделай ревью', lastPrompt: 'сделай ревью' }), peer(3, 'working', { task: 'почини тест', lastPrompt: '[CC2 → CC3] вопрос' })], 1));
+    assert.deepEqual(['title' in list[0], 'task' in list[0], 'last_request' in list[0]], [false, false, false]);
+    assert.deepEqual([list[1].title, list[1].task, 'last_request' in list[1]], ['Ревью', 'сделай ревью', false]);
+    assert.deepEqual([list[2].task, list[2].last_request], ['почини тест', '[CC2 → CC3] вопрос']);
+  });
+
   it('exit_code - только у завершённой', () => {
     const list = JSON.parse(describePeers([peer(1, 'working'), peer(2, 'exited', { exitCode: 0 })], 1));
     assert.deepEqual([list[1].state, list[1].exit_code], ['exited', 0]);
@@ -130,6 +140,38 @@ describe('reportText', () => {
     assert.equal(childExitText(8, { code: 0, released: true }), 'Вкладку сессии CC8 закрыл человек.');
     assert.equal(childExitText(8, { code: 0, released: true, closedBy: 5 }), 'Вкладку сессии CC8 закрыла сессия CC5.');
     assert.equal(childExitText(8, { code: 0, released: true, closedBy: 8 }), 'Сессия CC8 закрыла свою вкладку.');
+  });
+});
+
+describe('set_task и подробность list_sessions', () => {
+  it('validateSetTask: одна строка в пределах, ref необязателен', () => {
+    assert.deepEqual(validateSetTask({ summary: ' ревью \n PR ' }), { summary: 'ревью PR' });
+    assert.deepEqual(validateSetTask({ ref: ' DEX-12 ', summary: 'чиню тест' }), { ref: 'DEX-12', summary: 'чиню тест' });
+    assert.match(validateSetTask({ summary: ' ' }) as string, /summary/);
+    assert.match(validateSetTask({ summary: 'x'.repeat(TASK_SUMMARY_MAX + 1) }) as string, /длиннее/);
+    assert.match(validateSetTask({ ref: 'x'.repeat(81), summary: 's' }) as string, /ref длиннее/);
+    assert.match(validateSetTask({ ref: 5, summary: 's' }) as string, /ref/);
+  });
+
+  it('объявленная задача видна соседке: brief - номер и состояние, full - ещё summary и всё прочее', async () => {
+    const declared = new Map<number, { ref?: string; summary: string }>();
+    const peers = (): SessionInfo[] => [peer(1, 'working', { title: 'Ревью', lastAnswer: 'хвост' }), peer(2, 'waiting', { ...declared.get(2), parent: 1 })];
+    const backend = createSessionTools(
+      { dirsOf: () => DIRS, peers, say: async () => 'sent', setTask: (id, task) => void declared.set(id, task) },
+      { request: async () => 1 },
+      () => {},
+    );
+    assert.equal(await backend.call(2, 'set_task', { ref: 'DEX-7', summary: 'пишу миграцию, этап тестов' }), 'Задача DEX-7 названа соседним сессиям.');
+    const brief = JSON.parse(await backend.call(1, 'list_sessions', { detail: 'brief' }));
+    assert.deepEqual(brief, [{ id: 1, self: true, state: 'working', title: 'Ревью' }, { id: 2, child: true, state: 'waiting', ref: 'DEX-7' }]);
+    const full = JSON.parse(await backend.call(1, 'list_sessions', {}));
+    assert.deepEqual([full[1].ref, full[1].summary, full[0].last_answer], ['DEX-7', 'пишу миграцию, этап тестов', 'хвост']);
+    await assert.rejects(backend.call(1, 'list_sessions', { detail: 'all' }), /brief или full/);
+  });
+
+  it('set_task разрешён настройками сессии: человек его не подтверждает', () => {
+    assert.deepEqual(hookSettings().permissions.allow, AUTO_ALLOWED_TOOLS);
+    assert.ok(AUTO_ALLOWED_TOOLS.every((t) => t.startsWith('mcp__cyborg__')) && AUTO_ALLOWED_TOOLS.includes('mcp__cyborg__set_task'));
   });
 });
 

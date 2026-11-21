@@ -7,6 +7,7 @@ import type { SayResult, SessionInfo } from './sessions.ts';
 export const OPEN_SESSION_TOOL = 'open_session';
 export const LIST_SESSIONS_TOOL = 'list_sessions';
 export const SEND_TO_SESSION_TOOL = 'send_to_session';
+export const SET_TASK_TOOL = 'set_task';
 export const CLOSE_SESSION_TOOL = 'close_session';
 export const SPAWN_AGENT_TOOL = 'spawn_agent';
 export const CLOSE_AGENT_TOOL = 'close_agent';
@@ -48,7 +49,7 @@ export function sessionTools(dirs: string[], context: ToolContext = { kind: 'loc
   const all = localTools(dirs);
   const byName = (...names: string[]): McpTool[] => all.filter((t) => names.includes(t.name));
   const extra = [...(context.buttons ? buttonTools() : []), ...(context.passport ? [reportPassportTool()] : [])];
-  if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL), reportDoneTool('remote'), ...extra];
+  if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL, SET_TASK_TOOL), reportDoneTool('remote'), ...extra];
   const local = context.child ? [...all, reportDoneTool('local')] : all;
   return context.hosts.length ? [...local, spawnAgentTool(dirs, context.hosts), closeAgentTool(), ...extra] : [...local, ...extra];
 }
@@ -245,12 +246,19 @@ function localTools(dirs: string[]): McpTool[] {
     {
       name: LIST_SESSIONS_TOOL,
       description:
-        'Открытые вкладки Cyborg в проекте этой сессии, включая её саму (self: true): номер, подпись вкладки, каталог запуска и текущий, состояние и хвост последнего ответа. ' +
+        'Открытые вкладки Cyborg в проекте этой сессии, включая её саму (self: true): номер, подпись вкладки, чем занята, каталог запуска и текущий, состояние и хвост последнего ответа. ' +
+        'title - название разговора, task - первый запрос (обычно постановка задачи), last_request - последний запрос, если он другой; оба до 300 знаков. ' +
         'state: starting - запускается или ждёт подтверждения доверия к каталогу; working - работает, в том числе ждёт своих фоновых задач; ' +
         'waiting - ход завершён, ждёт сообщения; asking - стоит на вопросе, разрешении или лимите и ждёт человека (причина в reason); exited - процесс завершился (код в exit_code), вкладка открыта, закрывает её close_session. ' +
         'queued - сколько сообщений send_to_session ждут в очереди Cyborg. У удалённой сессии есть host, а cwd - путь на хосте. ' +
-        'parent - номер сессии, открывшей эту инструментом; child: true - твоя дочерняя, её закрываешь ты.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        'parent - номер сессии, открывшей эту инструментом; child: true - твоя дочерняя, её закрываешь ты. ' +
+        'ref и summary - номер задачи и что делает, со слов самой сессии (set_task). ' +
+        'detail: brief - только номер, состояние и номер задачи (без него - название разговора): хватает, чтобы найти нужную сессию; full (по умолчанию) - всё, включая summary, запросы, каталоги и хвост ответа.',
+      inputSchema: {
+        type: 'object',
+        properties: { detail: { type: 'string', enum: ['brief', 'full'], description: 'brief - коротко, full - подробно (по умолчанию).' } },
+        additionalProperties: false,
+      },
     },
     {
       name: SEND_TO_SESSION_TOOL,
@@ -268,6 +276,21 @@ function localTools(dirs: string[]): McpTool[] {
           message: { type: 'string', minLength: 1, description: 'Текст сообщения, может быть многострочным; не начинается с «/», «!» или «#».' },
         },
         required: ['id', 'message'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: SET_TASK_TOOL,
+      description:
+        'Называет соседним сессиям твою задачу: номер и что ты делаешь; они видят это в list_sessions. ' +
+        'Вызови, когда взял задачу и когда сменился её этап; новый вызов заменяет прежний. Человек этот вызов не подтверждает.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string', description: `Номер задачи: ключ Jira, номер issue или MR, имя цели или ветки; до ${TASK_REF_MAX} знаков. Номера нет - не передавай.` },
+          summary: { type: 'string', minLength: 1, description: `Что делаешь сейчас, одной строкой до ${TASK_SUMMARY_MAX} знаков: задача и этап.` },
+        },
+        required: ['summary'],
         additionalProperties: false,
       },
     },
@@ -401,6 +424,32 @@ export function validateSpawn(value: unknown, dirs: string[], hosts: string[]): 
   return { ...out, limits: parsed };
 }
 
+export const TASK_REF_MAX = 80;
+export const TASK_SUMMARY_MAX = 200;
+
+const oneLine = (text: string): string => cleanMessage(text).replace(/\s+/g, ' ').trim();
+
+/** set_task: номер и описание - одной строкой в пределах, иначе list_sessions разросся бы. */
+export function validateSetTask(value: unknown): { ref?: string; summary: string } | string {
+  const { ref, summary } = args(value);
+  if (typeof summary !== 'string' || !oneLine(summary)) return 'summary - непустая строка';
+  const text = oneLine(summary);
+  if (text.length > TASK_SUMMARY_MAX) return `summary длиннее ${TASK_SUMMARY_MAX} знаков: оставь задачу и этап`;
+  if (ref === undefined) return { summary: text };
+  if (typeof ref !== 'string' || !oneLine(ref)) return 'ref - непустая строка';
+  const id = oneLine(ref);
+  if (id.length > TASK_REF_MAX) return `ref длиннее ${TASK_REF_MAX} знаков: только номер задачи`;
+  return { ref: id, summary: text };
+}
+
+export type ListDetail = 'brief' | 'full';
+
+export function validateList(value: unknown): ListDetail | string {
+  const { detail } = args(value);
+  if (detail === undefined) return 'full';
+  return detail === 'brief' || detail === 'full' ? detail : 'detail - brief или full';
+}
+
 export type ReportStatus = 'ok' | 'failed' | 'blocked';
 
 export interface ReportArgs {
@@ -441,7 +490,19 @@ export function validateCloseAgent(value: unknown, peers: SessionInfo[]): { id: 
 
 const tail = (text: string): string => (text.length > ANSWER_TAIL ? `…${text.slice(-ANSWER_TAIL)}` : text);
 
-export function describePeers(peers: SessionInfo[], caller: number): string {
+export function describePeers(peers: SessionInfo[], caller: number, detail: ListDetail = 'full'): string {
+  if (detail === 'brief') {
+    return JSON.stringify(
+      peers.map((p) => ({
+        id: p.id,
+        ...(p.id === caller ? { self: true } : {}),
+        ...(p.host ? { host: p.host } : {}),
+        ...(p.parent === caller ? { child: true } : {}),
+        state: p.state,
+        ...(p.ref ? { ref: p.ref } : p.title ? { title: p.title } : {}),
+      })),
+    );
+  }
   return JSON.stringify(
     peers.map((p) => ({
       id: p.id,
@@ -449,6 +510,11 @@ export function describePeers(peers: SessionInfo[], caller: number): string {
       ...(p.id === caller ? { self: true } : {}),
       ...(p.host ? { host: p.host, ...(p.link ? { link: p.link } : {}) } : {}),
       ...(p.parent !== undefined ? { parent: p.parent, ...(p.parent === caller ? { child: true } : {}) } : {}),
+      ...(p.ref ? { ref: p.ref } : {}),
+      ...(p.summary ? { summary: p.summary } : {}),
+      ...(p.title ? { title: p.title } : {}),
+      ...(p.task ? { task: p.task } : {}),
+      ...(p.lastPrompt && p.lastPrompt !== p.task ? { last_request: p.lastPrompt } : {}),
       repo: p.dirs[0],
       cwd: p.cwd,
       state: p.state,
@@ -537,6 +603,8 @@ export interface SessionsPort {
   reportLocal?(id: number, report: ReportArgs): string;
   /** Вкладку закрывает сессия инструментом, а не человек. */
   noteClosing?(id: number, caller: number): void;
+  /** Задача, объявленная сессией (set_task). */
+  setTask?(id: number, task: { ref?: string; summary: string }): void;
 }
 
 /** Кнопки: главный процесс проверяет и пишет, отказ - исключение с причиной. */
@@ -593,7 +661,18 @@ export function createSessionTools(
         if (name === LIST_BUTTONS_TOOL) return buttons.list(caller);
         return name === ADD_BUTTON_TOOL ? buttons.add(caller, value) : name === UPDATE_BUTTON_TOOL ? buttons.update(caller, value) : buttons.disable(caller, value);
       }
-      if (name === LIST_SESSIONS_TOOL) return describePeers(peers, caller);
+      if (name === LIST_SESSIONS_TOOL) {
+        const detail = validateList(value);
+        if (detail !== 'brief' && detail !== 'full') throw new Error(detail);
+        return describePeers(peers, caller, detail);
+      }
+      if (name === SET_TASK_TOOL) {
+        const valid = validateSetTask(value);
+        if (typeof valid === 'string') throw new Error(valid);
+        if (!sessions.setTask) throw new Error(`инструмент ${name} недоступен этой сессии`);
+        sessions.setTask(caller, valid);
+        return valid.ref ? `Задача ${valid.ref} названа соседним сессиям.` : 'Задача названа соседним сессиям.';
+      }
       if (name === SEND_TO_SESSION_TOOL) {
         const valid = validateSend(value, peers, caller);
         if (typeof valid === 'string') throw new Error(valid);

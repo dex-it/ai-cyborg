@@ -72,6 +72,8 @@ interface Session {
   lastAnswer?: string;
   background?: boolean;
   context: SessionContext;
+  /** Задача, объявленная самой сессией через set_task. */
+  declared?: { ref?: string; summary: string };
   /** Сообщения других сессий, ждущие, когда сессия примет ввод: Enter, пока идёт вызов инструмента, мог бы попасть в его запрос разрешения. */
   outbox: string[];
   outboxTimer?: NodeJS.Timeout;
@@ -111,6 +113,13 @@ export interface SessionInfo {
   parent?: number;
   /** Только у завершённой (state exited). */
   exitCode?: number;
+  /** Номер задачи и что делает - со слов самой сессии (set_task). */
+  ref?: string;
+  summary?: string;
+  /** Название разговора, первый и последний запрос - чем сессия занята. */
+  title?: string;
+  task?: string;
+  lastPrompt?: string;
 }
 
 /** sent-working - отправлено в работающую сессию: Claude Code передаст его модели после текущего вызова инструмента. */
@@ -355,7 +364,7 @@ export class SessionManager {
     if (!own || own.state === 'exited') return null;
     return [...this.sessions.values()]
       .filter((s) => s.project === own.project)
-      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, submitPending, remote, parent, exitCode }) => ({
+      .map(({ id, dirs, cwd, state, reason, lastAnswer, outbox, submitPending, remote, parent, exitCode, context, declared }) => ({
         id,
         dirs,
         cwd,
@@ -366,6 +375,11 @@ export class SessionManager {
         ...(remote ? { host: remote.host, ...(remote.online ? {} : { link: 'offline' as const }) } : {}),
         ...(parent !== undefined ? { parent } : {}),
         ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(declared?.ref ? { ref: declared.ref } : {}),
+        ...(declared ? { summary: declared.summary } : {}),
+        ...(context.title ? { title: context.title } : {}),
+        ...(context.first ? { task: context.first } : {}),
+        ...(context.last ? { lastPrompt: context.last } : {}),
       }));
   }
 
@@ -605,6 +619,13 @@ export class SessionManager {
       this.emit('remote:report', { id, title: `CC${id}`, body: reportNote(report) });
     }
     return REPORT_ACCEPTED;
+  }
+
+  /** set_task: сессия сама называет свою задачу; новый вызов заменяет прежний. */
+  setTask(id: number, task: { ref?: string; summary: string }): void {
+    const session = this.sessions.get(id);
+    if (!session || session.state === 'exited') throw new Error('сессия завершена');
+    session.declared = task;
   }
 
   remoteOf(id: number): RemoteMeta | null {
