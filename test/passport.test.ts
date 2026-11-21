@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { CAPABILITIES, GROUPS, dotText, dotTitle, fileReasons } from '../src/shared/passport';
-import { PassportService, loadState, parseState, probeOutcome, saveState, sourceResolves, validateAction, validateProbeReport } from '../src/main/passport';
+import { PassportService, docLinkOk, loadState, parseState, probeOutcome, saveState, sourceResolves, validateAction, validateProbeReport } from '../src/main/passport';
 import { sessionTools } from '../src/main/session-tools';
 
 function fixture(t: import('node:test').TestContext, repos = 1) {
@@ -37,6 +37,9 @@ function fixture(t: import('node:test').TestContext, repos = 1) {
   return { base, dirs, service, events, put, passportDir, porcelain };
 }
 
+// docs/a.md есть в каждом репозитории фикстуры; путь - от каталога паспорта.
+const DOC = '[Док](../../docs/a.md)';
+
 test('перечень: двенадцать способностей в четырёх группах, файлы без повторов', () => {
   assert.equal(CAPABILITIES.length, 12);
   assert.deepEqual(GROUPS.map((g) => g.id), ['product', 'tech', 'work', 'upkeep']);
@@ -45,13 +48,14 @@ test('перечень: двенадцать способностей в чет�
 });
 
 test('пробел по файлу: нет файла, пуст, ⚠, неподтверждённое ≈', () => {
-  assert.deepEqual(fileReasons(null, false), ['missing']);
-  assert.deepEqual(fileReasons('  \n', false), ['empty']);
-  assert.deepEqual(fileReasons('текст ⚠', false), ['warn']);
-  assert.deepEqual(fileReasons('текст ≈', false), ['approx']);
-  assert.deepEqual(fileReasons('текст ≈', true), []);
-  assert.deepEqual(fileReasons('⚠ и ≈', false), ['warn', 'approx']);
-  assert.deepEqual(fileReasons('всё хорошо', false), []);
+  assert.deepEqual(fileReasons(null, false, false), ['missing']);
+  assert.deepEqual(fileReasons('  \n', false, false), ['empty']);
+  assert.deepEqual(fileReasons('текст ⚠', false, true), ['warn']);
+  assert.deepEqual(fileReasons('текст ≈', false, true), ['approx']);
+  assert.deepEqual(fileReasons('текст ≈', true, true), []);
+  assert.deepEqual(fileReasons('⚠ и ≈', false, true), ['warn', 'approx']);
+  assert.deepEqual(fileReasons('всё хорошо', false, true), []);
+  assert.deepEqual(fileReasons('нет ссылки', false, false), ['nolink']);
 });
 
 test('точка: число, «99+», «✓», «–», «…» и подсказки', () => {
@@ -77,10 +81,10 @@ test('проект без каталога паспорта: пробелами 
 test('проверка файлов: четыре причины, подтверждение ≈ пишется в состояние, файл не меняется, изменение файла снимает подтверждение', async (t) => {
   const f = fixture(t);
   const [repo] = f.dirs;
-  for (const cap of CAPABILITIES) f.put(repo, cap.file, 'готово\n');
+  for (const cap of CAPABILITIES) f.put(repo, cap.file, `${DOC}\n`);
   f.put(repo, 'why.md', '');
-  f.put(repo, 'behavior.md', 'тут ⚠');
-  f.put(repo, 'done.md', 'черновик ≈');
+  f.put(repo, 'behavior.md', `${DOC} ⚠`);
+  f.put(repo, 'done.md', `${DOC} ≈`);
   fs.rmSync(path.join(f.passportDir(repo), 'domain.md'));
   const reasons = (view: Awaited<ReturnType<typeof f.service.view>>, id: string) => view.capabilities.find((c) => c.id === id)!.reasons;
   let view = await f.service.view('p');
@@ -95,15 +99,41 @@ test('проверка файлов: четыре причины, подтвер
   assert.equal(fs.readFileSync(path.join(f.passportDir(repo), 'done.md'), 'utf8'), before);
   const status = f.porcelain(repo);
   assert.match(status, /\.cyborg\/passport\//);
-  f.put(repo, 'done.md', 'черновик ≈ изменён');
+  f.put(repo, 'done.md', `${DOC} ≈ изменён`);
   view = await f.service.view('p');
   assert.deepEqual(reasons(view, 'done'), ['≈ не подтверждено']);
+});
+
+test('ссылка паспорта (от каталога паспорта или от корня): нужен существующий файл или каталог проекта, не URL, не сам паспорт и не выход за репозиторий', async (t) => {
+  const f = fixture(t);
+  const [repo] = f.dirs;
+  fs.writeFileSync(path.join(repo, 'outside-target.md'), 'x');
+  const outside = path.join(f.base, 'out.md');
+  fs.writeFileSync(outside, 'x');
+  f.put(repo, 'why.md', 'x');
+  assert.equal(await docLinkOk(repo, 'просто текст без ссылки'), false);
+  assert.equal(await docLinkOk(repo, '[сайт](https://example.com/docs/a.md)'), false);
+  assert.equal(await docLinkOk(repo, '[нет](../../docs/none.md)'), false);
+  assert.equal(await docLinkOk(repo, '[сам паспорт](why.md)'), false);
+  assert.equal(await docLinkOk(repo, '[корень](../..)'), false);
+  assert.equal(await docLinkOk(repo, '[наружу](../../../out.md)'), false);
+  assert.equal(await docLinkOk(repo, '[файл](../../docs/a.md#L2)'), true);
+  assert.equal(await docLinkOk(repo, '[от корня](docs/a.md)'), true);
+  assert.equal(await docLinkOk(repo, '[от корня со слэшем](/docs/a.md)'), true);
+  assert.equal(await docLinkOk(repo, '[от корня нет](docs/none.md)'), false);
+  assert.equal(await docLinkOk(repo, '[каталог паспорта от корня](.cyborg/passport/why.md)'), false);
+  assert.equal(await docLinkOk(repo, '[наружу от корня](../out.md)'), false);
+  assert.equal(await docLinkOk(repo, '[каталог](../../docs)'), true);
+  assert.equal(await docLinkOk(repo, 'сначала [нет](../../x.md), потом [есть](../../docs/a.md)'), true);
+  f.put(repo, 'why.md', 'описание без единой ссылки');
+  const view = await f.service.view('p');
+  assert.deepEqual(view.capabilities.find((c) => c.id === 'why')!.reasons, ['нет ссылки на документ проекта']);
 });
 
 test('«Не нужно»: способность снята и не считается, «Нужно» возвращает, запись только в .cyborg/passport/', async (t) => {
   const f = fixture(t);
   const [repo] = f.dirs;
-  for (const cap of CAPABILITIES) f.put(repo, cap.file, 'ok');
+  for (const cap of CAPABILITIES) f.put(repo, cap.file, DOC);
   fs.rmSync(path.join(f.passportDir(repo), 'upkeep.md'));
   assert.equal((await f.service.view('p')).count, 1);
   let view = await f.service.act('p', { op: 'notNeeded', capability: 'upkeep' });
@@ -193,7 +223,7 @@ test('report_passport: проверка аргументов', () => {
 test('проба: итог пишет исходы в состояние, смысловая ждёт подтверждения, «Подтвердить» и «Не то», файлы не тронуты', async (t) => {
   const f = fixture(t);
   const [repo] = f.dirs;
-  for (const cap of CAPABILITIES) f.put(repo, cap.file, 'ok');
+  for (const cap of CAPABILITIES) f.put(repo, cap.file, DOC);
   const probe = await f.service.prepareProbe('p');
   assert.equal(probe.cwd, repo);
   assert.match(probe.prompt, /report_passport/);
@@ -258,8 +288,8 @@ test('проект из двух репозиториев: главный не �
   assert.equal(view.capabilities.every((c) => c.group === 'tech'), true);
   await assert.rejects(f.service.act('p', { op: 'notNeeded', capability: 'why' }), /Отметьте главный репозиторий/);
   for (const cap of CAPABILITIES) {
-    f.put(a, cap.file, 'ok');
-    if (cap.group === 'tech') f.put(b, cap.file, 'ok');
+    f.put(a, cap.file, DOC);
+    if (cap.group === 'tech') f.put(b, cap.file, DOC);
   }
   view = await f.service.view('p');
   assert.equal(view.level, 'unchecked');
@@ -278,6 +308,8 @@ test('исправление: промпт называет способност
   const fix = await f.service.prepareFix('p', 'architecture', f.dirs[0]);
   assert.match(fix.prompt, /architecture\.md/);
   assert.match(fix.prompt, /ПЛАН/);
+  assert.match(fix.prompt, /не описание проекта, а указатель/);
+  assert.match(fix.prompt, /документ положи в проект/);
   await assert.rejects(f.service.prepareFix('p', 'nope', f.dirs[0]), /Некорректные/);
   await assert.rejects(f.service.prepareFix('p', 'why', '/somewhere/else'), /Некорректные/);
 });

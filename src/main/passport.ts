@@ -141,6 +141,34 @@ async function readCapabilityFile(repo: string, cap: Capability): Promise<{ cont
   }
 }
 
+/** Паспорт - указатель на документы (D-52): нужна Markdown-ссылка (путь от каталога паспорта или от корня репозитория) на существующий файл или каталог внутри репозитория, но не в самом каталоге паспорта. */
+export async function docLinkOk(repo: string, content: string): Promise<boolean> {
+  let realRepo: string;
+  try {
+    realRepo = await fs.promises.realpath(repo);
+  } catch {
+    return false;
+  }
+  const own = path.join(realRepo, PASSPORT_DIR);
+  for (const match of content.matchAll(/\]\(([^)\s]+)\)/g)) {
+    const href = match[1].split('#')[0];
+    if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href)) continue;
+    const decoded = decodeURI(href);
+    for (const target of [path.resolve(passportDir(repo), decoded), path.resolve(repo, decoded.replace(/^\/+/, ''))]) {
+      try {
+        const real = await fs.promises.realpath(target);
+        const inRepo = path.relative(realRepo, real);
+        if (!inRepo || inRepo.startsWith('..') || path.isAbsolute(inRepo)) continue;
+        if (real === own || real.startsWith(own + path.sep)) continue;
+        return true;
+      } catch {
+        // нет такого пути или адрес негоден: этот вариант не считается
+      }
+    }
+  }
+  return false;
+}
+
 /** Указатель неглавного репозитория: Markdown-ссылка, чей путь от каталога index.md ведёт в index.md главного (FR-20009). */
 export async function pointerOk(repo: string, main: string): Promise<boolean> {
   let text: string;
@@ -261,6 +289,7 @@ export function probePrompt(caps: Capability[], repo: string): string {
     'Файлы проекта не меняй, ничего не коммить: проба только читает.',
     `Рабочая копия: ${repo}. Источник - путь к файлу от корня рабочей копии, при желании со строкой: docs/a.md:12.`,
     'Если ответа в проекте нет - честно ответь «не знаю» (outcome unknown), не выдумывай: источник проверит Cyborg, несуществующий источник - это «выдумывает».',
+    `Файл паспорта (${PASSPORT_DIR}) - указатель на документы проекта: иди по его ссылкам и источником указывай сам документ, а не файл паспорта.`,
     'Если без человека не обойтись, спроси его здесь же в диалоге.',
     'Итог сдай ОДНИМ вызовом инструмента report_passport: capabilities - по записи на каждую способность {id, outcome: found|unknown, answer, source}. Пока не вызвал, проба не окончена.',
     'После вызова скажи человеку, что проба закончена и вкладку можно закрыть.',
@@ -275,8 +304,11 @@ export function fixPrompt(cap: Capability, repo: string): string {
     `Исправление пробела паспорта проекта: способность «${cap.name}».`,
     `Вопрос к проекту: ${cap.question}`,
     `Файл паспорта: ${PASSPORT_DIR}/${cap.file} в репозитории ${repo}.`,
-    'Метки в файле: «⚠» - не найдено, нужен человек; «≈» - черновик по коду, нужно подтвердить. Заполни файл ответом с источниками из проекта; чего не нашёл - помечай «⚠», домыслы - «≈».',
-    'Сначала выдай ПЛАН: что выяснить, какие файлы править, какие скиллы выбраны и почему. До подтверждения плана человеком файлы не правь.',
+    'Паспорт - не описание проекта, а указатель: файл только говорит, где в проекте лежит ответ на вопрос, - ссылки на документы с короткой подписью, что это за документ. Самого описания, требований, решений, результатов проверок и регламентов в файле паспорта быть не должно.',
+    'Ссылка - Markdown-ссылка на существующий файл или каталог проекта, путь от корня репозитория или от каталога файла паспорта, например [Требования](docs/brd.md). Пока в файле нет рабочей ссылки, у способности пробел.',
+    'Сначала найди в проекте документ с ответом (docs/, README, ADR, CLAUDE.md). Есть - поставь ссылку на него в паспорт. Нет - помоги его собрать, но сам документ положи в проект, по раскладке корпуса проекта (.docs_layout; нет - в docs/ обычным Markdown), используя скиллы по документации, если они есть, и только потом ставь ссылку. Решения и ответы человека по ходу работы записывай в документы проекта, а не в паспорт.',
+    'Метки в файле паспорта: «⚠» - документа нет, нужен человек; «≈» - ссылка на черновик, нужно подтвердить.',
+    'Сначала выдай ПЛАН: что выяснить, какие документы создать или править, какие ссылки будут в паспорте, какие скиллы выбраны и почему. До подтверждения плана человеком файлы не правь.',
     'Кандидатов в скиллы нет: исполняй это поручение сам. Не коммить и не сливай: как правка дойдёт до PR, решает человек.',
   ].join('\n');
 }
@@ -347,7 +379,7 @@ export class PassportService {
           const file = await readCapabilityFile(repo, cap);
           if (file.problem) problems.push(file.problem);
           const confirmed = file.content !== null && state.approxConfirmed[cap.id] === sha(file.content);
-          const fileWhy = fileReasons(file.content, confirmed);
+          const fileWhy = fileReasons(file.content, confirmed, file.content === null || (await docLinkOk(repo, file.content)));
           const reasons: string[] = fileWhy.map((r) => REASON_TEXT[r]);
           const probe = state.probe?.outcomes[cap.id] ?? null;
           if (probe) {
