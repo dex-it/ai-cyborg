@@ -47,12 +47,12 @@ describe('привязка задачи и MR к сессии только в п
     assert.deepEqual(keys.filter((key) => !allowed.some((re) => re.test(key))), []);
   });
 
-  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, список хабов магазинов, выбор встроенных плагинов, кэш статистики вызовов расширений, настройки хуков, файлы событий сессий и их конфиги MCP Cyborg, список недавних воркспейсов, замок открытого воркспейса, правку Markdown из просмотрщика, глобальный CLAUDE.md Claude Code из его редактора, зашифрованный токен входа Claude удалённых агентов, номера дочерних разговоров, одобрения запуска файлов, состояние паспорта проекта в каталоге .cyborg/passport/ репозитория и отметку главного репозитория', () => {
+  it('главный процесс пишет на диск только проекты, их копию, общие промпты и общие кнопки команд, список хабов магазинов, выбор встроенных плагинов, кэш статистики вызовов расширений, настройки хуков, файлы событий сессий и их конфиги MCP Cyborg, список недавних воркспейсов, замок открытого воркспейса, правку Markdown из просмотрщика, глобальный CLAUDE.md Claude Code из его редактора, зашифрованный токен входа Claude удалённых агентов, номера дочерних разговоров, одобрения запуска файлов, состояние паспорта проекта в каталоге .cyborg/passport/ репозитория , отметку главного репозитория и выбор переменных окружения (env-vars.json) с файлом окружения терминала запуска', () => {
     const writers = sources('src/main')
       .filter((file) => /\b(writeFileSync|appendFileSync|writeJsonAtomic|createWriteStream|writeFile)\(/.test(code(file)))
       .map((file) => file.split(path.sep).join('/'))
       .sort();
-    assert.deepEqual(writers, ['src/main/builtin-plugins.ts', 'src/main/child-sessions.ts', 'src/main/claude-md.ts', 'src/main/command-store.ts', 'src/main/events-store.ts', 'src/main/extensions-usage.ts', 'src/main/files.ts', 'src/main/hubs.ts', 'src/main/jsonfile.ts', 'src/main/passport.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/remote/claude-token.ts', 'src/main/run-approvals.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
+    assert.deepEqual(writers, ['src/main/builtin-plugins.ts', 'src/main/child-sessions.ts', 'src/main/claude-md.ts', 'src/main/command-store.ts', 'src/main/events-store.ts', 'src/main/extensions-usage.ts', 'src/main/files.ts', 'src/main/hubs.ts', 'src/main/jsonfile.ts', 'src/main/managed-env.ts', 'src/main/passport.ts', 'src/main/projects.ts', 'src/main/prompt-store.ts', 'src/main/remote/claude-token.ts', 'src/main/run-approvals.ts', 'src/main/run-file.ts', 'src/main/sessions.ts', 'src/main/workspaces.ts']);
   });
 });
 
@@ -89,3 +89,41 @@ describe('уведомления итогов без вкладки', () => {
   });
 });
 
+describe('окружение дочерних процессов собирается в одном месте', () => {
+  it('главный процесс не передаёт process.env запуску и не раскрывает его: окружение даёт child-env.ts, иначе выбор переменных теряется', () => {
+    const offenders = sources('src/main').filter((file) => file !== path.join('src/main', 'child-env.ts') && /\.\.\.process\.env|\benv:\s*process\.env\b/.test(code(file)));
+    assert.deepEqual(offenders, []);
+  });
+
+  it('оболочку -lc выбирает унаследованный SHELL через loginShell: чтений SHELL из собранного окружения в запусках нет', () => {
+    // run-terminal.ts принимает env, уже прошедший withLoginShell в run-file.ts.
+    const allowed = [path.join('src/main', 'child-env.ts'), path.join('src/main', 'run-terminal.ts')];
+    const offenders = sources('src/main').filter((file) => !allowed.includes(file) && /\benv\.SHELL\b/.test(code(file)));
+    assert.deepEqual(offenders, []);
+  });
+
+  it('каталог настроек Claude для собственных чтений берётся из одного места main.ts: управляемый CLAUDE_CONFIG_DIR им не читается', () => {
+    const text = code('src/main/main.ts');
+    assert.equal([...text.matchAll(/\bclaudePaths\(/g)].length, 1, 'claudePaths вызывается мимо inheritedClaudePaths');
+    for (const reader of ['mirror:', 'memory:', 'new ClaudeMdStore(', 'const extensionsEnv =']) {
+      const at = text.indexOf(reader);
+      assert.ok(at >= 0, `не найдено: ${reader}`);
+      assert.match(text.slice(at, text.indexOf('\n', at)), /inheritedClaudePaths\(\)/, reader);
+    }
+  });
+
+  it('перезапуск дочерней вкладки несёт открывшую по всему пути: окно -> session:resume -> create', () => {
+    assert.match(code('src/renderer/app.ts'), /api\.resumeSession\(owner\.id, repo, addDirs, resume, opener\?\.id\)/);
+    assert.match(code('src/renderer/app.ts'), /restartPlan\(reply, findSession\)/);
+    assert.match(code('src/renderer/app.ts'), /plan\.resume, undefined, plan\.opener/);
+    const handler = /ipcMain\.handle\('session:resume',[\s\S]*?\n\);/.exec(code('src/main/main.ts'))?.[0] ?? '';
+    assert.match(handler, /resumeSession\(/);
+    assert.match(handler, /\bparent,\s*\)/);
+  });
+
+  it('правило имени переменной одно: регулярку имени держит src/shared/env-vars.ts, демон и главный процесс её импортируют', () => {
+    const own = path.join('src/shared', 'env-vars.ts');
+    const offenders = sources('src').filter((file) => file !== own && /\[A-Za-z_\]\[A-Za-z0-9_\]\{0,127\}/.test(code(file)));
+    assert.deepEqual(offenders, []);
+  });
+});

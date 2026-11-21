@@ -9,7 +9,7 @@ date: 2026-10-26
 Уровень выводится из текста: `автотест` - названы файлы `*.test.ts`; `smoke` - назван `scripts/smoke.mjs`; `ручная` - замер у владельца
 (`npm run measure`); `осмотр и демонстрация` - ничего из перечисленного. Уровни складываются: `автотест + smoke`.
 
-Требований: 223; с автотестом - 189, из них со smoke - 44; только smoke - 11; ручная - 2; только осмотр и демонстрация - 21.
+Требований: 242; с автотестом - 208, из них со smoke - 50; только smoke - 11; ручная - 2; только осмотр и демонстрация - 21.
 
 | Требование | Название | Фича | Уровень | Файлы |
 |---|---|---|---|---|
@@ -236,3 +236,22 @@ date: 2026-10-26
 | FR-20011 | Поручение способности начальным промптом | 20-project-passport | осмотр и демонстрация | - |
 | FR-20012 | Кандидаты в скиллы и установка по решению человека | 20-project-passport | осмотр и демонстрация | - |
 | FR-20013 | Без claude: проба и исправление недоступны, проверка файлов идёт | 20-project-passport | осмотр и демонстрация | - |
+| FR-21001 | Переменная - имя и список кандидатов явного вида | 21-managed-env | автотест | `test/env-vars.test.ts`, `test/managed-env.test.ts`, `test/static-guards.test.ts` |
+| NFR-21001 | Пределы переменных, кандидатов, выражений и файла | 21-managed-env | автотест | `test/env-vars.test.ts`, `test/env-eval.test.ts`, `test/managed-env.test.ts` |
+| FR-21002 | Три состояния переменной и действия «Выбрать», «Снять», «Не трогать», «Удалить переменную» | 21-managed-env | автотест | `test/managed-env.test.ts`, `test/child-env.test.ts` |
+| NFR-21002 | Значения переменных: классификация и доступ | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/run-file.test.ts`, `test/agentd.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
+| FR-21003 | Одна сборка окружения и порядок слоёв | 21-managed-env | автотест | `test/child-env.test.ts`, `test/static-guards.test.ts`, `src/main/sessions.test.ts` |
+| FR-21004 | Процессы, которые получают управляемое окружение, и ожидание готовности | 21-managed-env | автотест + smoke | `test/env-spawn.test.ts`, `test/child-env.test.ts`, `test/session-resume.test.ts`, `scripts/smoke.mjs` |
+| FR-21005 | Терминал «Запустить» получает окружение файлом, значения не попадают в аргументы | 21-managed-env | автотест | `test/run-file.test.ts` |
+| FR-21006 | Открытие адреса и файла системной программой с управляемым окружением | 21-managed-env | автотест | `test/env-spawn.test.ts` |
+| FR-21007 | Сессии на хостах SSH получают переменные при запуске и пробуждении, значения - только в памяти демона | 21-managed-env | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
+| FR-21008 | Токен входа Claude на хостах из управляемого окружения | 21-managed-env | автотест | `test/remote-link.test.ts` |
+| FR-21009 | Вычисление выражения: момент, окружение запуска и значение | 21-managed-env | автотест | `test/env-eval.test.ts`, `test/managed-env.test.ts` |
+| FR-21010 | Неудача, таймаут и отмена вычисления | 21-managed-env | автотест | `test/env-eval.test.ts`, `test/managed-env.test.ts` |
+| FR-21011 | Последнее действие над переменной побеждает | 21-managed-env | автотест | `test/managed-env.test.ts` |
+| FR-21012 | Хранение выбора и стартовое вычисление | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/env-vars.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
+| FR-21013 | Правка определений в окне | 21-managed-env | автотест | `test/managed-env.test.ts` |
+| FR-21014 | Индикатор, окно «Окружение», сочетание клавиш и пункт меню | 21-managed-env | автотест + smoke | `test/env-vars.test.ts`, `test/env-dialog.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-21015 | Показ вычисленного значения | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/env-vars.test.ts`, `scripts/smoke.mjs` |
+| FR-21016 | Пометка устаревших сессий и перезапуск | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `src/main/sessions.test.ts`, `test/session-resume.test.ts`, `test/remote-link.test.ts`, `test/agentd.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
+| FR-21017 | Пометки, где значение переменной не действует | 21-managed-env | автотест | `test/managed-env.test.ts`, `test/static-guards.test.ts` |

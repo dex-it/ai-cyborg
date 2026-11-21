@@ -4,7 +4,7 @@ export interface HostTools {
   glab: boolean;
 }
 
-export type PreflightResult = { home: string; installed: string[]; tools: HostTools } | { missing: string[] };
+export type PreflightResult = { home: string; installed: string[]; tools: HostTools; loggedIn: boolean } | { missing: string[] };
 
 /** PATH логин-оболочки: в неинтерактивном ssh нет ни nvm, ни ~/.local/bin; команда идёт в stdin, потому что tcsh не принимает -l вместе с -c, а последняя строка с / отсекает шум профиля. */
 export const LOGIN_PATH = `P=$(printf 'printenv PATH\\n' | "\${SHELL:-/bin/sh}" -l 2>/dev/null | grep '^/' | tail -n 1)
@@ -49,5 +49,5 @@ export function parsePreflight(output: string, claudeToken = false): PreflightRe
     loggedIn = false;
   }
   if (!loggedIn && !claudeToken) return { missing: ['claude на хосте не залогинен: выполните на хосте claude auth login либо задайте токен в «Воркспейс → Вход Claude на хостах…»'] };
-  return { home: home as string, installed: (kv.get('agentd') ?? '').split(/\s+/).filter(Boolean), tools: { gh: !!kv.get('gh'), glab: !!kv.get('glab') } };
+  return { home: home as string, installed: (kv.get('agentd') ?? '').split(/\s+/).filter(Boolean), tools: { gh: !!kv.get('gh'), glab: !!kv.get('glab') }, loggedIn };
 }

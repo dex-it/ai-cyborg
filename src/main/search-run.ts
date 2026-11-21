@@ -2,6 +2,12 @@
 export class SearchRunner {
   private readonly current = new Map<string, AbortController>();
 
+  /** Отменить идущий поиск вида: его run ответит cancelled. */
+  cancel(kind: string): void {
+    this.current.get(kind)?.abort();
+    this.current.delete(kind);
+  }
+
   async run<T extends { cancelled?: true }>(kind: string, work: (signal: AbortSignal) => Promise<T>, empty: T): Promise<T> {
     this.current.get(kind)?.abort();
     const controller = new AbortController();

@@ -1,6 +1,9 @@
 /** Версия протокола канала Cyborg - демон: меняется при несовместимой правке сообщений (ADR-0020 п.3). */
 export const PROTO = 2;
 
+/** Возможности демона сверх PROTO, не поднимающие версию протокола: vars - управляемое окружение в spawn и wake, sleep - усыпление сессии по запросу Cyborg. */
+export const FEATURES = ['vars', 'sleep'];
+
 /** Кольцо вывода сессии, которое демон держит для отсутствующего клиента. */
 export const RING_BYTES = 1024 * 1024;
 
@@ -74,7 +77,14 @@ export interface AgentExtra {
   mcp?: Record<string, McpServer>;
 }
 
+/** Управляемое окружение Cyborg для процессов сессии: только в памяти демона, в meta.json не пишется. */
+export interface Vars {
+  set: Record<string, string>;
+  unset: string[];
+}
+
 export interface SpawnMsg extends AgentExtra {
+  vars?: Vars;
   sid: string;
   token: string;
   repos: RepoSpec[];

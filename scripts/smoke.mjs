@@ -117,6 +117,20 @@ async function main() {
   };
   const wheelUp = (modifiers) => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 600, y: 400, deltaX: 0, deltaY: -100, modifiers });
   const text = (selector) => ev(`document.querySelector(${JSON.stringify(selector)})?.innerText ?? ''`);
+  // На невысоком окне (раннер macOS) длинный ARGS подставного claude уносит первые строки за верх: смотрим и начало вывода.
+  const terminalText = async () => {
+    const shown = () => ev('(() => { const e = [...document.querySelectorAll(".xterm-rows")].find((x) => x.offsetParent); return e ? e.innerText : ""; })()');
+    const visible = await shown();
+    const box = await ev('(() => { const e = [...document.querySelectorAll(".xterm-screen")].find((x) => x.offsetParent); if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()');
+    if (!box) return visible;
+    const wheel = (deltaY) => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: box.x, y: box.y, deltaX: 0, deltaY });
+    await wheel(-100000);
+    await sleep(150);
+    const top = await shown();
+    await wheel(100000);
+    await sleep(150);
+    return `${top}\n${visible}`;
+  };
   const tabs = () => ev('document.querySelectorAll("#session-list > *").length');
   const fontSize = () => ev('localStorage.getItem("cyborg.fontSize")');
 
@@ -295,7 +309,7 @@ async function main() {
   assert.equal(await tabs(), 0, 'чужой модификатор открыл сессию');
   await combo(commandModifier | SHIFT, 'N', 'KeyN', 78);
   await waitFor('вкладка сессии', async () => (await tabs()) === 1);
-  await waitFor('вывод подставного claude в терминале', async () => /fake-claude ready/.test(await text('.xterm-rows')));
+  await waitFor('вывод подставного claude в терминале', async () => /fake-claude ready/.test(await terminalText()));
   log('новая сессия по клавише своей системы, pty и терминал');
 
   await ev(`window.cyborg.input(1, 'cd ${worktree}\\r')`);
@@ -741,6 +755,70 @@ async function main() {
   await combo(commandModifier, '0', 'Digit0', 48);
   await waitFor('сброс размера шрифта на 13', async () => (await fontSize()) === '13');
   log('размер шрифта: колесо и сброс клавишей своей системы');
+
+  // Окружение: значение выражения из хранилища секретов видно новой сессии, прежние вкладки помечены устаревшими.
+  mkdirSync(join(base, 'pass', 'smoke'), { recursive: true });
+  writeFileSync(join(base, 'pass', 'smoke', 'token'), 'smoke-secret\n');
+  const staleBefore = await ev('document.querySelectorAll("#session-list .env-stale").length');
+  assert.equal(staleBefore, 0, 'вкладка помечена устаревшей до смены окружения');
+  assert.equal(await clickMenu(mainEv, 'Окружение…'), true, '«Окружение…» недоступно');
+  await waitFor('окно «Окружение» открыто', async () => (await ev('document.querySelector("#env-dialog").open')) === true);
+  await ev('(() => { document.querySelector("#env-new-name").value = "SMOKE_ENV"; document.querySelector("#env-add").click(); })()');
+  await waitFor('переменная появилась в окне', async () => /SMOKE_ENV/.test(await text('#env-body')));
+  const envView = await ev('window.cyborg.envSave([{ name: "SMOKE_ENV", candidates: [{ kind: "literal", value: "smoke-value" }, { kind: "expr", command: "pass show smoke/token" }] }])');
+  const exprId = envView.vars[0].candidates[1].id;
+  assert.deepEqual(await ev(`window.cyborg.envSelect("SMOKE_ENV", ${JSON.stringify(exprId)})`), { ok: true });
+  await waitFor('индикатор показывает одну выбранную', async () => /\+1/.test(await text('#env-indicator')));
+  assert.equal(await ev('window.cyborg.envReveal("SMOKE_ENV")'), 'smoke-secret', 'значение выражения не вычислено');
+  assert.ok(!readFileSync(join(userData, 'env-vars.json'), 'utf8').includes('smoke-secret'), 'значение выражения попало на диск');
+  await waitFor('прежняя вкладка помечена устаревшей', async () => (await ev('document.querySelectorAll("#session-list .env-stale").length')) >= 1);
+  await ev('document.querySelector("#env-close").click()');
+  const envOpen = () => ev('document.querySelector("#env-dialog").open');
+  await waitFor('окно «Окружение» закрыто', async () => (await envOpen()) === false);
+  // Ускоритель меню CDP-нажатием не сработать: проверяем, что он назначен, и открываем тем же пунктом.
+  assert.equal(await mainEv(`process.mainModule.require('electron').Menu.getApplicationMenu().items.find((i) => i.label === 'Воркспейс').submenu.items.find((i) => i.label === 'Окружение…').accelerator`), 'CmdOrCtrl+Shift+E', 'у «Окружение…» нет сочетания');
+  assert.equal(await clickMenu(mainEv, 'Окружение…'), true, '«Окружение…» недоступно');
+  await waitFor('окно «Окружение» повторно из меню', async () => (await envOpen()) === true);
+  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV]").length'), 1, 'при открытии нет карточки переменной из файла');
+  const revealButton = '[...document.querySelectorAll("#env-body button")].find((x) => x.textContent === "Показать значение")';
+  await waitFor('кнопка «Показать значение»', async () => (await ev(`!!${revealButton}`)) === true);
+  await ev(`${revealButton}.click()`);
+  await waitFor('значение раскрыто', async () => /smoke-secret/.test(await text('#env-body .env-value')));
+  await ev('document.querySelector("#env-close").click()');
+  await waitFor('окно «Окружение» закрыто снова', async () => (await envOpen()) === false);
+  await ev('(async () => { const view = await window.cyborg.envView(); await window.cyborg.envSave([...view.vars.map((v) => ({ name: v.name, candidates: v.candidates })), { name: "SMOKE_ENV2", candidates: [] }]); })()');
+  // На macOS ускорители меню ловит NSMenu, а sendInputEvent идёт мимо него: там проверено назначение сочетания выше.
+  if (!mac) {
+    await mainEv(`(() => { const w = process.mainModule.require('electron').BrowserWindow.getAllWindows()[0]; const modifiers = [${mac ? "'meta'" : "'control'"}, 'shift']; w.webContents.sendInputEvent({ type: 'rawKeyDown', keyCode: 'E', modifiers }); w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'E', modifiers }); })()`);
+    await waitFor('окно «Окружение» по сочетанию клавиш', async () => (await envOpen()) === true);
+    await ev('document.querySelector("#env-close").click()');
+    await waitFor('окно «Окружение» закрыто после сочетания', async () => (await envOpen()) === false);
+  }
+  await ev('document.querySelector("#env-indicator").click()');
+  await waitFor('окно «Окружение» по индикатору', async () => (await envOpen()) === true);
+  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV]").length'), 1, 'по индикатору нет карточки переменной');
+  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV2]").length'), 1, 'переменная, добавленная при закрытом окне, не показана при открытии');
+  assert.equal(await ev('document.querySelectorAll("#env-body .env-value").length'), 0, 'раскрытое значение пережило закрытие окна');
+  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV] select[aria-label=\\"Кандидат SMOKE_ENV\\"] option").length'), 2, 'у переменной нет выпадающего списка кандидатов');
+  await ev('(() => { const list = document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] .env-pick select"); list.value = list.options[0].value; list.dispatchEvent(new Event("change")); })()');
+  await waitFor('смена пункта списка выбрала литерал', async () => (await ev('window.cyborg.envReveal("SMOKE_ENV")')) === 'smoke-value');
+  // Правка выбранного литерала действует сразу: раскрытое прежнее значение окно не держит.
+  await waitFor('кнопка «Показать значение» у литерала', async () => (await ev(`!!${revealButton}`)) === true);
+  await ev(`${revealButton}.click()`);
+  await waitFor('литерал раскрыт', async () => (await text('#env-body .env-value')) === 'smoke-value');
+  await ev('(() => { const f = document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] input[aria-label=\\"Значение SMOKE_ENV\\"]"); f.value = "smoke-value-2"; f.dispatchEvent(new Event("change")); })()');
+  await waitFor('правка литерала дошла до процессов', async () => (await ev('window.cyborg.envReveal("SMOKE_ENV")')) === 'smoke-value-2');
+  await waitFor('окно не показывает прежнее значение литерала', async () => !/smoke-value(?!-2)/.test(await text('#env-body .env-value')));
+  await ev('(async () => { const view = await window.cyborg.envView(); await window.cyborg.envSelect("SMOKE_ENV", view.vars[0].candidates[1].id); })()');
+  await ev('document.querySelector("#env-close").click()');
+  const envTabs = await tabs();
+  await combo(commandModifier | SHIFT, 'N', 'KeyN', 78);
+  await waitFor('вкладка новой сессии', async () => (await tabs()) === envTabs + 1);
+  await waitFor('новая сессия запущена', async () => (await terminalText()).includes('fake-claude ready'));
+  await send('Input.insertText', { text: 'env SMOKE_ENV' });
+  await combo(0, 'Enter', 'Enter', 13);
+  await waitFor('новая сессия видит выбранное значение', async () => (await visibleTerminal()).replace(/\s+/g, '').includes('envvalSMOKE_ENV=[smoke-secret]'));
+  log('окружение: окно, выбор значения выражения, индикатор, пометка прежних вкладок, значение в новой сессии, не на диске');
 
   await terminate(app, () => stderrOfMain());
   assert.ok(!existsSync(`${legacyFile}.lock`), 'замок остался после SIGTERM');

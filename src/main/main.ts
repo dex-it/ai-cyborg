@@ -10,8 +10,12 @@ import { CommandStore } from './command-store';
 import { ClaudeMdStore } from './claude-md';
 import { PromptStore } from './prompt-store';
 import { RunApprovals } from './run-approvals';
-import { createRunHandlers, registerRunChannels, runChannel, runConfirm } from './run-file';
+import { createRunHandlers, registerRunChannels, removeOrphanedEnvFiles, removeOwnEnvFiles, runChannel, runConfirm } from './run-file';
 import { launcherFor } from './run-terminal';
+import { childEnvNow, envReady, loginShell, useManagedEnv } from './child-env';
+import { loginPath } from './env-eval';
+import { ManagedEnv } from './managed-env';
+import { openTarget } from './open-external';
 import { openablePath, webUrl } from './open-path';
 import { listDir, readTextFile, walkFiles, writeTextFile } from './files';
 import { gitDiffSearch, gitGrep } from './git-search';
@@ -35,6 +39,7 @@ import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart 
 import { PassportService, systemClaudeAvailable } from './passport';
 import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
+import { resumeSession } from './session-resume';
 import { McpServer } from './mcp';
 import { createSessionTools, Handoffs, type ButtonsToolsPort, type PassportToolsPort, type RemoteToolsPort, type SessionsPort } from './session-tools';
 import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
@@ -90,6 +95,17 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
   if (channel === 'session:exit') onSessionExit?.((payload as { id: number }).id);
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 });
+const managedEnv = new ManagedEnv({
+  file: path.join(app.getPath('userData'), 'env-vars.json'),
+  home: os.homedir(),
+  loginPath: () => loginPath(process.env as Record<string, string>, loginShell('/bin/sh')),
+  onChange: () => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('env:changed', managedEnv.view());
+    win.webContents.send('session:env-stale', sessions.staleSessions());
+  },
+});
+useManagedEnv(managedEnv);
 const childSessions = new ChildSessions(path.join(app.getPath('userData'), 'child-sessions.json'));
 sessions.onChild = (sid) => childSessions.add(sid);
 const markChildren = (entries: HistoryEntry[]): HistoryEntry[] => {
@@ -186,8 +202,10 @@ const remote = new RemoteSessions({
   alert: (title, text) => void dialog.showMessageBox({ type: 'warning', message: title, detail: text }),
   gitAuth: (urls) => collectGitAuth(urls, createCliRunner(app.getPath('userData'), undefined, HOST_AGNOSTIC_TOKEN_ENV)),
   claudeToken: () => claudeToken.get(),
-  mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
-  memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),
+  env: managedEnv,
+  // Свои чтения каталога настроек Claude - все через inheritedClaudePaths.
+  mirror: () => buildMirror({ home: os.homedir(), ...inheritedClaudePaths() }),
+  memory: (repo) => readMemory(inheritedClaudePaths().configDir, repo),
   mic: (host) => (voiceOn(host) ? mic.socketFor(host) : null),
   onChild: (sid) => childSessions.add(sid),
 });
@@ -210,7 +228,7 @@ mcpServer
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
 const prompts = new PromptStore(path.join(userData, 'prompts.json'));
-const claudeMd = new ClaudeMdStore(path.join(claudePaths(os.homedir(), process.env, process.platform).configDir, 'CLAUDE.md'));
+const claudeMd = new ClaudeMdStore(path.join(inheritedClaudePaths().configDir, 'CLAUDE.md'));
 const globalCommands = new CommandStore(path.join(userData, 'commands.json'));
 const runApprovals = new RunApprovals(path.join(userData, 'run-approvals.json'));
 type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
@@ -233,7 +251,10 @@ let heldLock: string | null = null;
 // Поиск одного вида идёт один: новый запрос отменяет прежний и его git.
 const searches = new SearchRunner();
 const allowedPaths = new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]);
+const runEnvDir = path.join(app.getPath('userData'), 'run-env');
+removeOrphanedEnvFiles(runEnvDir);
 const runs = createRunHandlers({
+  envDir: runEnvDir,
   allowed: allowedPaths,
   approvals: runApprovals,
   confirm: runConfirm((options) => tell(options)),
@@ -257,7 +278,7 @@ const paths = createPathHandlers({
 const runCli = createCliRunner(app.getPath('userData'));
 // Магазины, плагины и MCP читаются у Claude Code; из userData (вне репозиториев) он видит только настройки пользователя.
 const claudeRun = createClaudeRunner();
-const extensionsEnv = { run: claudeRun, home: os.homedir(), neutralDir: userData, ...claudePaths(os.homedir(), process.env, process.platform) };
+const extensionsEnv = { run: claudeRun, home: os.homedir(), neutralDir: userData, ...inheritedClaudePaths() };
 const hubStore = new HubStore(path.join(userData, 'hubs.json'));
 const usageStore = new UsageStore(path.join(extensionsEnv.configDir, 'projects'), path.join(userData, 'extensions-usage.json'));
 const extensions = createExtensionsHandlers({
@@ -277,7 +298,7 @@ const trackers = new TrackersService({
 
 const mrs = new MrsService(trackers, runCli);
 const jira = new JiraService(runCli, () => projects.load());
-const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), (url) => shell.openExternal(url));
+const taskHandlers = createTaskHandlers(trackers, new TaskDetailsService(runCli), openUrl);
 
 let quitting = false;
 app.on('before-quit', () => {
@@ -288,6 +309,11 @@ app.on('before-quit', () => {
 let unsavedEdits = 0;
 
 /** Закрытие окна, выход и смена воркспейса завершают все сессии: как и закрытие вкладки, они спрашивают, пока сессия работает. */
+/** Один источник каталога настроек Claude для всех собственных чтений Cyborg: управляемый CLAUDE_CONFIG_DIR сюда не доходит. */
+function inheritedClaudePaths(): ReturnType<typeof claudePaths> {
+  return claudePaths(os.homedir(), process.env, process.platform);
+}
+
 function confirmEndSessions(button = 'Закрыть', detail = 'При закрытии окна они будут завершены.'): boolean {
   if (unsavedEdits) {
     const discard = dialog.showMessageBoxSync(win!, {
@@ -435,12 +461,13 @@ ipcMain.handle('path:open', async (_event, file: unknown) => {
 });
 ipcMain.handle('url:open', async (_event, url: unknown) => {
   const target = webUrl(url);
-  if (target) await shell.openExternal(target);
+  if (target) await openUrl(target);
 });
 ipcMain.handle('config:reveal', (_event, kind: unknown) => {
   if (kind === 'claude-md') return showInSystemApp(claudeMd.file, 'Claude Code работает без глобальных инструкций. Сохраните текст в редакторе, чтобы файл появился.');
 });
 ipcMain.handle('session:create', async (_event, projectId: unknown, cwd: unknown, addDirs: unknown, start?: unknown) => {
+  await envReady();
   const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
   if (!project) throw new Error('Каталог не входит в репозитории проекта');
   if (start === undefined) return sessions.create(project, cwd as string, addDirs as string[]);
@@ -546,6 +573,26 @@ ipcMain.handle('remote:purge', (_event, projectId: unknown, host: unknown, sids:
   if (!project || typeof host !== 'string' || !Array.isArray(sids)) throw new Error('Некорректное удаление сессий');
   return remote.purge(project, host, sids as string[], force === true);
 });
+ipcMain.handle('env:view', () => managedEnv.view());
+ipcMain.handle('env:save', (_event, defs: unknown) => (managedEnv.save(defs), managedEnv.view()));
+ipcMain.handle('env:select', (_event, name: unknown, candidate: unknown) => managedEnv.select(name, candidate));
+ipcMain.handle('env:unset', (_event, name: unknown) => managedEnv.unset(name));
+ipcMain.handle('env:untouch', (_event, name: unknown) => managedEnv.untouch(name));
+ipcMain.handle('env:remove', (_event, name: unknown) => managedEnv.remove(name));
+ipcMain.handle('env:cancel', (_event, name: unknown) => managedEnv.cancel(name));
+ipcMain.handle('env:reveal', (_event, name: unknown) => managedEnv.reveal(name));
+ipcMain.handle('env:stale', () => sessions.staleSessions());
+// Перезапуск с новым окружением: локальная продолжается с --resume, удалённая засыпает и просыпается на хосте.
+ipcMain.handle('session:restart', async (_event, projectId: unknown, id: unknown) => {
+  await envReady();
+  if (typeof id !== 'number') throw new Error('Некорректный перезапуск сессии');
+  if (remote.hostOf(id)) {
+    const project = projects.load().projects.find((p) => p.id === projectId);
+    if (!project) throw new Error('Проект не найден');
+    return { remote: await remote.restart(project, id) };
+  }
+  return sessions.restart(id);
+});
 ipcMain.handle('remote:claude-token:status', () => claudeToken.status());
 ipcMain.handle('remote:claude-token:set', (_event, value: unknown) => claudeToken.set(value));
 ipcMain.handle('remote:claude-token:clear', () => claudeToken.clear());
@@ -554,12 +601,16 @@ ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id:
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
   deleteHistory(repo, id);
 });
-ipcMain.handle('session:resume', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown) => {
-  const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
-  if (!isSessionId(id) || !project) throw new Error('Некорректное продолжение сессии');
-  if (!historyExists(cwd as string, id)) throw new Error('Журнал сессии не найден');
-  return sessions.create(project, cwd as string, addDirs as string[], undefined, id);
-});
+ipcMain.handle('session:resume', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown, parent?: unknown) =>
+  resumeSession(
+    { envReady, projects: () => projects.load(), historyExists, isSessionId, projectOf: (n) => sessions.projectOf(n), create: (...args) => sessions.create(...args) },
+    projectId,
+    cwd,
+    addDirs,
+    id,
+    parent,
+  ),
+);
 ipcMain.handle('trackers:status', () => trackers.status());
 ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) =>
   taskHandlers.list(projectId, assignedToMe, tracked, recheck),
@@ -590,7 +641,7 @@ ipcMain.handle('jira:open', async (_event, projectId: unknown, key: unknown) => 
   const res = await jira.url(projectId, key);
   if ('error' in res) return { error: res.error };
   try {
-    await shell.openExternal(res.url);
+    await openUrl(res.url);
     return {};
   } catch (error) {
     return { error: (error as Error).message || 'браузер не открылся' };
@@ -605,7 +656,7 @@ ipcMain.handle('mrs:open', async (_event, arg: unknown) => {
   const ref = validateRef(arg);
   if (!ref) throw new Error('Некорректные аргументы mrs:open');
   try {
-    await shell.openExternal(mrUrl(ref));
+    await openUrl(mrUrl(ref));
     return {};
   } catch (error) {
     return { error: (error as Error).message || 'браузер не открылся' };
@@ -736,12 +787,17 @@ function quitWithConfirm(): void {
 
 const tell = (options: Electron.MessageBoxOptions) => (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
 
+async function openUrl(url: string): Promise<void> {
+  const error = await openTarget(url, { fallback: (target) => shell.openExternal(target).then(() => '', (e: Error) => e.message || 'браузер не открылся') });
+  if (error) throw new Error(error);
+}
+
 async function showInSystemApp(file: string, missing = 'Действуют встроенные значения. Сохраните их в редакторе, чтобы файл появился.'): Promise<void> {
   if (!fs.existsSync(file)) {
     await tell({ type: 'info', message: `Файла ${file} ещё нет`, detail: missing });
     return;
   }
-  const error = await shell.openPath(file);
+  const error = await openTarget(file, { fallback: (target) => shell.openPath(target) });
   if (error) await tell({ type: 'error', message: `Не удалось открыть ${file}`, detail: error });
 }
 
@@ -763,7 +819,8 @@ function rebuildMenu(): void {
     hostDisk: () => win?.webContents.send('menu:host-disk'),
     search: (mode) => win?.webContents.send('menu:search', mode),
     extensions: (tab) => win?.webContents.send('menu:extensions', tab),
-    openUrl: (url) => void shell.openExternal(url),
+    env: () => win?.webContents.send('menu:env'),
+    openUrl: (url) => void openUrl(url).catch(() => undefined),
   };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
@@ -808,10 +865,13 @@ const openDeps: OpenDeps = {
   hasWorkspace: () => current.file !== null,
   openHere,
   launch: (file) =>
-    launchInstance(
-      spawn as unknown as SpawnFn,
-      process.execPath,
-      launchArgs({ packaged: app.isPackaged, appPath: app.getAppPath(), userData, argv: process.argv, file }),
+    envReady().then(() =>
+      launchInstance(
+        spawn as unknown as SpawnFn,
+        process.execPath,
+        launchArgs({ packaged: app.isPackaged, appPath: app.getAppPath(), userData, argv: process.argv, file }),
+        { env: childEnvNow() },
+      ),
     ),
 };
 
@@ -924,6 +984,7 @@ const releaseHeldLock = (): void => {
   if (heldLock) releaseLock(heldLock);
 };
 app.on('will-quit', releaseHeldLock);
+app.on('will-quit', removeOwnEnvFiles);
 process.on('exit', releaseHeldLock);
 
 app.whenReady().then(() => {
@@ -934,10 +995,12 @@ app.whenReady().then(() => {
   rebuildMenu();
   // Список «Недавних» общий для инстансов: другой мог изменить его, пока это окно было в фоне.
   app.on('browser-window-focus', rebuildMenu);
+  void managedEnv.start();
   void trackers.warmAuth();
   createWindow();
 });
 app.on('window-all-closed', () => {
+  managedEnv.dispose();
   sessions.killAll();
   remote.closeLinks();
   mic.close();

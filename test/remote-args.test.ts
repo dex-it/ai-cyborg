@@ -78,24 +78,24 @@ describe('sshArgs и classifySshError', () => {
 describe('parsePreflight', () => {
   const good = 'home=/home/u\nnode=v20.1.0\ngit=/usr/bin/git\nclaude=/bin/claude\nscript=/usr/bin/script\nauth={"loggedIn":true}\n';
   const none = { gh: false, glab: false };
-  it('установленные версии агента берутся из строки agentd', () => assert.deepEqual(parsePreflight(good + 'agentd=aaa bbb \n'), { home: '/home/u', installed: ['aaa', 'bbb'], tools: none }));
-  it('хост в порядке - домашний каталог', () => assert.deepEqual(parsePreflight(good), { home: '/home/u', installed: [], tools: none }));
+  it('установленные версии агента берутся из строки agentd', () => assert.deepEqual(parsePreflight(good + 'agentd=aaa bbb \n'), { home: '/home/u', installed: ['aaa', 'bbb'], tools: none, loggedIn: true }));
+  it('хост в порядке - домашний каталог', () => assert.deepEqual(parsePreflight(good), { home: '/home/u', installed: [], tools: none, loggedIn: true }));
   it('gh и glab на хосте - признаки, а не условие запуска', () => {
-    assert.deepEqual(parsePreflight(good + 'gh=/usr/bin/gh\nglab=\n'), { home: '/home/u', installed: [], tools: { gh: true, glab: false } });
-    assert.deepEqual(parsePreflight(good + 'glab=/usr/local/bin/glab\n'), { home: '/home/u', installed: [], tools: { gh: false, glab: true } });
+    assert.deepEqual(parsePreflight(good + 'gh=/usr/bin/gh\nglab=\n'), { home: '/home/u', installed: [], tools: { gh: true, glab: false }, loggedIn: true });
+    assert.deepEqual(parsePreflight(good + 'glab=/usr/local/bin/glab\n'), { home: '/home/u', installed: [], tools: { gh: false, glab: true }, loggedIn: true });
   });
   it('называет все недостающие инструменты разом', () => {
     assert.deepEqual(parsePreflight('home=/h\nnode=v16.0.0\ngit=\nclaude=\nscript=/s\n'), { missing: ['на хосте нет: node ≥ 18, git, claude'] });
   });
   it('хост не Linux - отказ с причиной до проверки инструментов', () => {
     assert.deepEqual(parsePreflight('uname=Darwin\n' + good), { missing: ['хост не Linux (Darwin): нужны script и stty из util-linux'] });
-    assert.deepEqual(parsePreflight('uname=Linux\n' + good), { home: '/home/u', installed: [], tools: none });
+    assert.deepEqual(parsePreflight('uname=Linux\n' + good), { home: '/home/u', installed: [], tools: none, loggedIn: true });
   });
   it('не залогинен: loggedIn не true, не-JSON, пусто', () => {
     for (const auth of ['{"loggedIn":false}', 'oops', '']) assert.match((parsePreflight(good.replace('{"loggedIn":true}', auth)) as { missing: string[] }).missing[0], /не залогинен[\s\S]*Вход Claude на хостах/);
   });
   it('с токеном Claude вход на хосте не нужен', () => {
-    assert.deepEqual(parsePreflight(good.replace('{"loggedIn":true}', '{"loggedIn":false}'), true), { home: '/home/u', installed: [], tools: none });
+    assert.deepEqual(parsePreflight(good.replace('{"loggedIn":true}', '{"loggedIn":false}'), true), { home: '/home/u', installed: [], tools: none, loggedIn: false });
   });
 });
 

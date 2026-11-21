@@ -1,0 +1,10 @@
+#!/bin/sh
+# Подставной pass: `pass show <имя>` отдаёт содержимое $FAKE_PASS_DIR/<имя>, без файла - ошибку, как настоящий; настоящий gpg-agent не нужен.
+# FAKE_PASS_LOG - журнал вызовов; FAKE_PASS_SLEEP - секунд ожидания перед ответом (долгий pinentry).
+[ -n "$FAKE_PASS_LOG" ] && echo "$*" >> "$FAKE_PASS_LOG"
+[ -n "$FAKE_PASS_SLEEP" ] && sleep "$FAKE_PASS_SLEEP"
+if [ "$1" != show ] || [ -z "$FAKE_PASS_DIR" ] || [ ! -f "$FAKE_PASS_DIR/$2" ]; then
+  echo "Error: $2 is not in the password store." >&2
+  exit 1
+fi
+cat "$FAKE_PASS_DIR/$2"

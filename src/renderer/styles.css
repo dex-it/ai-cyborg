@@ -2740,3 +2740,118 @@ label.disabled .hint {
   margin: 12px -18px 0;
   padding: 12px 18px 0;
 }
+
+#status-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 22px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+#env-indicator {
+  border: 0;
+  padding: 0 6px;
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+#env-indicator[data-active='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#env-indicator[data-failed='true'] {
+  color: var(--modified);
+}
+
+#env-dialog {
+  width: min(820px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+}
+
+.env-var {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.env-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.env-state {
+  color: var(--fg-dim);
+}
+
+.env-pick,
+.env-candidate,
+.env-add,
+.env-actions,
+.env-new {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.env-candidate input,
+.env-add input,
+.env-new input {
+  flex: 1;
+  min-width: 0;
+}
+
+.env-candidate.selected input {
+  border-color: var(--accent);
+}
+
+.env-kind {
+  flex: none;
+  width: 76px;
+  color: var(--fg-dim);
+}
+
+.env-pick select {
+  flex: 1;
+  min-width: 0;
+}
+
+.env-pick button.active,
+.env-actions button.active,
+.env-candidate button.active {
+  border-color: var(--accent);
+}
+
+.env-stderr,
+.env-value {
+  margin: 6px 0 0;
+  padding: 4px 6px;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+.tab.session.env-stale .label::after {
+  content: ' ↻';
+  color: var(--modified);
+}
+
+.tab .env-restart {
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--modified);
+  cursor: pointer;
+}

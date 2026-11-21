@@ -8,6 +8,7 @@ export const BUTTONS_MENU_ID = 'buttons-edit';
 export const CLAUDE_MD_MENU_ID = 'claude-md-edit';
 export const CLAUDE_TOKEN_MENU_ID = 'claude-token';
 export const HOST_DISK_MENU_ID = 'host-disk';
+export const ENV_MENU_ID = 'env-vars';
 export type SearchMode = 'files' | 'text' | 'changes';
 /** Пункты меню «Поиск» по режимам; доступны, пока выбран проект. */
 export const SEARCH_MENU_IDS: Record<SearchMode, string> = { files: 'search-files', text: 'search-text', changes: 'search-changes' };
@@ -40,6 +41,7 @@ export interface WorkspaceMenu {
   editButtons(): void;
   editClaudeMd(): void;
   claudeToken(): void;
+  env(): void;
   hostDisk(): void;
   search(mode: SearchMode): void;
   extensions(tab: ExtensionsTab): void;
@@ -103,6 +105,7 @@ export function appMenuTemplate(
       { id: BUTTONS_MENU_ID, label: 'Кнопки…', click: () => workspace.editButtons() },
       { id: CLAUDE_MD_MENU_ID, label: 'Глобальный CLAUDE.md…', click: () => workspace.editClaudeMd() },
       { type: 'separator' },
+      { id: ENV_MENU_ID, label: 'Окружение…', accelerator: 'CmdOrCtrl+Shift+E', click: () => workspace.env() },
       { id: CLAUDE_TOKEN_MENU_ID, label: 'Вход Claude на хостах…', click: () => workspace.claudeToken() },
       { id: HOST_DISK_MENU_ID, label: 'Место на хостах…', enabled: workspace.hasProject, click: () => workspace.hostDisk() },
       ...(mac ? [] : [{ type: 'separator' } as MenuItemConstructorOptions, quitItem]),

@@ -1,6 +1,9 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { ENV_NAME } from '../shared/env-vars';
+import { shQuote } from '../shared/shell-quote';
+import type { Overlay } from './child-env';
 import { INHERITED_SESSION_VARS } from './sessions';
 
 export const TERMINALS = ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xfce4-terminal', 'kitty', 'alacritty', 'wezterm', 'foot', 'xterm'];
@@ -8,10 +11,13 @@ export const TERMINALS = ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'x
 // CYBORG_EVENTS и CYBORG_SETTINGS унаследовал бы Cyborg, запущенный из его же сессии: sessionEnv их перекрывает, а не удаляет.
 const UNSET = [...INHERITED_SESSION_VARS, 'CYBORG_EVENTS', 'CYBORG_SETTINGS', 'CYBORG_NODE', 'CYBORG_AGENTD'];
 
-// Постоянный текст: пользовательские данные доходят до него только аргументами ($1 - каталог, дальше - команда).
+// Постоянный текст: пользовательские данные доходят до него аргументами ($1 - файл окружения или пусто, $2 - каталог, дальше - команда).
 export const RUN_SCRIPT = [
   `unset ${UNSET.join(' ')}`,
   'trap : INT',
+  'f=$1',
+  'shift',
+  'if [ -n "$f" ]; then . "$f"; rm -f -- "$f"; rmdir -- "${f%/*}" 2>/dev/null; fi',
   'cd -- "$1" || { echo "Каталог недоступен: $1"; read -r _; exit 1; }',
   'shift',
   '"$@"',
@@ -97,35 +103,42 @@ export function noTerminalMessage(env: NodeJS.ProcessEnv): string {
 // RUN_SCRIPT написан на POSIX sh, а читает его логин-оболочка: эти его не разберут, и окно закрылось бы молча.
 const NOT_SH = new Set(['fish', 'tcsh', 'csh', 'nu', 'xonsh', 'elvish', 'pwsh']);
 
+/** Текст файла окружения для sh: переменные ставятся и снимаются так же, как у сессий; значения в одинарных кавычках. */
+export function envFileText(overlay: Overlay): string {
+  const lines = [...overlay.unset].filter((name) => ENV_NAME.test(name)).map((name) => `unset ${name}`);
+  for (const [name, value] of overlay.set) if (ENV_NAME.test(name)) lines.push(`export ${name}=${shQuote(value)}`);
+  return lines.length ? `${lines.join('\n')}\n` : '';
+}
+
 export type TerminalLaunch = { cmd: string; args: string[] } | { error: string };
 
 /** Запуск внешнего терминала с командой в каталоге dir; своего pty нет. */
-export function terminalLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, dir: string, command: string[], isExec?: IsExec): TerminalLaunch {
+export function terminalLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, dir: string, command: string[], isExec?: IsExec, envFile = ''): TerminalLaunch {
   const shell = path.basename(env.SHELL ?? '');
   if (NOT_SH.has(shell)) return { error: `Логин-оболочка ${shell} не разбирает скрипт запуска (нужна оболочка семейства sh: bash, zsh, dash, ksh). Запустите файл из своего терминала.` };
   if (platform === 'darwin') {
     // quoted form of кавычит под sh, а разбирает логин-оболочка: fish читает `\'` в кавычках иначе.
     if ([dir, ...command].some((word) => word.includes('\\'))) return { error: 'Путь или команда с обратной косой чертой на macOS не запускаются' };
-    return { cmd: 'osascript', args: [...MAC_SCRIPT.flatMap((line) => ['-e', line]), '/bin/sh', '-c', RUN_SCRIPT, 'cyborg-run', dir, ...command] };
+    return { cmd: 'osascript', args: [...MAC_SCRIPT.flatMap((line) => ['-e', line]), '/bin/sh', '-c', RUN_SCRIPT, 'cyborg-run', envFile, dir, ...command] };
   }
   if (platform !== 'linux') return { error: 'Запуск в терминале есть на macOS и Linux' };
   const terminal = findTerminal(env, isExec);
   if (terminal === null) return { error: noTerminalMessage(env) };
-  const inner = [env.SHELL || '/bin/bash', '-lc', RUN_SCRIPT, 'cyborg-run', dir, ...command];
+  const inner = [env.SHELL || '/bin/bash', '-lc', RUN_SCRIPT, 'cyborg-run', envFile, dir, ...command];
   return { cmd: terminal, args: termArgs(terminal, inner) };
 }
 
 export type RunLaunch = (cmd: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ error?: string }>;
 
 /** macOS ждёт osascript и берёт его stderr; на Linux эмулятор отрывается от Cyborg, как запуск воркспейса. */
-export function launcherFor(platform: NodeJS.Platform, detached: RunLaunch, waited: (cmd: string, args: string[]) => Promise<{ error?: string }> = launchAndWait): RunLaunch {
-  return platform === 'darwin' ? (cmd, args) => waited(cmd, args) : detached;
+export function launcherFor(platform: NodeJS.Platform, detached: RunLaunch, waited: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => Promise<{ error?: string }> = launchAndWait): RunLaunch {
+  return platform === 'darwin' ? (cmd, args, options) => waited(cmd, args, options.env) : detached;
 }
 
 /** osascript живёт, пока Terminal не принял команду; отказ в разрешении на управление Terminal приходит в stderr. */
-export function launchAndWait(cmd: string, args: string[], exec: typeof execFile = execFile): Promise<{ error?: string }> {
+export function launchAndWait(cmd: string, args: string[], env: NodeJS.ProcessEnv, exec: typeof execFile = execFile): Promise<{ error?: string }> {
   return new Promise((resolve) => {
-    exec(cmd, args, { timeout: 120_000 }, (error, _stdout, stderr) => {
+    exec(cmd, args, { timeout: 120_000, env }, (error, _stdout, stderr) => {
       resolve(error ? { error: String(stderr).trim() || error.message } : {});
     });
   });

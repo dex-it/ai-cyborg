@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { lineHit, MAX_HITS, patternOf, type LineHit, type MatchRange, type SearchReply, type SearchRequest } from '../shared/search-pattern';
+import { childEnvNow, envReady } from './child-env';
 import { filterOverrides, gitRoot, SAFE_CONFIG } from './git';
 
 /** Поиск по содержимому и по изменениям: только читающие команды git (ADR-0005), пределы по времени, объёму и числу результатов. */
@@ -25,12 +26,13 @@ interface GitRun {
 }
 
 /** Запуск git без исключения на ненулевой код: у `git grep` код 1 - «нет совпадений». Отмена - исключение AbortError. */
-function run(cwd: string, args: string[], env: NodeJS.ProcessEnv | undefined, signal: AbortSignal): Promise<GitRun> {
+async function run(cwd: string, args: string[], env: NodeJS.ProcessEnv | undefined, signal: AbortSignal): Promise<GitRun> {
+  await envReady();
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       [...SAFE_CONFIG, '-c', 'core.quotePath=false', '-C', cwd, ...args],
-      { maxBuffer: MAX_OUTPUT_BYTES, encoding: 'buffer', env: env ? { ...process.env, ...env } : process.env, signal, timeout: GIT_TIMEOUT_MS },
+      { maxBuffer: MAX_OUTPUT_BYTES, encoding: 'buffer', env: childEnvNow({ set: env }), signal, timeout: GIT_TIMEOUT_MS },
       (error, stdout, stderr) => {
         if (!error) return resolve({ stdout, stderr: '', code: 0, overflow: false });
         const failure = error as NodeJS.ErrnoException & { killed?: boolean; code?: number | string };

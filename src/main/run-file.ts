@@ -5,8 +5,10 @@ import type { AllowedPaths } from './allowed-paths';
 import type { Approval } from './run-approvals';
 import { shellQuote } from '../shared/shell-quote';
 import { CONTROL } from './commands';
+import { childEnvNow, currentOverlay, envReady, withLoginShell, type Overlay } from './child-env';
+import { isAlive } from './pid';
 import { sessionEnv } from './sessions';
-import { terminalLaunch, type IsExec } from './run-terminal';
+import { envFileText, terminalLaunch, type IsExec } from './run-terminal';
 
 const HEAD = 256;
 const INTERPRETERS: Record<string, string> = { '.sh': 'bash', '.py': 'python3', '.js': 'node', '.mjs': 'node', '.cjs': 'node' };
@@ -147,14 +149,62 @@ export interface RunDeps {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   isExec?: IsExec;
+  /** Управляемое окружение терминала; по умолчанию текущее. */
+  overlay?: () => Overlay;
+  /** Каталог файлов окружения терминала: userData/run-env. */
+  envDir: string;
 }
 
 const sameCommand = (a: string[], b: string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
+const ENV_FILE_TTL_MS = 60_000;
+const ownEnvDirs = new Set<string>();
+
+/** Файл управляемого окружения для sh терминала: <каталог>/<pid>-<случайно>/env.sh, каталоги 0700, файл 0600. Читающий скрипт удаляет его сам; остаток убирают таймер, выход Cyborg и уборка при следующем старте. */
+export function writeEnvFile(overlay: Overlay, base: string): { file: string; remove: () => void } | null {
+  const text = envFileText(overlay);
+  if (!text) return null;
+  fs.mkdirSync(base, { recursive: true, mode: 0o700 });
+  const dir = fs.mkdtempSync(path.join(base, `${process.pid}-`));
+  ownEnvDirs.add(dir);
+  const file = path.join(dir, 'env.sh');
+  const remove = (): void => {
+    ownEnvDirs.delete(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  };
+  try {
+    fs.writeFileSync(file, text, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    remove();
+    throw error;
+  }
+  setTimeout(remove, ENV_FILE_TTL_MS).unref();
+  return { file, remove };
+}
+
+/** Cyborg выходит: файлы окружения его запусков не остаются на диске. */
+export function removeOwnEnvFiles(): void {
+  for (const dir of ownEnvDirs) fs.rmSync(dir, { recursive: true, force: true });
+  ownEnvDirs.clear();
+}
+
+/** Убитый экземпляр не доходит до выхода, и его файлы остаются: при старте убираются каталоги с номером мёртвого процесса. */
+export function removeOrphanedEnvFiles(base: string, alive: (pid: number) => boolean = isAlive): void {
+  let names: string[];
+  try {
+    names = fs.readdirSync(base);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const pid = Number(/^(\d+)-/.exec(name)?.[1]);
+    if (pid && pid !== process.pid && !alive(pid)) fs.rmSync(path.join(base, name), { recursive: true, force: true });
+  }
+}
+
 /** Обработчики каналов file:runnable и file:run: путь, команда, хэш и эмулятор определяются тут, интерфейс присылает только путь. */
 export function createRunHandlers(deps: RunDeps) {
   const platform = deps.platform ?? process.platform;
-  const env = deps.env ?? process.env;
   const busy = new Set<string>();
   const supported = platform === 'darwin' || platform === 'linux';
 
@@ -164,6 +214,8 @@ export function createRunHandlers(deps: RunDeps) {
     if (busy.has(real)) return { cancelled: true };
     busy.add(real);
     try {
+      await envReady();
+      const env = deps.env ?? withLoginShell(childEnvNow());
       const command = await runnableOf(real);
       if (command === null) return { error: `Файл больше не запускается: ${real}` };
       const dir = path.dirname(real);
@@ -190,7 +242,14 @@ export function createRunHandlers(deps: RunDeps) {
         if (!same) return { error: 'Файл изменился, пока вы решали: запуск отменён' };
         deps.approvals.set(real, { sha256: h1, command });
       }
-      const result = await deps.launch(term.cmd, term.args, { cwd: dir, env: sessionEnv({}) });
+      const envFile = writeEnvFile((deps.overlay ?? currentOverlay)(), deps.envDir);
+      const final = envFile ? terminalLaunch(platform, env, dir, command, deps.isExec, envFile.file) : term;
+      if ('error' in final) {
+        envFile?.remove();
+        return final;
+      }
+      const result = await deps.launch(final.cmd, final.args, { cwd: dir, env: sessionEnv({}) });
+      if (result.error) envFile?.remove();
       return result.error ? { error: result.error } : { ok: true };
     } finally {
       busy.delete(real);

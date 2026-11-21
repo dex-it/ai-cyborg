@@ -10,7 +10,7 @@ import { validateSearchRequest } from '../main/search-args.ts';
 import { SearchRunner } from '../main/search-run.ts';
 import type { SearchReply } from '../shared/search-pattern.ts';
 import { projectDirName, readJournalFacts } from '../main/history.ts';
-import { agentAuthEnv, gitAuthEnv, readAuth } from './git-auth.ts';
+import { agentAuthEnv, gitAuthEnv, readAuth, readVars } from './git-auth.ts';
 import { applyFiles, claudeHome, configHash, hostMcp, installPlugins, pluginsPending, readEnv, readPluginState, trustClone, writeMemory, writePluginState, type ClaudeHome } from './claude-setup.ts';
 import { hookSettings, track, type SessionEvent, type Tracked } from '../main/session-state.ts';
 import { DecModes } from './term-modes.ts';
@@ -18,6 +18,7 @@ import { arecordScript, MIC_BIN, MIC_SOCK, micServer } from './mic.ts';
 import {
   DEFAULT_LIMITS,
   EVENTS_TAIL_BYTES,
+  FEATURES,
   PROTO,
   RING_BYTES,
   shQuote,
@@ -30,6 +31,7 @@ import {
   type Msg,
   type SessionMeta,
   type SpawnMsg,
+  type Vars,
 } from './protocol.ts';
 
 export interface PtyProc {
@@ -83,6 +85,8 @@ interface Sess {
   token: string;
   /** Только в памяти и в окружении процессов сессии. */
   auth: Auth;
+  /** Управляемое окружение Cyborg: только в памяти и в окружении процессов сессии. */
+  vars: Vars;
   dir: string;
   meta: SessionMeta;
   proc?: PtyProc;
@@ -239,6 +243,7 @@ export class Daemon {
       sid: meta.sid,
       token,
       auth,
+      vars: { set: {}, unset: [] },
       dir: path.join(this.root, 'sessions', meta.sid),
       meta,
       ring: [],
@@ -282,7 +287,7 @@ export class Daemon {
         conn.mic = typeof msg.mic === 'string' && FORWARD.test(path.basename(msg.mic)) ? msg.mic : undefined;
         this.dropStaleForwards([conn.fwd, conn.mic]);
         // sessions - то, что держит демон от замены; спящие переживают замену на диске.
-        return reply({ proto: PROTO, version: this.deps.version, sessions: this.awake().length, live: this.liveCount(), config: configHash(this.root), disk: this.space() });
+        return reply({ proto: PROTO, features: FEATURES, version: this.deps.version, sessions: this.awake().length, live: this.liveCount(), config: configHash(this.root), disk: this.space() });
       case 'disk':
         return reply(await this.disk());
       case 'purge':
@@ -304,6 +309,11 @@ export class Daemon {
       case 'wake':
         if (!sess) return fail('сессия на хосте не найдена');
         return this.wake(conn, sess, msg, reply, fail);
+      case 'sleep':
+        if (!sess) return fail('сессия на хосте не найдена');
+        if (sess.meta.state !== 'live' || sess.closing) return fail('сессия не работает');
+        await this.sleep(sess);
+        return reply({});
       case 'input':
         if (sess?.proc && !sess.gone && sess.meta.state === 'live') {
           sess.proc.write(String(msg.data ?? ''));
@@ -517,6 +527,7 @@ export class Daemon {
     };
     const sess = this.makeSess(meta, msg.token, conn, { cols: msg.cols, rows: msg.rows }, readAuth(msg.auth));
     sess.extra = this.readExtra(msg);
+    sess.vars = readVars(msg.vars);
     this.sessions.set(sess.sid, sess);
     this.saveMeta(sess);
     reply({ sid: sess.sid, cwd: meta.cwd, clones: clones.map((c) => c.path) });
@@ -594,6 +605,7 @@ export class Daemon {
     const now = this.deps.now();
     Object.assign(sess, this.makeSess(sess.meta, msg.token, conn, { cols: Number(msg.cols) || 80, rows: Number(msg.rows) || 24 }, readAuth(msg.auth)));
     sess.extra = this.readExtra(msg);
+    sess.vars = readVars(msg.vars);
     sess.sleeping = undefined;
     sess.proc = undefined;
     sess.gone = undefined;
@@ -618,6 +630,7 @@ export class Daemon {
       sess.proc = undefined;
       sess.token = '';
       sess.auth = { git: [] };
+      sess.vars = { set: {}, unset: [] };
       sess.extra = { env: {}, mcp: {} };
       sess.meta.pgid = undefined;
       this.saveMeta(sess);
@@ -677,7 +690,10 @@ export class Daemon {
     );
     const env: Record<string, string> = { ...GIT_NO_PROMPT, ...(process.env as Record<string, string>) };
     for (const name of PARENT_SESSION_VARS) delete env[name];
-    Object.assign(env, sess.extra.env, voice ? { PATH: `${voice.bin}:${sess.extra.env.PATH ?? env.PATH ?? ''}`, CYBORG_MIC: voice.sock } : {}, {
+    Object.assign(env, sess.extra.env);
+    for (const name of sess.vars.unset) delete env[name];
+    Object.assign(env, sess.vars.set);
+    Object.assign(env, voice ? { PATH: `${voice.bin}:${env.PATH ?? ''}`, CYBORG_MIC: voice.sock } : {}, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       CYBORG_DIR: dir,

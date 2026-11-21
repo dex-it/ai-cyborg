@@ -7,6 +7,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { childEnvNow, envReady, loginShell } from './child-env';
 import {
   MAX_NAME_LENGTH,
   type ClaudeInfo,
@@ -77,13 +78,15 @@ export function claudePaths(home: string, env: NodeJS.ProcessEnv, platform: Node
 
 /** Запуск claude через login-шелл, как у сессий: из меню приложений Electron стартует без ~/.local/bin в PATH. */
 export function createClaudeRunner(): ClaudeRunner {
-  return (args, cwd, timeoutMs) =>
-    new Promise((resolve) => {
-      const shell = process.env.SHELL || '/bin/bash';
+  return async (args, cwd, timeoutMs) => {
+    await envReady();
+    const env = childEnvNow({ set: { NO_COLOR: '1' } });
+    return new Promise((resolve) => {
+      const shell = loginShell('/bin/bash');
       execFile(
         shell,
         ['-lc', 'exec claude "$@"', 'cyborg', ...args],
-        { cwd, env: { ...process.env, NO_COLOR: '1' }, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+        { cwd, env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
         (error, stdout, stderr) => {
           if (!error) return resolve({ code: 0, stdout, stderr, missing: false, timedOut: false });
           const e = error as NodeJS.ErrnoException & { killed?: boolean };
@@ -97,6 +100,7 @@ export function createClaudeRunner(): ClaudeRunner {
         },
       );
     });
+  };
 }
 
 interface ApprovalRules {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
-import { appMenuTemplate, recentLabel, DOCS_URL, HOTKEYS_URL, ISSUES_URL, CLAUDE_MD_MENU_ID, BUTTONS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type ExtensionsTab, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
+import { appMenuTemplate, recentLabel, DOCS_URL, HOTKEYS_URL, ISSUES_URL, CLAUDE_MD_MENU_ID, ENV_MENU_ID, BUTTONS_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type ExtensionsTab, type SearchMode, type WorkspaceMenu } from '../src/main/menu';
 
 const roles = (items: MenuItemConstructorOptions[]): string[] =>
   items.flatMap((item) => [...(item.role ? [String(item.role)] : []), ...(Array.isArray(item.submenu) ? roles(item.submenu) : [])]);
@@ -23,6 +23,7 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   editButtons() {},
   editClaudeMd() {},
   claudeToken() {},
+  env() {},
   hostDisk() {},
   search() {},
   extensions() {},
@@ -86,7 +87,7 @@ describe('appMenuTemplate', () => {
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     it(`${platform}: «Воркспейс» - создать, открыть и недавние, затем проект, кнопки и хосты; вне macOS последним выход`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      const expected = ['Создать…', 'Открыть…', 'Открыть в новом окне…', 'Недавние', 'Новый проект…', 'Свойства проекта…', 'Кнопки…', 'Глобальный CLAUDE.md…', 'Вход Claude на хостах…', 'Место на хостах…'];
+      const expected = ['Создать…', 'Открыть…', 'Открыть в новом окне…', 'Недавние', 'Новый проект…', 'Свойства проекта…', 'Кнопки…', 'Глобальный CLAUDE.md…', 'Окружение…', 'Вход Claude на хостах…', 'Место на хостах…'];
       assert.deepEqual(labels, platform === 'darwin' ? expected : [...expected, 'Выход']);
     });
 
@@ -152,6 +153,16 @@ describe('appMenuTemplate', () => {
     assert.notEqual(item?.enabled, false);
     (item?.click as () => void)();
     assert.deepEqual(calls, ['claude-md']);
+  });
+
+  it('«Окружение…» не зависит от воркспейса: Ctrl/Cmd+Shift+E, вызывает окно', () => {
+    const calls: string[] = [];
+    const item = workspaceItems('linux', { hasWorkspace: false, hasProject: false, env: () => calls.push('env') }).find((i) => i.id === ENV_MENU_ID);
+    assert.equal(item?.label, 'Окружение…');
+    assert.equal(item?.accelerator, 'CmdOrCtrl+Shift+E');
+    assert.notEqual(item?.enabled, false);
+    (item?.click as () => void)();
+    assert.deepEqual(calls, ['env']);
   });
 
   describe('меню «Поиск»', () => {
