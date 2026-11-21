@@ -127,7 +127,7 @@ export class EnvDialog {
     return card;
   }
 
-  /** Выпадающий список кандидатов: смена пункта выбирает кандидата; кнопка вычисляет выбранного заново (повторный выбор того же). */
+  /** Выпадающий список кандидатов: смена пункта выбирает кандидата; кнопка вычисляет выбранного заново. Идущее вычисление выбору не помеха: главный процесс его отменяет. */
   private picker(v: EnvVarView): HTMLElement {
     const row = el('div', 'env-pick');
     const list = document.createElement('select');
@@ -136,11 +136,8 @@ export class EnvDialog {
     const chosen = v.choice.kind === 'selected' ? v.choice.candidate : undefined;
     const current = v.candidates.find((c) => c.id === chosen)?.id;
     list.value = current ?? v.candidates[0].id;
-    const evaluating = v.status.kind === 'evaluating';
-    list.disabled = evaluating;
     list.addEventListener('change', () => void this.select(v.name, list.value));
-    const apply = button(evaluating ? 'Вычисляется…' : current === undefined ? 'Выбрать' : 'Вычислить заново', () => void this.select(v.name, list.value), current === undefined ? '' : 'active');
-    apply.disabled = evaluating;
+    const apply = button(current === undefined ? 'Выбрать' : 'Вычислить заново', () => void this.select(v.name, list.value), current === undefined ? '' : 'active');
     row.append(list, apply);
     return row;
   }
