@@ -32,7 +32,7 @@ import { bindTabDrag, bindTablist, markTab, selectTab } from './tabs';
 import { ExtensionsDialog, type ExtensionsTab } from './extensions-dialog';
 import { PassportUi } from './passport-dialog';
 import { EnvDialog } from './env-dialog';
-import { indicatorText, staleTitle, type EnvView } from '../shared/env-vars';
+import { indicatorCounts, indicatorText, staleTitle, type EnvView } from '../shared/env-vars';
 import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
@@ -1764,8 +1764,13 @@ api.on<void>('menu:claude-token', () => void openClaudeTokenDialog());
 // ---------- окружение ----------
 
 const envIndicator = byId<HTMLButtonElement>('env-indicator');
+const envCount = envIndicator.querySelector<HTMLElement>('.env-count')!;
 const envDialog = new EnvDialog(api, (view) => {
-  envIndicator.textContent = indicatorText(view);
+  const counts = indicatorCounts(view);
+  envCount.textContent = counts;
+  envCount.hidden = !counts;
+  envIndicator.setAttribute('aria-label', indicatorText(view));
+  envIndicator.title = `${indicatorText(view)} - переменные процессов Cyborg (${mac ? 'Cmd' : 'Ctrl'}+Shift+E)`;
   envIndicator.dataset.active = String(view.vars.some((v) => v.choice.kind !== 'untouched'));
   envIndicator.dataset.failed = String(view.vars.some((v) => v.unapplied || v.status.kind === 'failed'));
 });

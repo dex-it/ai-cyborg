@@ -37,7 +37,7 @@ class FakeNode {
 }
 
 const ids = new Map<string, FakeNode>();
-for (const id of ['env-dialog', 'env-body', 'env-error', 'env-close', 'env-add', 'env-unset-new', 'env-new-name']) ids.set(id, new FakeNode('div'));
+for (const id of ['env-dialog', 'env-body', 'env-error', 'env-close', 'env-add', 'env-unset-new', 'env-new-name', 'env-names']) ids.set(id, new FakeNode('div'));
 Object.assign(globalThis, {
   document: { createElement: (tag: string) => new FakeNode(tag), getElementById: (id: string) => ids.get(id) },
   Option: class extends FakeNode {
@@ -73,6 +73,7 @@ async function open(v: EnvVarView) {
     envRemove: async () => {},
     envCancel: async () => {},
     envReveal: async () => null,
+    envNames: async () => ['HOME', 'TOKEN', 'ZZ_KEY'],
   };
   ids.get('env-dialog')!.open = false;
   await new EnvDialog(api, () => {}).open();
@@ -112,5 +113,12 @@ describe('окно «Окружение»: выбор кандидата во в
     const { list, apply } = await open(variable({ choice: { kind: 'untouched' }, status: { kind: 'evaluating', candidate: 'bbbbbbbb' } }));
     assert.equal(list.value, 'bbbbbbbb');
     assert.equal(apply.textContent, 'Вычислить заново');
+  });
+});
+
+describe('окно «Окружение»: подсказка имени', () => {
+  it('поле нового имени подсказывает унаследованные имена, кроме заведённых', async () => {
+    await open(variable({}));
+    assert.deepEqual(ids.get('env-names')!.children.map((o) => o.value), ['HOME', 'ZZ_KEY']);
   });
 });

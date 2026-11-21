@@ -33,6 +33,7 @@
           <button id="status-toggle" class="status-toggle" title="Статус проекта" aria-haspopup="dialog" aria-expanded="false" hidden>
             <span class="status-dot" data-level="unknown"></span><span>Статус</span><span class="status-count" hidden></span>
           </button>
+          <button id="env-indicator" type="button" aria-haspopup="dialog" aria-label="Окружение" title="Окружение: переменные процессов Cyborg"><svg class="env-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M5 2.5C3.5 2.5 3.5 3.5 3.5 4.5v2c0 .8-.5 1.5-1.5 1.5 1 0 1.5.7 1.5 1.5v2c0 1 0 2 1.5 2M11 2.5c1.5 0 1.5 1 1.5 2v2c0 .8.5 1.5 1.5 1.5-1 0-1.5.7-1.5 1.5v2c0 1 0 2-1.5 2M6.5 6l3 4M9.5 6l-3 4"/></svg><span class="env-count" hidden></span></button>
           <button id="tasks-toggle" class="panel-toggle" title="Задачи из трекеров" hidden>Задачи</button>
           <button id="mrs-toggle" class="panel-toggle" title="MR и PR репозиториев проекта" hidden>MR/PR</button>
           <div class="split-button">
@@ -50,10 +51,6 @@
 
     <div id="status-popover" class="popover" role="dialog" aria-label="Статус проекта" tabindex="-1" hidden></div>
     <div id="repo-menu" class="menu" hidden></div>
-
-    <div id="status-bar">
-      <button id="env-indicator" type="button" aria-haspopup="dialog" title="Переменные окружения процессов Cyborg (Ctrl+Shift+E)">Окружение</button>
-    </div>
 
     <dialog id="project-dialog" aria-labelledby="project-dialog-title">
       <form method="dialog">
@@ -144,7 +141,8 @@
         <div id="env-error" class="dialog-error" role="alert" hidden></div>
         <div id="env-body"></div>
         <div class="env-new">
-          <input id="env-new-name" type="text" spellcheck="false" autocomplete="off" placeholder="ИМЯ_ПЕРЕМЕННОЙ" aria-label="Имя переменной" />
+          <input id="env-new-name" type="text" spellcheck="false" autocomplete="off" list="env-names" placeholder="ИМЯ_ПЕРЕМЕННОЙ" aria-label="Имя переменной" />
+          <datalist id="env-names"></datalist>
           <button type="button" id="env-add">Добавить переменную</button>
           <button type="button" id="env-unset-new">Снять унаследованную</button>
         </div>

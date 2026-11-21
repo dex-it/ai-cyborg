@@ -10,6 +10,7 @@ export interface EnvApi {
   envRemove(name: string): Promise<void>;
   envCancel(name: string): Promise<void>;
   envReveal(name: string): Promise<string | null>;
+  envNames(): Promise<string[]>;
 }
 
 const button = (label: string, onClick: () => void, className = ''): HTMLButtonElement => {
@@ -26,6 +27,9 @@ export class EnvDialog {
   private readonly dialog = byId<HTMLDialogElement>('env-dialog');
   private readonly body = byId('env-body');
   private readonly error = byId('env-error');
+  private readonly names = byId('env-names');
+  /** Имена унаследованного окружения - подсказка поля нового имени; перечитываются при открытии окна. */
+  private inheritedNames: string[] = [];
   private view: EnvView = { vars: [], problems: [], starting: false };
   /** Раскрытые «Показать» значения: до закрытия окна; запись верна, пока состояние переменной то же. */
   private readonly revealed = new Map<string, { value: string; stamp: string }>();
@@ -48,7 +52,7 @@ export class EnvDialog {
     if (this.dialog.open) return;
     this.revealed.clear();
     this.showError('');
-    this.view = await this.api.envView();
+    [this.view, this.inheritedNames] = await Promise.all([this.api.envView(), this.api.envNames().catch(() => [])]);
     this.onView(this.view);
     this.render();
     this.dialog.showModal();
@@ -100,6 +104,8 @@ export class EnvDialog {
     const problems = this.view.problems.map((p) => el('div', 'dialog-note', p));
     const cards = this.view.vars.map((v) => this.card(v));
     this.body.replaceChildren(...problems, ...(cards.length ? cards : [el('p', 'hint', 'Переменных нет. Добавьте имя ниже или снимите унаследованную.')]));
+    const defined = new Set(this.view.vars.map((v) => v.name));
+    this.names.replaceChildren(...this.inheritedNames.filter((name) => !defined.has(name)).map((name) => new Option(name, name)));
   }
 
   private card(v: EnvVarView): HTMLElement {

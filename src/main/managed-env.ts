@@ -184,6 +184,14 @@ export class ManagedEnv {
     };
   }
 
+  /** Имена унаследованного окружения для подсказки в окне: без значений, служебных и уже заведённых. */
+  inheritedNames(): string[] {
+    const defined = new Set(this.defs.map((d) => d.name));
+    return Object.keys(this.inherited())
+      .filter((name) => isValidName(name) && !defined.has(name) && !this.reserved(name))
+      .sort();
+  }
+
   /** Значение, которое получают процессы, - из памяти, без нового вычисления; null - переменная не задана. */
   reveal(name: unknown): string | null {
     const def = this.def(name);
