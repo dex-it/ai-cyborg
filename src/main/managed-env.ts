@@ -34,7 +34,7 @@ export function ownNotes(name: string): string[] {
 export const OWN_NAMES_LOCAL = (name: string): boolean => SESSION_OWN.includes(name) || name.startsWith('CYBORG_') || INHERITED_SESSION_VARS.includes(name);
 export const OWN_NAMES_REMOTE = (name: string): boolean => OWN_NAMES_LOCAL(name) || isAuthEnvName(name);
 
-export type SelectOutcome = { ok: true } | { ok: false; reason: string; stderr: string };
+export type SelectOutcome = { ok: true } | { ok: false; reason: string };
 
 export interface ManagedEnvDeps {
   file: string;
@@ -66,6 +66,8 @@ export class ManagedEnv {
   private defs: EnvVarDef[] = [];
   private readonly values = new Map<string, string>();
   private readonly status = new Map<string, VarStatus>();
+  /** Вывод ошибки неудачного вычисления: в нём бывает само значение, поэтому окно получает его только по запросу. */
+  private readonly failures = new Map<string, string>();
   private problems: string[] = [];
   private starting = false;
   private disposed = false;
@@ -154,11 +156,16 @@ export class ManagedEnv {
     this.commit(next);
   }
 
+  private clearStatus(name: string): void {
+    this.status.delete(name);
+    this.failures.delete(name);
+  }
+
   /** Идущее вычисление имени отменяется, его результат состояния не трогает. */
   private abort(name: string): void {
     this.queue.delete(name);
     this.runner.cancel(keyOf(name));
-    this.status.delete(name);
+    this.clearStatus(name);
   }
 
   overlay(): Overlay {
@@ -197,6 +204,11 @@ export class ManagedEnv {
     const def = this.def(name);
     const effective = this.effective(def.name);
     return effective ?? null;
+  }
+
+  /** Вывод ошибки последнего неудачного вычисления; null - его нет. */
+  failureOutput(name: unknown): string | null {
+    return this.failures.get(this.def(name).name) ?? null;
   }
 
   private effective(name: string): string | undefined {
@@ -238,7 +250,10 @@ export class ManagedEnv {
   }
 
   private fail(name: string, result: Extract<EvalResult, { ok: false }>): void {
-    this.status.set(name, { kind: 'failed', reason: REASON_TEXT[result.reason] ?? result.reason, stderr: cleanMessage(result.stderr) });
+    const output = cleanMessage(result.stderr);
+    if (output) this.failures.set(name, output);
+    else this.failures.delete(name);
+    this.status.set(name, { kind: 'failed', reason: REASON_TEXT[result.reason] ?? result.reason, output: !!output });
     this.changed();
   }
 
@@ -257,20 +272,20 @@ export class ManagedEnv {
     this.status.set(def.name, { kind: 'evaluating', candidate: cand.id });
     this.deps.onChange?.();
     const result = await this.run(def.name, cand.command);
-    if ('cancelled' in result && result.cancelled) return { ok: false, reason: 'cancelled', stderr: '' };
+    if ('cancelled' in result && result.cancelled) return { ok: false, reason: 'cancelled' };
     if (!result.ok) {
       this.fail(def.name, result);
-      return result;
+      return { ok: false, reason: result.reason };
     }
     try {
       this.replace(def.name, (d) => ({ ...d, choice: { kind: 'selected', candidate: cand.id } }));
     } catch (error) {
-      this.status.delete(def.name);
+      this.clearStatus(def.name);
       this.deps.onChange?.();
       throw error;
     }
     this.values.set(def.name, result.value);
-    this.status.delete(def.name);
+    this.clearStatus(def.name);
     this.changed();
     return { ok: true };
   }
@@ -313,7 +328,8 @@ export class ManagedEnv {
     if (this.status.get(def.name)?.kind !== 'evaluating') return;
     this.queue.delete(def.name);
     this.runner.cancel(keyOf(def.name));
-    this.status.set(def.name, { kind: 'failed', reason: REASON_TEXT.cancelled, stderr: '' });
+    this.failures.delete(def.name);
+    this.status.set(def.name, { kind: 'failed', reason: REASON_TEXT.cancelled, output: false });
     this.deps.onChange?.();
   }
 
@@ -408,7 +424,7 @@ export class ManagedEnv {
           if (!result.ok) this.fail(name, result);
           else {
             this.values.set(name, result.value);
-            this.status.delete(name);
+            this.clearStatus(name);
             this.changed();
           }
         }

@@ -2975,7 +2975,8 @@ button.env-plus:hover:not(:disabled) {
   user-select: text;
 }
 
-.env-value {
+.env-value,
+.env-command-hint {
   margin: 2px 0 4px 34px;
 }
 

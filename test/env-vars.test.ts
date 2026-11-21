@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { candidateLabel, defsOf, matchNames, readDef, readDefs, revealStamp, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
+import { candidateLabel, commandHint, defsOf, matchNames, readDef, readDefs, revealStamp, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
 
 const none = () => null;
 const view = (vars: Partial<EnvVarView>[], over: Partial<EnvView> = {}): EnvView => ({
@@ -80,7 +80,7 @@ describe('показ состояния', () => {
       { choice: { kind: 'selected', candidate: 'a' } },
       { choice: { kind: 'unset' } },
       { status: { kind: 'evaluating' } },
-      { status: { kind: 'failed', reason: 'не уложилась', stderr: '' } },
+      { status: { kind: 'failed', reason: 'не уложилась', output: false } },
       { choice: { kind: 'selected', candidate: 'a' }, unapplied: true },
     ]).vars;
     assert.match(stateLabel(a), /не тронута/);
@@ -125,5 +125,14 @@ describe('подсказка имени', () => {
     assert.deepEqual(matchNames(names, 'pa'), ['PAPERSIZE', 'PATH', 'LC_PAPER']);
     assert.deepEqual(matchNames(names, ' '), names);
     assert.deepEqual(matchNames(names, 'zz'), []);
+  });
+});
+
+describe('подсказка к тексту команды', () => {
+  it('обёртка $(…), обратные кавычки, присваивание и export названы; обычная команда и префикс окружения - нет', () => {
+    for (const wrapped of ['"$(pass show a/b)"', '$(pass show a/b)', "  '$(pass show a/b)' ", '`pass show a/b`']) assert.match(commandHint(wrapped) ?? '', /уберите обёртку/, wrapped);
+    assert.match(commandHint('TOKEN="$(pass show a/b)"') ?? '', /присваивание/);
+    assert.match(commandHint('export TOKEN=$(pass show a/b)') ?? '', /export/);
+    for (const plain of ['pass show a/b', 'echo "$(date) $HOME"', 'LC_ALL=C pass show a/b', 'printf %s "$(cat ~/.token)"']) assert.equal(commandHint(plain), null, plain);
   });
 });

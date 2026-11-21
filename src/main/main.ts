@@ -582,6 +582,7 @@ ipcMain.handle('env:remove', (_event, name: unknown) => managedEnv.remove(name))
 ipcMain.handle('env:cancel', (_event, name: unknown) => managedEnv.cancel(name));
 ipcMain.handle('env:names', () => managedEnv.inheritedNames());
 ipcMain.handle('env:reveal', (_event, name: unknown) => managedEnv.reveal(name));
+ipcMain.handle('env:failure-output', (_event, name: unknown) => managedEnv.failureOutput(name));
 ipcMain.handle('env:stale', () => sessions.staleSessions());
 // Перезапуск с новым окружением: локальная продолжается с --resume, удалённая засыпает и просыпается на хосте.
 ipcMain.handle('session:restart', async (_event, projectId: unknown, id: unknown) => {

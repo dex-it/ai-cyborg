@@ -19,7 +19,7 @@ export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 export const ID_RE = /^[0-9a-f]{8}$/;
 
 /** evaluating.candidate - кандидат, чьё выражение вычисляется сейчас: окно ставит список на него. */
-export type VarStatus = { kind: 'idle' } | { kind: 'evaluating'; candidate?: string } | { kind: 'failed'; reason: string; stderr: string };
+export type VarStatus = { kind: 'idle' } | { kind: 'evaluating'; candidate?: string } | { kind: 'failed'; reason: string; output: boolean };
 
 export interface EnvVarView {
   name: string;
@@ -122,6 +122,15 @@ export function defsOf(view: EnvView): { name: string; candidates: Candidate[] }
 export function candidateLabel(c: Candidate, max = 60): string {
   const text = (c.kind === 'literal' ? c.value : `команда: ${c.command}`).replace(/\s+/g, ' ').trim() || '(пустое значение)';
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Подсказка к тексту команды, записанному как в shell-конфиге: значением становится вывод команды, а не правая часть присваивания. */
+export function commandHint(command: string): string | null {
+  const text = command.trim();
+  if (/^export\s/.test(text)) return 'export ничего не печатает: значением станет вывод команды, оставьте только её';
+  if (/^[A-Za-z_][A-Za-z0-9_]*=(["']?)(\$\([\s\S]+\)|`[\s\S]+`)\1$/.test(text)) return 'присваивание ничего не печатает: значением станет вывод команды, оставьте только её';
+  if (/^(["']?)(\$\([\s\S]+\)|`[\s\S]+`)\1$/.test(text)) return 'оболочка исполнит вывод этой команды как программу: уберите обёртку $(…) и кавычки, оставьте только команду';
+  return null;
 }
 
 /** Отметка, при которой раскрытое «Показать» значение ещё верно: состояние, выбранный кандидат и его текст (правка выбранного литерала меняет значение сразу). */

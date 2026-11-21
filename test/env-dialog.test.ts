@@ -68,7 +68,7 @@ const variable = (over: Partial<EnvVarView>): EnvVarView => ({
   ...over,
 });
 
-async function open(v: EnvVarView) {
+async function open(v: EnvVarView, failureOutput: string | null = null) {
   const { EnvDialog } = await import('../src/renderer/env-dialog');
   const view: EnvView = { vars: [v], problems: [], starting: true };
   const selected: [string, string][] = [];
@@ -81,6 +81,7 @@ async function open(v: EnvVarView) {
     envRemove: async () => {},
     envCancel: async () => {},
     envReveal: async () => null,
+    envFailureOutput: async () => failureOutput,
     envNames: async () => ['HOME', 'TOKEN', 'ZZ_KEY'],
   };
   ids.get('env-dialog')!.open = false;
@@ -88,6 +89,7 @@ async function open(v: EnvVarView) {
   const nodes = ids.get('env-body')!.all();
   return {
     selected,
+    body: () => ids.get('env-body')!.all(),
     radios: nodes.filter((n) => n.type === 'radio'),
     again: () => nodes.filter((n) => n.attrs['aria-label'] === 'Вычислить заново'),
     reveal: () => nodes.filter((n) => n.attrs['aria-label'] === 'Показать значение'),
@@ -133,6 +135,28 @@ describe('окно «Окружение»: показ значения', () => {
   it('пока выражение вычисляется или значения нет, показа нет', async () => {
     assert.equal((await open(variable({}))).reveal().length, 0);
     assert.equal((await open(variable({ status: { kind: 'idle' }, unapplied: true }))).reveal().length, 0);
+  });
+});
+
+describe('окно «Окружение»: вывод ошибки и подсказка к команде', () => {
+  it('вывод ошибки вычисления не показан, пока не нажата «Показать вывод команды»', async () => {
+    const { body } = await open(variable({ choice: { kind: 'untouched' }, status: { kind: 'failed', reason: 'команда завершилась с ошибкой', output: true } }), '/bin/sh: 1: sk-secret: not found');
+    assert.ok(!body().some((n) => n.textContent.includes('sk-secret')));
+    const show = body().filter((n) => n.textContent === 'Показать вывод команды');
+    assert.equal(show.length, 1);
+    show[0].fire('click');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(body().filter((n) => n.className === 'env-stderr').map((n) => n.textContent), ['/bin/sh: 1: sk-secret: not found']);
+  });
+  it('у неудачи без вывода кнопки нет', async () => {
+    const { body } = await open(variable({ status: { kind: 'failed', reason: 'отменено', output: false } }));
+    assert.equal(body().filter((n) => n.textContent === 'Показать вывод команды').length, 0);
+  });
+  it('команда, обёрнутая в "$(…)", получает подсказку под строкой; обычная - нет', async () => {
+    const { body } = await open(variable({ candidates: [expr('aaaaaaaa', '"$(pass show a)"'), expr('bbbbbbbb', 'pass show b')], status: { kind: 'idle' } }));
+    const hints = body().filter((n) => n.className === 'hint env-command-hint');
+    assert.equal(hints.length, 1);
+    assert.match(hints[0].textContent, /уберите обёртку/);
   });
 });
 
