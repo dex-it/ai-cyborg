@@ -1,15 +1,16 @@
-import { MAX_CANDIDATES, candidateLabel, defsOf, matchNames, revealStamp, stateLabel, type Candidate, type EnvVarView, type EnvView } from '../shared/env-vars';
+import { MAX_CANDIDATES, candidateLabel, commandHint, defsOf, matchNames, revealStamp, stateLabel, type Candidate, type EnvVarView, type EnvView } from '../shared/env-vars';
 import { byId, el } from './dom';
 
 export interface EnvApi {
   envView(): Promise<EnvView>;
   envSave(defs: unknown): Promise<EnvView>;
-  envSelect(name: string, candidate: string): Promise<{ ok: true } | { ok: false; reason: string; stderr: string }>;
+  envSelect(name: string, candidate: string): Promise<{ ok: true } | { ok: false; reason: string }>;
   envUnset(name: string): Promise<void>;
   envUntouch(name: string): Promise<void>;
   envRemove(name: string): Promise<void>;
   envCancel(name: string): Promise<void>;
   envReveal(name: string): Promise<string | null>;
+  envFailureOutput(name: string): Promise<string | null>;
   envNames(): Promise<string[]>;
 }
 
@@ -63,6 +64,8 @@ export class EnvDialog {
   private view: EnvView = { vars: [], problems: [], starting: false };
   /** Раскрытые «Показать» значения: до закрытия окна; запись верна, пока состояние переменной то же. */
   private readonly revealed = new Map<string, { value: string; stamp: string }>();
+  /** Вывод ошибки, раскрытый кнопкой: держится, пока у переменной та же неудача. */
+  private readonly outputs = new Map<string, string>();
   /** Карточки с раскрытой строкой «+ значение»: переживают перерисовку, сворачиваются добавлением или Escape. */
   private readonly adding = new Set<string>();
 
@@ -159,6 +162,7 @@ export class EnvDialog {
   async open(): Promise<void> {
     if (this.dialog.open) return;
     this.revealed.clear();
+    this.outputs.clear();
     this.showError('');
     [this.view, this.inheritedNames] = await Promise.all([this.api.envView(), this.api.envNames().catch(() => [])]);
     this.hideSuggest();
@@ -227,7 +231,10 @@ export class EnvDialog {
     head.append(seg, icon(TRASH, 'Удалить переменную', () => void this.run(() => this.api.envRemove(v.name))));
     card.append(head);
     for (const note of v.notes) card.append(el('div', 'hint', note));
-    if (v.status.kind === 'failed' && v.status.stderr) card.append(el('pre', 'env-stderr', v.status.stderr));
+    if (v.status.kind === 'failed' && v.status.output) {
+      const output = this.outputs.get(v.name);
+      card.append(output === undefined ? button('Показать вывод команды', () => void this.showOutput(v.name), 'env-plus') : el('pre', 'env-stderr', output));
+    } else this.outputs.delete(v.name);
     const chosen = v.choice.kind === 'selected' ? v.choice.candidate : undefined;
     const known = (id: string | undefined): string | undefined => v.candidates.find((c) => c.id === id)?.id;
     // Пока идёт вычисление, отмечен вычисляемый кандидат: ↻ относится к нему, а не к прежнему выбору.
@@ -235,6 +242,8 @@ export class EnvDialog {
     const shown = this.revealed.get(v.name);
     for (const c of v.candidates) {
       card.append(this.candidate(v, c, c.id === current));
+      const hint = c.kind === 'expr' ? commandHint(c.command) : null;
+      if (hint) card.append(el('div', 'hint env-command-hint', hint));
       if (c.id === chosen && shown && shown.stamp === revealStamp(v)) card.append(el('pre', 'env-value', shown.value));
     }
     if (v.candidates.length < MAX_CANDIDATES) card.append(this.adding.has(v.name) ? this.adder(v) : button('+ значение', () => this.openAdder(v.name), 'env-plus'));
@@ -295,8 +304,12 @@ export class EnvDialog {
     const text = document.createElement('input');
     text.type = 'text';
     text.spellcheck = false;
-    text.placeholder = 'новое значение';
-    text.setAttribute('aria-label', `Новое значение ${v.name}`);
+    const label = (): void => {
+      text.placeholder = kind.value === 'expr' ? 'команда, её вывод станет значением: pass show …' : 'новое значение';
+      text.setAttribute('aria-label', kind.value === 'expr' ? `Новая команда ${v.name}` : `Новое значение ${v.name}`);
+    };
+    label();
+    kind.addEventListener('change', label);
     const add = (): void => {
       if (!text.value.trim() && kind.value === 'expr') return;
       this.adding.delete(v.name);
@@ -325,10 +338,14 @@ export class EnvDialog {
 
   private async select(name: string, id: string): Promise<void> {
     this.revealed.delete(name);
-    await this.run(async () => {
-      const result = await this.api.envSelect(name, id);
-      if (!result.ok && result.reason !== 'cancelled') this.showError(`${name}: не вычислено${result.stderr ? ` (${result.stderr})` : ''}`);
-    });
+    this.outputs.delete(name);
+    await this.run(() => this.api.envSelect(name, id));
+  }
+
+  private async showOutput(name: string): Promise<void> {
+    const output = await this.api.envFailureOutput(name).catch(() => null);
+    if (output !== null) this.outputs.set(name, output);
+    this.render();
   }
 
   private async reveal(name: string): Promise<void> {

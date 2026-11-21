@@ -247,7 +247,7 @@ date: 2026-10-26
 | FR-21007 | Сессии на хостах SSH получают переменные при запуске и пробуждении, значения - только в памяти демона | 21-managed-env | автотест | `test/agentd.test.ts`, `test/remote-link.test.ts` |
 | FR-21008 | Токен входа Claude на хостах из управляемого окружения | 21-managed-env | автотест | `test/remote-link.test.ts` |
 | FR-21009 | Вычисление выражения: момент, окружение запуска и значение | 21-managed-env | автотест | `test/env-eval.test.ts`, `test/managed-env.test.ts` |
-| FR-21010 | Неудача, таймаут и отмена вычисления | 21-managed-env | автотест | `test/env-eval.test.ts`, `test/managed-env.test.ts` |
+| FR-21010 | Неудача, таймаут и отмена вычисления | 21-managed-env | автотест | `test/env-eval.test.ts`, `test/managed-env.test.ts`, `test/env-expr-secret-leak.test.ts` |
 | FR-21011 | Последнее действие над переменной побеждает | 21-managed-env | автотест | `test/managed-env.test.ts` |
 | FR-21012 | Хранение выбора и стартовое вычисление | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
 | FR-21013 | Правка определений в окне | 21-managed-env | автотест | `test/managed-env.test.ts` |

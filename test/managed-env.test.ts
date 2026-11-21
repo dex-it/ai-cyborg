@@ -154,7 +154,7 @@ describe('ManagedEnv: выбор', () => {
     assert.equal(env.overlay().set.get('ENVT_DERIVED'), 'managed-base+from-parent');
   });
 
-  it('неудача: прежнее состояние сохранено, причина и stderr в статусе, значения нет', async (t) => {
+  it('неудача: прежнее состояние сохранено, причина в статусе, вывод ошибки - только по запросу, значения нет', async (t) => {
     const { env, file } = withPass(t, {}, [{ name: 'ENVT_T', candidates: [literal(1, 'keep'), expr(2, 'pass show missing/entry')], choice: selected(1) }]);
     const before = fs.readFileSync(file, 'utf8');
     const r = await env.select('ENVT_T', ID(2));
@@ -163,7 +163,10 @@ describe('ManagedEnv: выбор', () => {
     const v = env.view().vars[0];
     assert.deepEqual(v.choice, { kind: 'selected', candidate: ID(1) });
     assert.equal(v.status.kind, 'failed');
-    assert.match((v.status as { stderr: string }).stderr, /not in the password store/);
+    assert.deepEqual(v.status, { kind: 'failed', reason: 'команда завершилась с ошибкой', output: true });
+    assert.deepEqual(r, { ok: false, reason: 'exit' });
+    assert.match(env.failureOutput('ENVT_T') ?? '', /not in the password store/);
+    assert.throws(() => env.failureOutput('ENVT_NONE'), /Переменной нет в списке/);
     assert.equal(fs.readFileSync(file, 'utf8'), before);
   });
 
