@@ -102,6 +102,25 @@ describe('окружение дочерних процессов собирае�
     assert.deepEqual(offenders, []);
   });
 
+  it('каталог настроек Claude для собственных чтений берётся из одного места main.ts: управляемый CLAUDE_CONFIG_DIR им не читается', () => {
+    const text = code('src/main/main.ts');
+    assert.equal([...text.matchAll(/\bclaudePaths\(/g)].length, 1, 'claudePaths вызывается мимо inheritedClaudePaths');
+    for (const reader of ['mirror:', 'memory:', 'new ClaudeMdStore(', 'const extensionsEnv =']) {
+      const at = text.indexOf(reader);
+      assert.ok(at >= 0, `не найдено: ${reader}`);
+      assert.match(text.slice(at, text.indexOf('\n', at)), /inheritedClaudePaths\(\)/, reader);
+    }
+  });
+
+  it('перезапуск дочерней вкладки несёт открывшую по всему пути: окно -> session:resume -> create', () => {
+    assert.match(code('src/renderer/app.ts'), /api\.resumeSession\(owner\.id, repo, addDirs, resume, opener\?\.id\)/);
+    assert.match(code('src/renderer/app.ts'), /restartPlan\(reply, findSession\)/);
+    assert.match(code('src/renderer/app.ts'), /plan\.resume, undefined, plan\.opener/);
+    const handler = /ipcMain\.handle\('session:resume',[\s\S]*?\n\);/.exec(code('src/main/main.ts'))?.[0] ?? '';
+    assert.match(handler, /resumeSession\(/);
+    assert.match(handler, /\bparent,\s*\)/);
+  });
+
   it('правило имени переменной одно: регулярку имени держит src/shared/env-vars.ts, демон и главный процесс её импортируют', () => {
     const own = path.join('src/shared', 'env-vars.ts');
     const offenders = sources('src').filter((file) => file !== own && /\[A-Za-z_\]\[A-Za-z0-9_\]\{0,127\}/.test(code(file)));

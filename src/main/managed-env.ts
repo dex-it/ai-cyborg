@@ -25,7 +25,7 @@ export function ownNotes(name: string): string[] {
   if (name === 'SSH_ASKPASS_REQUIRE') notes.push('не действует в ssh: Cyborg ставит её сам');
   if (isAuthEnvName(name)) notes.push('не действует в сессиях на хостах, когда Cyborg передал хосту доступ хостинга');
   if (name === 'GIT_TERMINAL_PROMPT' || name === 'GIT_SSH_COMMAND') notes.push('не действует в сессиях на хостах: демон ставит её сам');
-  if (name === 'CLAUDE_CONFIG_DIR') notes.push('окно «Расширения» и зеркало настройки для хостов читают каталог, взятый при запуске Cyborg');
+  if (name === 'CLAUDE_CONFIG_DIR') notes.push('собственные чтения Cyborg - окно «Расширения», зеркало настройки и память проекта для хостов, редактор глобального CLAUDE.md - берут каталог из окружения, унаследованного при запуске Cyborg');
   if (name === 'PATH') notes.push('при вычислении выражений берётся PATH логин-оболочки');
   if (name === 'CLAUDE_CODE_OAUTH_TOKEN') notes.push('на хостах заменяет токен из «Вход Claude на хостах…»; снятая - агент токена не получает');
   return notes;

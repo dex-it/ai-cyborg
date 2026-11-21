@@ -659,7 +659,9 @@ describe('имена и пометки', () => {
     assert.match(ownNotes('GH_TOKEN').join(' '), /токен не ушёл чужому хосту|не действует/);
     assert.match(ownNotes('SSH_ASKPASS_REQUIRE')[0], /ssh/);
     assert.match(ownNotes('GIT_SSH_COMMAND')[0], /демон/);
-    assert.match(ownNotes('CLAUDE_CONFIG_DIR')[0], /при запуске Cyborg/);
+    const configNote = ownNotes('CLAUDE_CONFIG_DIR')[0];
+    for (const reader of ['«Расширения»', 'зеркало', 'память', 'CLAUDE.md']) assert.ok(configNote.includes(reader), `заметка не называет чтение: ${reader}`);
+    assert.match(configNote, /при запуске Cyborg/);
     assert.match(ownNotes('CLAUDE_CODE_OAUTH_TOKEN')[0], /заменяет токен/);
     assert.deepEqual(ownNotes('ENVT_PLAIN'), []);
   });

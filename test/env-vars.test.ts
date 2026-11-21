@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { candidateLabel, defsOf, indicatorText, readDef, readDefs, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
+import { candidateLabel, defsOf, indicatorText, readDef, readDefs, revealStamp, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
 
 const none = () => null;
 const view = (vars: Partial<EnvVarView>[], over: Partial<EnvView> = {}): EnvView => ({
@@ -103,6 +103,16 @@ describe('показ состояния', () => {
     assert.match(staleTitle(['A', 'B']), /A, B/);
     assert.match(staleTitle(['A', 'B']), /Перезапуск продолжит разговор/);
     assert.match(staleTitle(['A'], true), /Перезапуск недоступен: сессию ведёт вызвавшая/);
+  });
+
+  it('отметка раскрытого значения зависит от текста выбранного кандидата: правка литерала «a» на «b» делает раскрытое устаревшим', () => {
+    const pick = (value: string) => view([{ name: 'X', candidates: [{ id: 'aaaaaaaa', kind: 'literal', value }], choice: { kind: 'selected', candidate: 'aaaaaaaa' } }]).vars[0];
+    assert.equal(revealStamp(pick('a')), revealStamp(pick('a')));
+    assert.notEqual(revealStamp(pick('a')), revealStamp(pick('b')));
+    const other = view([{ name: 'X', candidates: [{ id: 'aaaaaaaa', kind: 'literal', value: 'a' }, { id: 'bbbbbbbb', kind: 'literal', value: 'q' }], choice: { kind: 'selected', candidate: 'aaaaaaaa' } }]).vars[0];
+    const edited = { ...other, candidates: [other.candidates[0], { id: 'bbbbbbbb', kind: 'literal', value: 'r' } as const] };
+    assert.equal(revealStamp(other), revealStamp(edited), 'правка невыбранного кандидата раскрытого не сбрасывает');
+    assert.notEqual(revealStamp(pick('a')), revealStamp({ ...pick('a'), choice: { kind: 'unset' } }));
   });
 
   it('подпись кандидата в списке: значение как есть, команда с пометкой, пустое названо, длинное обрезано', () => {

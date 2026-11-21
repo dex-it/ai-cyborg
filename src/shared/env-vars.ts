@@ -123,6 +123,12 @@ export function candidateLabel(c: Candidate, max = 60): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/** Отметка, при которой раскрытое «Показать» значение ещё верно: состояние, выбранный кандидат и его текст (правка выбранного литерала меняет значение сразу). */
+export function revealStamp(v: EnvVarView): string {
+  const chosen = v.choice.kind === 'selected' ? v.candidates.find((c) => c.id === (v.choice as { candidate: string }).candidate) : undefined;
+  return JSON.stringify([v.choice, v.status.kind, v.unapplied, chosen ?? null]);
+}
+
 /** Состояние переменной словами для строки окна. */
 export function stateLabel(v: EnvVarView): string {
   if (v.status.kind === 'evaluating') return 'вычисляется…';

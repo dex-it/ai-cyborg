@@ -57,6 +57,7 @@ import { OutputGate } from './output-gate';
 import { RemotePaste } from './remote-paste';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 import { initMic } from './mic';
+import { restartPlan } from './restart-plan';
 
 interface FileTab {
   viewer: Viewer;
@@ -1779,8 +1780,9 @@ async function restartSession(s: Session): Promise<void> {
   try {
     const reply = await api.restartSession(s.project.id, s.id);
     if (sessions.includes(s)) closeSession(s, true);
-    if (reply.remote) await createSessionView(s.project, reply.remote.dirs[0], undefined, undefined, reply.remote);
-    else if (reply.resume) await createSessionView(s.project, s.repo, undefined, reply.resume, undefined, reply.parent === undefined ? undefined : findSession(reply.parent));
+    const plan = restartPlan(reply, findSession);
+    if (plan.kind === 'remote') await createSessionView(s.project, plan.info.dirs[0], undefined, undefined, plan.info);
+    else if (plan.kind === 'local') await createSessionView(s.project, s.repo, undefined, plan.resume, undefined, plan.opener);
   } catch (err) {
     alert(`Сессия не перезапущена: ${ipcErrorText(err)}`);
   }

@@ -773,6 +773,11 @@ async function main() {
   await ev('document.querySelector("#env-close").click()');
   await waitFor('окно «Окружение» закрыто снова', async () => (await envOpen()) === false);
   await ev('(async () => { const view = await window.cyborg.envView(); await window.cyborg.envSave([...view.vars.map((v) => ({ name: v.name, candidates: v.candidates })), { name: "SMOKE_ENV2", candidates: [] }]); })()');
+  // Сочетание нажимается как клавиша окна: его ловит ускоритель пункта меню, а не обработчик страницы.
+  await mainEv(`(() => { const w = process.mainModule.require('electron').BrowserWindow.getAllWindows()[0]; const modifiers = [${mac ? "'meta'" : "'control'"}, 'shift']; w.webContents.sendInputEvent({ type: 'rawKeyDown', keyCode: 'E', modifiers }); w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'E', modifiers }); })()`);
+  await waitFor('окно «Окружение» по сочетанию клавиш', async () => (await envOpen()) === true);
+  await ev('document.querySelector("#env-close").click()');
+  await waitFor('окно «Окружение» закрыто после сочетания', async () => (await envOpen()) === false);
   await ev('document.querySelector("#env-indicator").click()');
   await waitFor('окно «Окружение» по индикатору', async () => (await envOpen()) === true);
   assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV]").length'), 1, 'по индикатору нет карточки переменной');
@@ -781,6 +786,13 @@ async function main() {
   assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV] select[aria-label=\\"Кандидат SMOKE_ENV\\"] option").length'), 2, 'у переменной нет выпадающего списка кандидатов');
   await ev('(() => { const list = document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] .env-pick select"); list.value = list.options[0].value; list.dispatchEvent(new Event("change")); })()');
   await waitFor('смена пункта списка выбрала литерал', async () => (await ev('window.cyborg.envReveal("SMOKE_ENV")')) === 'smoke-value');
+  // Правка выбранного литерала действует сразу: раскрытое прежнее значение окно не держит.
+  await waitFor('кнопка «Показать значение» у литерала', async () => (await ev(`!!${revealButton}`)) === true);
+  await ev(`${revealButton}.click()`);
+  await waitFor('литерал раскрыт', async () => (await text('#env-body .env-value')) === 'smoke-value');
+  await ev('(() => { const f = document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] input[aria-label=\\"Значение SMOKE_ENV\\"]"); f.value = "smoke-value-2"; f.dispatchEvent(new Event("change")); })()');
+  await waitFor('правка литерала дошла до процессов', async () => (await ev('window.cyborg.envReveal("SMOKE_ENV")')) === 'smoke-value-2');
+  await waitFor('окно не показывает прежнее значение литерала', async () => !/smoke-value(?!-2)/.test(await text('#env-body .env-value')));
   await ev('(async () => { const view = await window.cyborg.envView(); await window.cyborg.envSelect("SMOKE_ENV", view.vars[0].candidates[1].id); })()');
   await ev('document.querySelector("#env-close").click()');
   const envTabs = await tabs();

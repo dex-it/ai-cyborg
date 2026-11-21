@@ -1,4 +1,4 @@
-import { MAX_CANDIDATES, candidateLabel, defsOf, stateLabel, type Candidate, type EnvVarView, type EnvView } from '../shared/env-vars';
+import { MAX_CANDIDATES, candidateLabel, defsOf, revealStamp, stateLabel, type Candidate, type EnvVarView, type EnvView } from '../shared/env-vars';
 import { byId, el } from './dom';
 
 export interface EnvApi {
@@ -123,12 +123,8 @@ export class EnvDialog {
     if (v.choice.kind === 'selected' && !v.unapplied) actions.append(button('Показать значение', () => void this.reveal(v.name, card)));
     card.append(actions);
     const shown = this.revealed.get(v.name);
-    if (shown && shown.stamp === this.stamp(v)) card.append(el('pre', 'env-value', shown.value));
+    if (shown && shown.stamp === revealStamp(v)) card.append(el('pre', 'env-value', shown.value));
     return card;
-  }
-
-  private stamp(v: EnvVarView): string {
-    return JSON.stringify([v.choice, v.status.kind, v.unapplied]);
   }
 
   /** Выпадающий список кандидатов: смена пункта выбирает кандидата; кнопка вычисляет выбранного заново (повторный выбор того же). */
@@ -210,7 +206,7 @@ export class EnvDialog {
   private async reveal(name: string, card: HTMLElement): Promise<void> {
     const value = await this.api.envReveal(name).catch(() => null);
     const v = this.view.vars.find((x) => x.name === name);
-    if (v) this.revealed.set(name, { value: value ?? 'не задана', stamp: this.stamp(v) });
+    if (v) this.revealed.set(name, { value: value ?? 'не задана', stamp: revealStamp(v) });
     card.querySelector('.env-value')?.remove();
     card.append(el('pre', 'env-value', value ?? 'не задана'));
   }

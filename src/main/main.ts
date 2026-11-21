@@ -39,6 +39,7 @@ import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart 
 import { PassportService, systemClaudeAvailable } from './passport';
 import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
+import { resumeSession } from './session-resume';
 import { McpServer } from './mcp';
 import { createSessionTools, Handoffs, type ButtonsToolsPort, type PassportToolsPort, type RemoteToolsPort, type SessionsPort } from './session-tools';
 import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
@@ -202,9 +203,9 @@ const remote = new RemoteSessions({
   gitAuth: (urls) => collectGitAuth(urls, createCliRunner(app.getPath('userData'), undefined, HOST_AGNOSTIC_TOKEN_ENV)),
   claudeToken: () => claudeToken.get(),
   env: managedEnv,
-  // Свои чтения каталога настроек Claude - по унаследованному окружению, как окно «Расширения» и CLAUDE.md.
-  mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
-  memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),
+  // Свои чтения каталога настроек Claude - все через inheritedClaudePaths.
+  mirror: () => buildMirror({ home: os.homedir(), ...inheritedClaudePaths() }),
+  memory: (repo) => readMemory(inheritedClaudePaths().configDir, repo),
   mic: (host) => (voiceOn(host) ? mic.socketFor(host) : null),
   onChild: (sid) => childSessions.add(sid),
 });
@@ -227,7 +228,7 @@ mcpServer
 const trackerSettings = new TrackerSettingsStore(path.join(app.getPath('userData'), 'trackers.json'));
 const userData = app.getPath('userData');
 const prompts = new PromptStore(path.join(userData, 'prompts.json'));
-const claudeMd = new ClaudeMdStore(path.join(claudePaths(os.homedir(), process.env, process.platform).configDir, 'CLAUDE.md'));
+const claudeMd = new ClaudeMdStore(path.join(inheritedClaudePaths().configDir, 'CLAUDE.md'));
 const globalCommands = new CommandStore(path.join(userData, 'commands.json'));
 const runApprovals = new RunApprovals(path.join(userData, 'run-approvals.json'));
 type Projects = Pick<ProjectStore, 'load' | 'save' | 'problem' | 'loadCommands' | 'saveCommands'>;
@@ -277,7 +278,7 @@ const paths = createPathHandlers({
 const runCli = createCliRunner(app.getPath('userData'));
 // Магазины, плагины и MCP читаются у Claude Code; из userData (вне репозиториев) он видит только настройки пользователя.
 const claudeRun = createClaudeRunner();
-const extensionsEnv = { run: claudeRun, home: os.homedir(), neutralDir: userData, ...claudePaths(os.homedir(), process.env, process.platform) };
+const extensionsEnv = { run: claudeRun, home: os.homedir(), neutralDir: userData, ...inheritedClaudePaths() };
 const hubStore = new HubStore(path.join(userData, 'hubs.json'));
 const usageStore = new UsageStore(path.join(extensionsEnv.configDir, 'projects'), path.join(userData, 'extensions-usage.json'));
 const extensions = createExtensionsHandlers({
@@ -308,6 +309,11 @@ app.on('before-quit', () => {
 let unsavedEdits = 0;
 
 /** Закрытие окна, выход и смена воркспейса завершают все сессии: как и закрытие вкладки, они спрашивают, пока сессия работает. */
+/** Один источник каталога настроек Claude для всех собственных чтений Cyborg: управляемый CLAUDE_CONFIG_DIR сюда не доходит. */
+function inheritedClaudePaths(): ReturnType<typeof claudePaths> {
+  return claudePaths(os.homedir(), process.env, process.platform);
+}
+
 function confirmEndSessions(button = 'Закрыть', detail = 'При закрытии окна они будут завершены.'): boolean {
   if (unsavedEdits) {
     const discard = dialog.showMessageBoxSync(win!, {
@@ -595,15 +601,16 @@ ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id:
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
   deleteHistory(repo, id);
 });
-ipcMain.handle('session:resume', async (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown, parent?: unknown) => {
-  await envReady();
-  const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
-  if (!isSessionId(id) || !project) throw new Error('Некорректное продолжение сессии');
-  if (!historyExists(cwd as string, id)) throw new Error('Журнал сессии не найден');
-  // Открывшая приходит при перезапуске дочерней вкладки; чужая и закрытая отбрасываются.
-  const opener = typeof parent === 'number' && sessions.projectOf(parent) === project ? parent : undefined;
-  return sessions.create(project, cwd as string, addDirs as string[], undefined, id, opener);
-});
+ipcMain.handle('session:resume', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown, parent?: unknown) =>
+  resumeSession(
+    { envReady, projects: () => projects.load(), historyExists, isSessionId, projectOf: (n) => sessions.projectOf(n), create: (...args) => sessions.create(...args) },
+    projectId,
+    cwd,
+    addDirs,
+    id,
+    parent,
+  ),
+);
 ipcMain.handle('trackers:status', () => trackers.status());
 ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) =>
   taskHandlers.list(projectId, assignedToMe, tracked, recheck),
