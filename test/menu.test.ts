@@ -22,9 +22,8 @@ const workspaceMenu = (over: Partial<WorkspaceMenu> = {}): WorkspaceMenu => ({
   editProject() {},
   editButtons() {},
   editClaudeMd() {},
-  claudeToken() {},
   env() {},
-  hostDisk() {},
+  hosts() {},
   search() {},
   extensions() {},
   openUrl() {},
@@ -87,7 +86,7 @@ describe('appMenuTemplate', () => {
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     it(`${platform}: «Воркспейс» - создать, открыть и недавние, затем проект, кнопки и хосты; вне macOS последним выход`, () => {
       const labels = workspaceItems(platform).filter((item) => item.type !== 'separator').map((item) => item.label);
-      const expected = ['Создать…', 'Открыть…', 'Открыть в новом окне…', 'Недавние', 'Новый проект…', 'Свойства проекта…', 'Кнопки…', 'Глобальный CLAUDE.md…', 'Окружение…', 'Вход Claude на хостах…', 'Место на хостах…'];
+      const expected = ['Создать…', 'Открыть…', 'Открыть в новом окне…', 'Недавние', 'Новый проект…', 'Свойства проекта…', 'Кнопки…', 'Глобальный CLAUDE.md…', 'Окружение…', 'Хосты…'];
       assert.deepEqual(labels, platform === 'darwin' ? expected : [...expected, 'Выход']);
     });
 

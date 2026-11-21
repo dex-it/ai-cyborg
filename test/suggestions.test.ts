@@ -166,8 +166,8 @@ describe('Кнопки модели на экране: хук MessageDisplay', (
   const comment = '<!-- cyborg-buttons: [{"label":"Тесты","text":"npm test","submit":true},{"label":"Ревью","text":"сделай ревью"}] -->';
 
   it('строка комментария заменяется подписями годных кнопок, перевод строки остаётся', () => {
-    assert.equal(displaySuggestions(`Готово.\n\n${comment}\n`), 'Готово.\n\n✦ Кнопки на полосе: «Тесты», «Ревью»\n');
-    assert.equal(displaySuggestions(comment), '✦ Кнопки на полосе: «Тесты», «Ревью»');
+    assert.equal(displaySuggestions(`Готово.\n\n${comment}\n`), 'Готово.\n\n\x1b[2m✦ Кнопки на полосе: «Тесты», «Ревью»\x1b[22m\n');
+    assert.equal(displaySuggestions(comment), '\x1b[2m✦ Кнопки на полосе: «Тесты», «Ревью»\x1b[22m');
   });
 
   it('порция без комментария и упоминание маркера внутри строки не меняются', () => {
@@ -181,6 +181,6 @@ describe('Кнопки модели на экране: хук MessageDisplay', (
   });
 
   it('отброшенная кнопка не называется на экране', () => {
-    assert.equal(displaySuggestions('<!-- cyborg-buttons: [{"label":"Шелл","text":"!ls"},{"label":"Тесты","text":"npm test"}] -->'), '✦ Кнопки на полосе: «Тесты»');
+    assert.equal(displaySuggestions('<!-- cyborg-buttons: [{"label":"Шелл","text":"!ls"},{"label":"Тесты","text":"npm test"}] -->'), '\x1b[2m✦ Кнопки на полосе: «Тесты»\x1b[22m');
   });
 });

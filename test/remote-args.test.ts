@@ -92,7 +92,7 @@ describe('parsePreflight', () => {
     assert.deepEqual(parsePreflight('uname=Linux\n' + good), { home: '/home/u', installed: [], tools: none, loggedIn: true });
   });
   it('не залогинен: loggedIn не true, не-JSON, пусто', () => {
-    for (const auth of ['{"loggedIn":false}', 'oops', '']) assert.match((parsePreflight(good.replace('{"loggedIn":true}', auth)) as { missing: string[] }).missing[0], /не залогинен[\s\S]*Вход Claude на хостах/);
+    for (const auth of ['{"loggedIn":false}', 'oops', '']) assert.match((parsePreflight(good.replace('{"loggedIn":true}', auth)) as { missing: string[] }).missing[0], /не залогинен[\s\S]*Хосты…/);
   });
   it('с токеном Claude вход на хосте не нужен', () => {
     assert.deepEqual(parsePreflight(good.replace('{"loggedIn":true}', '{"loggedIn":false}'), true), { home: '/home/u', installed: [], tools: none, loggedIn: false });

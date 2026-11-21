@@ -32,7 +32,7 @@ import { bindTabDrag, bindTablist, markTab, selectTab } from './tabs';
 import { ExtensionsDialog, type ExtensionsTab } from './extensions-dialog';
 import { PassportUi } from './passport-dialog';
 import { EnvDialog } from './env-dialog';
-import { indicatorCounts, indicatorText, staleTitle, type EnvView } from '../shared/env-vars';
+import { staleTitle, type EnvView } from '../shared/env-vars';
 import { SearchDialog, type SearchMode } from './search-dialog';
 import { TrackerPanel } from './panel';
 import { StatusHub } from './status';
@@ -1696,8 +1696,8 @@ async function startRemote(owner: Project, host: string, repo: string): Promise<
     await createSessionView(owner, info.dirs[0], undefined, undefined, info);
   } catch (error) {
     const text = `Удалённая сессия на ${host}: ${ipcErrorText(error)}`;
-    if (!text.includes('Вход Claude на хостах')) alert(text);
-    else if (confirm(`${text}\n\nОткрыть «Вход Claude на хостах»?`)) void openClaudeTokenDialog();
+    if (!text.includes('Хосты…')) alert(text);
+    else if (confirm(`${text}\n\nОткрыть окно «Хосты»?`)) void openHosts('login', owner);
   } finally {
     markRemoteStart(-1);
   }
@@ -1709,13 +1709,23 @@ startMenuButton.addEventListener('click', (event) => {
   else closeRepoMenu(true);
 });
 
-// ---------- вход Claude на хостах ----------
+// ---------- хосты: место и вход Claude ----------
 
-const claudeTokenDialog = byId<HTMLDialogElement>('claude-token-dialog');
+const hostsDialog = byId<HTMLDialogElement>('hosts-dialog');
 const claudeTokenValue = byId<HTMLInputElement>('claude-token-value');
 const claudeTokenStatus = byId('claude-token-status');
 const claudeTokenError = byId('claude-token-error');
 const claudeTokenClear = byId<HTMLButtonElement>('claude-token-clear');
+type HostsTab = 'disk' | 'login';
+
+function showHostsTab(tab: HostsTab): void {
+  for (const t of ['disk', 'login'] as const) {
+    const tabButton = byId(`hosts-tab-${t}`);
+    tabButton.classList.toggle('active', t === tab);
+    tabButton.setAttribute('aria-selected', String(t === tab));
+    byId(`hosts-${t}`).hidden = t !== tab;
+  }
+}
 
 function showClaudeTokenStatus(status: ClaudeTokenStatus): void {
   claudeTokenStatus.textContent = !status.set
@@ -1731,22 +1741,39 @@ function showClaudeTokenError(text: string): void {
   claudeTokenError.hidden = !text;
 }
 
-async function openClaudeTokenDialog(): Promise<void> {
-  if (claudeTokenDialog.open) return;
+/** Окно «Хосты»: без вкладки - «Место», если у проекта есть хосты, иначе «Вход Claude». */
+async function openHosts(tab?: HostsTab, owner: Project | null = project, host?: string, warning = ''): Promise<void> {
+  if (hostsDialog.open) return;
   claudeTokenValue.value = '';
   showClaudeTokenError('');
   showClaudeTokenStatus(await api.claudeTokenStatus());
-  claudeTokenDialog.showModal();
+  const hasHosts = !!owner?.hosts?.length;
+  byId('host-disk-none').hidden = hasHosts;
+  byId('host-disk-content').hidden = !hasHosts;
+  hostDiskOwner = hasHosts ? owner : null;
+  hostDisk = null;
+  hostDiskChecked.clear();
+  if (owner?.hosts?.length) {
+    hostDiskHost.replaceChildren(...owner.hosts.map((h) => new Option(h, h)));
+    if (host) hostDiskHost.value = host;
+  }
+  hostDiskWarning.textContent = warning;
+  hostDiskWarning.hidden = !warning;
+  showHostsTab(tab ?? (hasHosts ? 'disk' : 'login'));
+  hostsDialog.showModal();
+  byId(`hosts-tab-${tab ?? (hasHosts ? 'disk' : 'login')}`).focus();
+  if (hasHosts) void loadHostDisk();
 }
 
-byId('claude-token-cancel').addEventListener('click', () => claudeTokenDialog.close());
+byId('hosts-tab-disk').addEventListener('click', () => showHostsTab('disk'));
+byId('hosts-tab-login').addEventListener('click', () => showHostsTab('login'));
+byId('hosts-close').addEventListener('click', () => hostsDialog.close());
 byId('claude-token-save').addEventListener('click', async () => {
   try {
     const status = await api.setClaudeToken(claudeTokenValue.value);
     claudeTokenValue.value = '';
     showClaudeTokenError('');
     showClaudeTokenStatus(status);
-    if (status.stored === 'disk') claudeTokenDialog.close();
   } catch (error) {
     showClaudeTokenError(ipcErrorText(error));
   }
@@ -1759,25 +1786,13 @@ claudeTokenClear.addEventListener('click', async () => {
     showClaudeTokenError(ipcErrorText(error));
   }
 });
-api.on<void>('menu:claude-token', () => void openClaudeTokenDialog());
+api.on<void>('menu:hosts', () => void openHosts());
 
 // ---------- окружение ----------
 
-const envIndicator = byId<HTMLButtonElement>('env-indicator');
-const envCount = envIndicator.querySelector<HTMLElement>('.env-count')!;
-const envDialog = new EnvDialog(api, (view) => {
-  const counts = indicatorCounts(view);
-  envCount.textContent = counts;
-  envCount.hidden = !counts;
-  envIndicator.setAttribute('aria-label', indicatorText(view));
-  envIndicator.title = `${indicatorText(view)} - переменные процессов Cyborg (${mac ? 'Cmd' : 'Ctrl'}+Shift+E)`;
-  envIndicator.dataset.active = String(view.vars.some((v) => v.choice.kind !== 'untouched'));
-  envIndicator.dataset.failed = String(view.vars.some((v) => v.unapplied || v.status.kind === 'failed'));
-});
-envIndicator.addEventListener('click', () => void envDialog.open());
+const envDialog = new EnvDialog(api);
 api.on<EnvView>('env:changed', (view) => envDialog.update(view));
 api.on<void>('menu:env', () => void envDialog.open());
-void api.envView().then((view) => envDialog.update(view));
 
 /** Вкладка сессии, запущенной с прежним окружением, помечена и предлагает перезапуск: разговор продолжается с новым. */
 async function restartSession(s: Session): Promise<void> {
@@ -1828,7 +1843,6 @@ void api.envStale().then(applyStale);
 
 // ---------- место на хостах ----------
 
-const hostDiskDialog = byId<HTMLDialogElement>('host-disk-dialog');
 const hostDiskHost = byId<HTMLSelectElement>('host-disk-host');
 const hostDiskWarning = byId('host-disk-warning');
 const hostDiskSummary = byId('host-disk-summary');
@@ -1899,20 +1913,8 @@ async function loadHostDisk(): Promise<void> {
   }
 }
 
-function openHostDiskDialog(owner: Project | null, host?: string, warning = ''): void {
-  if (!owner?.hosts?.length || hostDiskDialog.open) return;
-  hostDiskOwner = owner;
-  hostDiskHost.replaceChildren(...owner.hosts.map((h) => new Option(h, h)));
-  if (host) hostDiskHost.value = host;
-  hostDiskWarning.textContent = warning;
-  hostDiskWarning.hidden = !warning;
-  hostDiskDialog.showModal();
-  void loadHostDisk();
-}
-
 hostDiskHost.addEventListener('change', () => void loadHostDisk());
 hostDiskRefresh.addEventListener('click', () => void loadHostDisk());
-byId('host-disk-close').addEventListener('click', () => hostDiskDialog.close());
 hostDiskPurge.addEventListener('click', async () => {
   const owner = hostDiskOwner;
   if (!owner || !hostDisk) return;
@@ -1932,10 +1934,9 @@ hostDiskPurge.addEventListener('click', async () => {
     hostDiskPurge.disabled = false;
   }
 });
-api.on<void>('menu:host-disk', () => openHostDiskDialog(project));
 api.on<{ host: string; free: number; total: number }>('remote:disk-low', ({ host, free }) => {
   const owner = project?.hosts?.includes(host) ? project : (state.projects.find((p) => p.hosts?.includes(host)) ?? null);
-  openHostDiskDialog(owner, host, `На ${host} мало места: свободно ${formatBytes(free)}. Удалите ненужные сессии.`);
+  if (owner?.hosts?.length) void openHosts('disk', owner, host, `На ${host} мало места: свободно ${formatBytes(free)}. Удалите ненужные сессии.`);
 });
 
 // Сессии, пережившие выход Cyborg, возвращаются вкладками: хосты проекта опрашиваются при открытии воркспейса.

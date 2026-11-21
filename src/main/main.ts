@@ -32,7 +32,7 @@ import { deleteHistory, historyExists, isSessionId, listHistory, type HistoryEnt
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
-import { appMenuTemplate, DOCS_URL, HOST_DISK_MENU_ID, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
+import { appMenuTemplate, DOCS_URL, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
 import { notificationKey, validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
 import { mrUrl, validateMrDetailsArgs, validateMrListArgs, validateSessionStart } from './mrs';
@@ -719,7 +719,7 @@ ipcMain.on('notifications:state', (_event, enabled: boolean) => {
 });
 ipcMain.on('project:selected', (_event, selected: unknown) => {
   menuState.hasProject = selected === true;
-  for (const id of [PROJECT_PROPERTIES_MENU_ID, HOST_DISK_MENU_ID, ...Object.values(SEARCH_MENU_IDS), ...Object.values(EXTENSIONS_MENU_IDS)]) {
+  for (const id of [PROJECT_PROPERTIES_MENU_ID, ...Object.values(SEARCH_MENU_IDS), ...Object.values(EXTENSIONS_MENU_IDS)]) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id);
     if (item) item.enabled = menuState.hasProject;
   }
@@ -816,8 +816,7 @@ function rebuildMenu(): void {
     editProject: () => win?.webContents.send('menu:project', 'edit'),
     editButtons: () => win?.webContents.send('menu:buttons'),
     editClaudeMd: () => win?.webContents.send('menu:claude-md'),
-    claudeToken: () => win?.webContents.send('menu:claude-token'),
-    hostDisk: () => win?.webContents.send('menu:host-disk'),
+    hosts: () => win?.webContents.send('menu:hosts'),
     search: (mode) => win?.webContents.send('menu:search', mode),
     extensions: (tab) => win?.webContents.send('menu:extensions', tab),
     env: () => win?.webContents.send('menu:env'),
