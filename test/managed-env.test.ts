@@ -194,6 +194,17 @@ describe('ManagedEnv: выбор', () => {
     assert.equal(env.overlay().set.get('ENVT_S'), 'done');
   });
 
+  it('статус evaluating называет вычисляемого кандидата: при выборе человека и при старте', async (t) => {
+    const { env } = withPass(t, {}, [{ name: 'ENVT_S', candidates: [expr(1, 'sleep 0.3; echo a'), expr(2, 'sleep 0.3; echo b')], choice: selected(1) }]);
+    const ready = env.start();
+    assert.deepEqual(env.view().vars[0].status, { kind: 'evaluating', candidate: ID(1) });
+    await ready;
+    const pending = env.select('ENVT_S', ID(2));
+    await until(() => env.view().vars[0].status.kind === 'evaluating');
+    assert.deepEqual(env.view().vars[0].status, { kind: 'evaluating', candidate: ID(2) });
+    await pending;
+  });
+
   it('последнее действие побеждает: выбор литерала во время вычисления отменяет его, результат вычисления состояния не меняет', async (t) => {
     const { env } = withPass(t, {}, [{ name: 'ENVT_S', candidates: [expr(1, 'sleep 5; echo late'), literal(2, 'now')] }]);
     const slow = env.select('ENVT_S', ID(1));

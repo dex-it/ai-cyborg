@@ -127,17 +127,20 @@ export class EnvDialog {
     return card;
   }
 
-  /** Выпадающий список кандидатов: смена пункта выбирает кандидата; кнопка вычисляет выбранного заново. Идущее вычисление выбору не помеха: главный процесс его отменяет. */
+  /** Выпадающий список кандидатов: смена пункта выбирает кандидата; кнопка вычисляет показанного заново. Идущее вычисление выбору не помеха: главный процесс его отменяет. Пока оно идёт, список стоит на вычисляемом кандидате, и кнопка относится к нему. */
   private picker(v: EnvVarView): HTMLElement {
     const row = el('div', 'env-pick');
     const list = document.createElement('select');
     list.setAttribute('aria-label', `Кандидат ${v.name}`);
     for (const c of v.candidates) list.append(new Option(candidateLabel(c), c.id));
     const chosen = v.choice.kind === 'selected' ? v.choice.candidate : undefined;
-    const current = v.candidates.find((c) => c.id === chosen)?.id;
-    list.value = current ?? v.candidates[0].id;
+    const known = (id: string | undefined): string | undefined => v.candidates.find((c) => c.id === id)?.id;
+    const evaluating = v.status.kind === 'evaluating' ? known(v.status.candidate) : undefined;
+    const current = known(chosen);
+    list.value = evaluating ?? current ?? v.candidates[0].id;
     list.addEventListener('change', () => void this.select(v.name, list.value));
-    const apply = button(current === undefined ? 'Выбрать' : 'Вычислить заново', () => void this.select(v.name, list.value), current === undefined ? '' : 'active');
+    const again = evaluating !== undefined || current !== undefined;
+    const apply = button(again ? 'Вычислить заново' : 'Выбрать', () => void this.select(v.name, list.value), again ? 'active' : '');
     row.append(list, apply);
     return row;
   }

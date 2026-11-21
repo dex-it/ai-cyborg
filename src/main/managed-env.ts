@@ -246,7 +246,7 @@ export class ManagedEnv {
       this.changed();
       return { ok: true };
     }
-    this.status.set(def.name, { kind: 'evaluating' });
+    this.status.set(def.name, { kind: 'evaluating', candidate: cand.id });
     this.deps.onChange?.();
     const result = await this.run(def.name, cand.command);
     if ('cancelled' in result && result.cancelled) return { ok: false, reason: 'cancelled', stderr: '' };
@@ -378,7 +378,8 @@ export class ManagedEnv {
     this.starting = true;
     for (const name of pending) {
       this.queue.add(name);
-      this.status.set(name, { kind: 'evaluating' });
+      const def = this.defs.find((d) => d.name === name);
+      this.status.set(name, { kind: 'evaluating', candidate: def && this.chosen(def)?.id });
     }
     this.deps.onChange?.();
     this.readyPromise = (async () => {

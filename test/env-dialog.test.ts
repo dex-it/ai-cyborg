@@ -54,7 +54,7 @@ const variable = (over: Partial<EnvVarView>): EnvVarView => ({
   name: 'TOKEN',
   candidates: [expr('aaaaaaaa', 'pass show a'), expr('bbbbbbbb', 'pass show b')],
   choice: { kind: 'selected', candidate: 'aaaaaaaa' },
-  status: { kind: 'evaluating' },
+  status: { kind: 'evaluating' } as EnvVarView['status'],
   unapplied: false,
   notes: [],
   ...over,
@@ -100,4 +100,17 @@ describe('окно «Окружение»: выбор кандидата во в
       assert.equal(selected.length, 2, 'кнопка тоже выбирает, пока вычисление идёт');
     });
   }
+  it('вычисление, начатое выбором кандидата B: список стоит на B, кнопка относится к B, а не к прежнему выбору', async () => {
+    const { list, apply, selected } = await open(variable({ status: { kind: 'evaluating', candidate: 'bbbbbbbb' } }));
+    assert.equal(list.value, 'bbbbbbbb');
+    assert.equal(apply.textContent, 'Вычислить заново');
+    apply.fire('click');
+    assert.deepEqual(selected, [['TOKEN', 'bbbbbbbb']], 'нажатие повторяет вычисление показанного B, не подменяет его прежним A');
+  });
+
+  it('вычисление выбором при непроставленном выборе: список на вычисляемом, не на первом, кнопка не «Выбрать»', async () => {
+    const { list, apply } = await open(variable({ choice: { kind: 'untouched' }, status: { kind: 'evaluating', candidate: 'bbbbbbbb' } }));
+    assert.equal(list.value, 'bbbbbbbb');
+    assert.equal(apply.textContent, 'Вычислить заново');
+  });
 });

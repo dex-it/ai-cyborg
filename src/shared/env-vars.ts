@@ -18,7 +18,8 @@ export const MAX_TEXT_BYTES = 64 * 1024;
 export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 export const ID_RE = /^[0-9a-f]{8}$/;
 
-export type VarStatus = { kind: 'idle' } | { kind: 'evaluating' } | { kind: 'failed'; reason: string; stderr: string };
+/** evaluating.candidate - кандидат, чьё выражение вычисляется сейчас: окно ставит список на него. */
+export type VarStatus = { kind: 'idle' } | { kind: 'evaluating'; candidate?: string } | { kind: 'failed'; reason: string; stderr: string };
 
 export interface EnvVarView {
   name: string;
