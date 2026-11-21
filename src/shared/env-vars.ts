@@ -147,10 +147,15 @@ export function staleTitle(names: readonly string[], noRestart = false): string 
 
 /** Текст индикатора в нижней строке: число выбранных и снятых, ошибки вычисления. */
 export function indicatorText(view: EnvView): string {
-  if (view.starting) return 'Окружение: вычисляется…';
+  const counts = indicatorCounts(view);
+  return counts ? `Окружение: ${counts}` : 'Окружение';
+}
+
+/** Счётчики рядом со значком: «+N −M ошибка K» без нулевых частей, пусто без управляемых переменных. */
+export function indicatorCounts(view: EnvView): string {
+  if (view.starting) return 'вычисляется…';
   const selected = view.vars.filter((v) => v.choice.kind === 'selected').length;
   const unset = view.vars.filter((v) => v.choice.kind === 'unset').length;
   const failed = view.vars.filter((v) => v.unapplied || v.status.kind === 'failed').length;
-  const parts = [...(selected ? [`+${selected}`] : []), ...(unset ? [`−${unset}`] : []), ...(failed ? [`ошибка ${failed}`] : [])];
-  return parts.length ? `Окружение: ${parts.join(' ')}` : 'Окружение';
+  return [...(selected ? [`+${selected}`] : []), ...(unset ? [`−${unset}`] : []), ...(failed ? [`ошибка ${failed}`] : [])].join(' ');
 }

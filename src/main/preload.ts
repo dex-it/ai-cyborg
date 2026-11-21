@@ -47,6 +47,7 @@ const api = {
   envRemove: (name: string): Promise<void> => ipcRenderer.invoke('env:remove', name),
   envCancel: (name: string): Promise<void> => ipcRenderer.invoke('env:cancel', name),
   envReveal: (name: string): Promise<string | null> => ipcRenderer.invoke('env:reveal', name),
+  envNames: (): Promise<string[]> => ipcRenderer.invoke('env:names'),
   envStale: (): Promise<{ id: number; names: string[]; noRestart?: true }[]> => ipcRenderer.invoke('env:stale'),
   /** Перезапуск сессии с новым окружением: локальная продолжается с --resume, удалённая засыпает и просыпается. */
   restartSession: (projectId: string, id: number): Promise<{ resume?: string; parent?: number; remote?: RemoteInfo }> => ipcRenderer.invoke('session:restart', projectId, id),

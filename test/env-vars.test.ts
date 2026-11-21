@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { candidateLabel, defsOf, indicatorText, readDef, readDefs, revealStamp, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
+import { candidateLabel, defsOf, indicatorCounts, indicatorText, readDef, readDefs, revealStamp, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
 
 const none = () => null;
 const view = (vars: Partial<EnvVarView>[], over: Partial<EnvView> = {}): EnvView => ({
@@ -78,6 +78,8 @@ describe('показ состояния', () => {
     assert.equal(indicatorText(view([{ choice: { kind: 'selected', candidate: 'a' } }, { choice: { kind: 'unset' } }, { choice: { kind: 'unset' } }])), 'Окружение: +1 −2');
     assert.equal(indicatorText(view([{ choice: { kind: 'selected', candidate: 'a' }, unapplied: true }, { status: { kind: 'failed', reason: 'x', stderr: '' } }])), 'Окружение: +1 ошибка 2');
     assert.equal(indicatorText(view([], { starting: true })), 'Окружение: вычисляется…');
+    assert.equal(indicatorCounts(view([])), '');
+    assert.equal(indicatorCounts(view([{ choice: { kind: 'selected', candidate: 'a' } }, { choice: { kind: 'unset' } }])), '+1 −1');
   });
 
   it('состояние переменной словами: не тронута, выбрана, снята, вычисляется, ошибка, значения нет', () => {

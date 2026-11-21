@@ -49,6 +49,13 @@ describe('ManagedEnv: чтение файла', () => {
     assert.equal(env.overlay().set.size + env.overlay().unset.size, 0);
   });
 
+  it('имена для подсказки: унаследованные по алфавиту, без заведённых, служебных и негодных', (t) => {
+    const { env } = managed(t, [{ name: 'ENVT_LIT', candidates: [literal(1, 'v')] }], {
+      inherited: () => ({ ZED: 'secret', ENVT_LIT: 'x', CYBORG_CWD: '/tmp', 'BAD-NAME': '1', ALPHA: 'a' }),
+    });
+    assert.deepEqual(env.inheritedNames(), ['ALPHA', 'ZED']);
+  });
+
   it('выбранный литерал действует сразу после запуска, снятая - тоже, не тронутая и выбранное выражение - нет', (t) => {
     const { env } = managed(t, [
       { name: 'ENVT_LIT', candidates: [literal(1, 'v')], choice: selected(1) },
