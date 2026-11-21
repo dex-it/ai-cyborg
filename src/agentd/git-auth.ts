@@ -1,3 +1,4 @@
+import { ENV_NAME } from '../shared/env-vars.ts';
 import type { Auth, GitCred, Vars } from './protocol.ts';
 
 const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/;
@@ -63,7 +64,6 @@ export function isAuthEnvName(name: string): boolean {
   return /^(GH_TOKEN|GH_ENTERPRISE_TOKEN|GH_HOST|GITLAB_TOKEN|GITLAB_HOST|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+)$/.test(name);
 }
 
-const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const MAX_VARS = 128;
 const MAX_VALUE = 64 * 1024;
 
@@ -75,11 +75,11 @@ export function readVars(value: unknown): Vars {
   const raw = typeof v.set === 'object' && v.set !== null && !Array.isArray(v.set) ? (v.set as Record<string, unknown>) : {};
   for (const [name, val] of Object.entries(raw)) {
     if (Object.keys(set).length >= MAX_VARS) break;
-    if (VAR_NAME.test(name) && typeof val === 'string' && val.length <= MAX_VALUE && !val.includes('\0')) set[name] = val;
+    if (ENV_NAME.test(name) && typeof val === 'string' && val.length <= MAX_VALUE && !val.includes('\0')) set[name] = val;
   }
   for (const name of Array.isArray(v.unset) ? v.unset : []) {
     if (unset.length >= MAX_VARS) break;
-    if (typeof name === 'string' && VAR_NAME.test(name) && !unset.includes(name)) unset.push(name);
+    if (typeof name === 'string' && ENV_NAME.test(name) && !unset.includes(name)) unset.push(name);
   }
   return { set, unset };
 }

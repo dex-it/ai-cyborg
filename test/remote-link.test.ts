@@ -1305,6 +1305,24 @@ describe('удалённые сессии и окружение Cyborg', () => {
     await until(() => r.spawned.length === 1);
   });
 
+  it('перезапуск: вкладка, открытая другой сессией, не перезапускается и помечается без кнопки; сессия работает', async (t) => {
+    const r = rig(t, { tickMs: 10, version: BUNDLE.version });
+    const ssh = new FakeSsh(r.daemon, r.home);
+    const { env } = managed(t, [{ name: 'ENVT_REMOTE_SET', candidates: [literal(1, 'v1')] }]);
+    useManagedEnv(env);
+    t.after(() => useManagedEnv(null));
+    const a = side(t, ssh, { deps: { env } });
+    const caller = a.sessions.adopt({ project: 'p', term: { write() {}, resize() {}, kill() {} }, dirs: ['/loc/a', '/loc/b'], cwd: '/loc/a', remote: { host: 'local', origin: 'human', keep: false, online: true } });
+    const info = await a.remote.create(project, human, { origin: 'tool', spawnedBy: caller });
+    await until(() => r.spawned.length === 1);
+    await env.select('ENVT_REMOTE_SET', '00000001');
+    assert.deepEqual(a.sessions.staleSessions().filter((s) => s.id === info.id), [{ id: info.id, names: ['ENVT_REMOTE_SET'], noRestart: true }]);
+    await assert.rejects(a.remote.restart(project, info.id), /ведёт вызвавшая/);
+    assert.equal(ssh.seen.some((m) => m.type === 'sleep'), false);
+    assert.equal(a.remote.isRemote(info.id), true);
+    assert.equal(r.spawned.length, 1);
+  });
+
   it('перезапуск: сессии нет - отказ', async (t) => {
     const { ssh } = world(t);
     await assert.rejects(side(t, ssh).remote.restart(project, 4242), /не найдена/);

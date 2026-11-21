@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { AllowedPaths } from '../src/main/allowed-paths';
 import { RunApprovals } from '../src/main/run-approvals';
-import { createRunHandlers, displayCommand, registerRunChannels, runChannel, runConfirm, runnableOf, warningText, writeEnvFile, type RunReply, type Tell, type RunDeps, type RunWarning } from '../src/main/run-file';
+import { createRunHandlers, displayCommand, registerRunChannels, removeOrphanedEnvFiles, removeOwnEnvFiles, runChannel, runConfirm, runnableOf, warningText, writeEnvFile, type RunReply, type Tell, type RunDeps, type RunWarning } from '../src/main/run-file';
 import { shellQuote, shQuote } from '../src/shared/shell-quote';
 import { shQuote as agentdShQuote } from '../src/agentd/protocol';
 import { findTerminal, launcherFor, launchAndWait, RUN_SCRIPT, terminalLaunch, TERMINALS } from '../src/main/run-terminal';
@@ -372,6 +372,7 @@ describe('createRunHandlers', () => {
         return {};
       },
       platform: 'linux',
+      envDir: path.join(base, 'run-env'),
       env: { PATH: '/t', SHELL: '/bin/bash' },
       isExec: (f) => f === '/t/xterm',
       ...extra,
@@ -419,7 +420,7 @@ describe('createRunHandlers', () => {
 
     it('файл окружения 0600 в каталоге 0700 передан скрипту первым аргументом; значение в argv не попадает', async () => {
       const f = script();
-      assert.deepEqual(await handlers({ overlay: () => overlay, tmpDir: tmp }).run(f), { ok: true });
+      assert.deepEqual(await handlers({ overlay: () => overlay, envDir: tmp }).run(f), { ok: true });
       const file = envFileOf(launches[0].args);
       assert.equal(path.dirname(path.dirname(file)), tmp);
       assert.equal(fs.statSync(file).mode & 0o777, 0o600);
@@ -433,7 +434,7 @@ describe('createRunHandlers', () => {
 
     it('без управляемых переменных файла нет, скрипту уходит пустой аргумент', async () => {
       const f = script();
-      await handlers({ overlay: () => ({ set: new Map(), unset: new Set() }), tmpDir: tmp }).run(f);
+      await handlers({ overlay: () => ({ set: new Map(), unset: new Set() }), envDir: tmp }).run(f);
       assert.equal(envFileOf(launches[0].args), '');
       assert.deepEqual(fs.readdirSync(tmp), []);
     });
@@ -441,15 +442,38 @@ describe('createRunHandlers', () => {
     it('файл пишется после одобрения: отказ человека не оставляет ни файла, ни каталога', async () => {
       const f = script();
       answer = false;
-      assert.deepEqual(await handlers({ overlay: () => overlay, tmpDir: tmp }).run(f), { cancelled: true });
+      assert.deepEqual(await handlers({ overlay: () => overlay, envDir: tmp }).run(f), { cancelled: true });
       assert.deepEqual(fs.readdirSync(tmp), []);
     });
 
     it('отказ запуска эмулятора убирает файл окружения', async () => {
       const f = script();
-      const r = await handlers({ overlay: () => overlay, tmpDir: tmp, launch: async () => ({ error: 'нет эмулятора' }) }).run(f);
+      const r = await handlers({ overlay: () => overlay, envDir: tmp, launch: async () => ({ error: 'нет эмулятора' }) }).run(f);
       assert.deepEqual(r, { error: 'нет эмулятора' });
       assert.deepEqual(fs.readdirSync(tmp), []);
+    });
+
+    it('выход Cyborg убирает файлы его запусков, до которых скрипт не дошёл; чужие каталоги не трогаются', () => {
+      const mine = writeEnvFile(overlay, tmp);
+      const other = path.join(tmp, '1-abc');
+      fs.mkdirSync(other);
+      assert.ok(mine && fs.existsSync(mine.file));
+      assert.match(path.basename(path.dirname(mine.file)), new RegExp(`^${process.pid}-`));
+      removeOwnEnvFiles();
+      assert.equal(fs.existsSync(path.dirname(mine.file)), false);
+      assert.equal(fs.existsSync(other), true);
+    });
+
+    it('уборка при старте: каталоги с номером мёртвого процесса убираются, живого и своего - остаются', () => {
+      const dead = path.join(tmp, '4242-aaaaaa');
+      const live = path.join(tmp, '4343-bbbbbb');
+      const mine = path.join(tmp, `${process.pid}-cccccc`);
+      const stray = path.join(tmp, 'notes');
+      for (const d of [dead, live, mine, stray]) fs.mkdirSync(path.join(d), { recursive: true });
+      fs.writeFileSync(path.join(dead, 'env.sh'), 'export A=secret\n');
+      removeOrphanedEnvFiles(tmp, (pid) => pid === 4343);
+      assert.deepEqual(fs.readdirSync(tmp).sort(), ['4343-bbbbbb', 'notes', `${process.pid}-cccccc`].sort());
+      assert.doesNotThrow(() => removeOrphanedEnvFiles(path.join(tmp, 'нет-каталога')));
     });
 
     it('настоящий sh: скрипт читает файл, команда видит выбранное и не видит снятого, файл и каталог удалены', () => {
@@ -659,10 +683,20 @@ describe('порт confirm и канал file:run', () => {
 
 describe('launchAndWait', () => {
   it('stderr процесса попадает в ошибку, успех - пустой ответ', async () => {
-    assert.deepEqual(await launchAndWait(process.execPath, ['-e', 'console.error("нет разрешения");process.exit(1)']), { error: 'нет разрешения' });
-    assert.deepEqual(await launchAndWait(process.execPath, ['-e', '0']), {});
-    const silent = await launchAndWait(process.execPath, ['-e', 'process.exit(3)']);
+    assert.deepEqual(await launchAndWait(process.execPath, ['-e', 'console.error("нет разрешения");process.exit(1)'], process.env), { error: 'нет разрешения' });
+    assert.deepEqual(await launchAndWait(process.execPath, ['-e', '0'], process.env), {});
+    const silent = await launchAndWait(process.execPath, ['-e', 'process.exit(3)'], process.env);
     assert.ok(silent.error);
+  });
+
+  it('процесс получает переданное окружение, а не окружение Cyborg: снятой переменной у него нет', async () => {
+    process.env.ENVT_LW_INHERITED = 'from-cyborg';
+    try {
+      const probe = 'process.exit(process.env.ENVT_LW_INHERITED === undefined && process.env.ENVT_LW_SET === "1" ? 0 : 7)';
+      assert.deepEqual(await launchAndWait(process.execPath, ['-e', probe], { ENVT_LW_SET: '1' }), {});
+    } finally {
+      delete process.env.ENVT_LW_INHERITED;
+    }
   });
 });
 
@@ -732,6 +766,12 @@ describe('launcherFor и registerRunChannels', () => {
     assert.deepEqual(await launcherFor('darwin', detached, waited)('osascript', [], options), { error: 'нет' });
     assert.deepEqual(await launcherFor('linux', detached, waited)('kitty', [], options), {});
     assert.deepEqual(calls, ['waited:osascript', 'detached:kitty']);
+  });
+
+  it('darwin: osascript получает управляемое окружение вызова, а не окружение процесса Cyborg', async () => {
+    let seen: NodeJS.ProcessEnv | undefined;
+    await launcherFor('darwin', async () => ({}), async (_cmd, _args, env) => ((seen = env), {}))('osascript', [], { cwd: '/d', env: { ENVT_MANAGED: '1' } });
+    assert.deepEqual(seen, { ENVT_MANAGED: '1' });
   });
 
   it('регистрирует file:runnable и file:run, каждому свой обработчик с одним аргументом-путём', () => {

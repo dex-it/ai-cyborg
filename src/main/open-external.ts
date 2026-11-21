@@ -4,6 +4,7 @@ import { childEnv } from './child-env';
 interface ChildLike {
   once(event: 'spawn', cb: () => void): unknown;
   once(event: 'error', cb: (error: NodeJS.ErrnoException) => void): unknown;
+  once(event: 'exit', cb: (code: number | null) => void): unknown;
   unref(): void;
 }
 
@@ -14,8 +15,11 @@ export interface OpenDeps {
   spawn?: OpenSpawn;
   /** Открытие средствами Electron: платформа без xdg-open и open, либо программа не найдена; '' - открыто. */
   fallback: (target: string) => Promise<string>;
+  /** Сколько ждать выхода открывателя: быстрый ненулевой выход - отказ, долгий - открыто. */
+  exitWaitMs?: number;
 }
 
+const EXIT_WAIT_MS = 1500;
 const OPENER: Partial<Record<NodeJS.Platform, string>> = { linux: 'xdg-open', darwin: 'open' };
 
 /** Адрес или путь открывает системная программа с управляемым окружением (Electron отдал бы ей окружение процесса); '' - открыто, иначе причина отказа. */
@@ -33,8 +37,14 @@ export async function openTarget(target: string, deps: OpenDeps): Promise<string
       return;
     }
     child.once('spawn', () => {
-      child.unref();
-      resolve('');
+      const timer = setTimeout(() => {
+        child.unref();
+        resolve('');
+      }, deps.exitWaitMs ?? EXIT_WAIT_MS);
+      child.once('exit', (code) => {
+        clearTimeout(timer);
+        resolve(code ? `${opener} завершился с кодом ${code}` : '');
+      });
     });
     child.once('error', (error) => resolve(error.code === 'ENOENT' ? null : error.message));
   });

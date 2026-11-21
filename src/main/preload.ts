@@ -47,9 +47,9 @@ const api = {
   envRemove: (name: string): Promise<void> => ipcRenderer.invoke('env:remove', name),
   envCancel: (name: string): Promise<void> => ipcRenderer.invoke('env:cancel', name),
   envReveal: (name: string): Promise<string | null> => ipcRenderer.invoke('env:reveal', name),
-  envStale: (): Promise<{ id: number; names: string[] }[]> => ipcRenderer.invoke('env:stale'),
+  envStale: (): Promise<{ id: number; names: string[]; noRestart?: true }[]> => ipcRenderer.invoke('env:stale'),
   /** Перезапуск сессии с новым окружением: локальная продолжается с --resume, удалённая засыпает и просыпается. */
-  restartSession: (projectId: string, id: number): Promise<{ resume?: string; remote?: RemoteInfo }> => ipcRenderer.invoke('session:restart', projectId, id),
+  restartSession: (projectId: string, id: number): Promise<{ resume?: string; parent?: number; remote?: RemoteInfo }> => ipcRenderer.invoke('session:restart', projectId, id),
   loadCommands: (): Promise<CommandsConfig> => ipcRenderer.invoke('commands:load'),
   saveCommands: (text: string, scope: CommandsScope): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text, scope),
   loadPrompts: (): Promise<{ raw: unknown; problem?: string }> => ipcRenderer.invoke('prompts:load'),
@@ -96,8 +96,8 @@ const api = {
   clearClaudeToken: (): Promise<ClaudeTokenStatus> => ipcRenderer.invoke('remote:claude-token:clear'),
   deleteHistory: (projectId: string, repo: string, id: string): Promise<void> =>
     ipcRenderer.invoke('history:delete', projectId, repo, id),
-  resumeSession: (projectId: string, cwd: string, addDirs: string[], id: string): Promise<number> =>
-    ipcRenderer.invoke('session:resume', projectId, cwd, addDirs, id),
+  resumeSession: (projectId: string, cwd: string, addDirs: string[], id: string, parent?: number): Promise<number> =>
+    ipcRenderer.invoke('session:resume', projectId, cwd, addDirs, id, parent),
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),
   listTasks: (projectId: string, assignedToMe: boolean, tracked: TaskRef[], recheck: boolean): Promise<TasksResult> =>
     ipcRenderer.invoke('tasks:list', projectId, assignedToMe, tracked, recheck),

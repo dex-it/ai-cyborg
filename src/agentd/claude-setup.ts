@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectDirName } from '../main/history.ts';
+import { ENV_NAME } from '../shared/env-vars.ts';
 import type { ConfigMsg, MarketplaceSpec, McpServer, MirrorFile } from './protocol.ts';
 
 /** Пути Claude на хосте: CLAUDE_CONFIG_DIR меняет и каталог, и место .claude.json. */
@@ -205,7 +206,6 @@ export function writeMemory(ch: ClaudeHome, cwd: string, files: unknown): void {
   }
 }
 
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const ENV_DENY = new Set(['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TERM', 'PWD']);
 
 /** env из settings.json оператора: переменные среды хоста и Cyborg он не переопределяет. */

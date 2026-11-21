@@ -7,7 +7,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { childEnvNow, envReady } from './child-env';
+import { childEnvNow, envReady, loginShell } from './child-env';
 import {
   MAX_NAME_LENGTH,
   type ClaudeInfo,
@@ -82,7 +82,7 @@ export function createClaudeRunner(): ClaudeRunner {
     await envReady();
     const env = childEnvNow({ set: { NO_COLOR: '1' } });
     return new Promise((resolve) => {
-      const shell = env.SHELL || '/bin/bash';
+      const shell = loginShell('/bin/bash');
       execFile(
         shell,
         ['-lc', 'exec claude "$@"', 'cyborg', ...args],

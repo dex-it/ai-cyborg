@@ -81,6 +81,8 @@ interface Session {
   jira?: JiraIssue;
   /** Номер вкладки сессии, открывшей эту через MCP; цвет у них общий. */
   parent?: number;
+  /** Пояснение к отметке устаревшего окружения, когда перезапуск недоступен. */
+  envNote?: string;
   /** О чём сессия: название разговора, первый и последний запрос (session:context). */
   context?: SessionContext;
   color: string;
@@ -521,7 +523,7 @@ function updateSessionLabels(s: Session): void {
   const source = s.mr ? mrTooltip(s.mr) : s.task ? taskTooltip(s.task) : s.jira ? `${s.jira.key} ${s.jira.summary}\nСтатус: ${s.jira.status || '—'}` : '';
   const tooltip = [source, contextTooltip(s.context ?? {})].filter(Boolean).join('\n');
   fillLabel(s.stripTab.querySelector('.label') as HTMLElement, s, label);
-  s.stripTab.title = [tooltip, parentNote(s), s.cwd].filter(Boolean).join('\n');
+  s.stripTab.title = [tooltip, parentNote(s), s.envNote, s.cwd].filter(Boolean).join('\n');
   s.stripTab.classList.toggle('exited', s.exited);
   s.stripTab.classList.toggle('remote', !!s.remote);
   s.stripTab.classList.toggle('offline', !!s.remote && !s.remote.online && !s.exited);
@@ -834,13 +836,13 @@ async function newSession(repo: string, start?: TrackerStart): Promise<void> {
   }
 }
 
-async function createSessionView(owner: Project, repo: string, start?: StartFrom, resume?: string, remote?: RemoteInfo): Promise<void> {
+async function createSessionView(owner: Project, repo: string, start?: StartFrom, resume?: string, remote?: RemoteInfo, opener?: Session): Promise<void> {
   const addDirs = owner.repos.filter((r) => r !== repo);
   // В канал идут только ссылка и намерение: название, ветки и автор в первое сообщение не попадают.
   const id = remote
     ? remote.id
     : resume
-    ? await api.resumeSession(owner.id, repo, addDirs, resume)
+    ? await api.resumeSession(owner.id, repo, addDirs, resume, opener?.id)
     : await api.createSession(
         owner.id,
         repo,
@@ -859,7 +861,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
                 : { jira: { key: start.jira.key }, ...(start.button ? { button: start.button } : {}) }),
       );
   const root = remote ? remote.cwd : ((await api.gitRoot(repo)) ?? repo);
-  const parent = start && 'handoff' in start ? start.parent : undefined;
+  const parent = start && 'handoff' in start ? start.parent : opener;
   const color = parent?.color ?? sessionColor(colorIndex++);
   const paste = remote ? new RemotePaste() : undefined;
   const term = createTerminal(id, paste);
@@ -1778,17 +1780,26 @@ async function restartSession(s: Session): Promise<void> {
     const reply = await api.restartSession(s.project.id, s.id);
     if (sessions.includes(s)) closeSession(s, true);
     if (reply.remote) await createSessionView(s.project, reply.remote.dirs[0], undefined, undefined, reply.remote);
-    else if (reply.resume) await createSessionView(s.project, s.repo, undefined, reply.resume);
+    else if (reply.resume) await createSessionView(s.project, s.repo, undefined, reply.resume, undefined, reply.parent === undefined ? undefined : findSession(reply.parent));
   } catch (err) {
     alert(`Сессия не перезапущена: ${ipcErrorText(err)}`);
   }
 }
 
-function markStale(s: Session, names: string[] | undefined): void {
-  s.stripTab.classList.toggle('env-stale', !!names);
+function markStale(s: Session, stale: { names: string[]; noRestart?: true } | undefined): void {
+  s.stripTab.classList.toggle('env-stale', !!stale);
   const old = s.stripTab.querySelector('.env-restart');
-  if (!names) return old?.remove();
-  const title = staleTitle(names);
+  if (!stale) {
+    if (s.envNote) {
+      s.envNote = undefined;
+      updateSessionLabels(s);
+    }
+    return old?.remove();
+  }
+  const title = staleTitle(stale.names, stale.noRestart);
+  s.envNote = stale.noRestart ? title : undefined;
+  updateSessionLabels(s);
+  if (stale.noRestart) return old?.remove();
   if (old) return void old.setAttribute('title', title);
   const restart = el('button', 'env-restart', '↻');
   restart.setAttribute('title', title);
@@ -1801,11 +1812,11 @@ function markStale(s: Session, names: string[] | undefined): void {
   if (!restart.parentElement) s.stripTab.append(restart);
 }
 
-function applyStale(list: { id: number; names: string[] }[]): void {
-  const names = new Map(list.map((x) => [x.id, x.names]));
-  for (const s of sessions) markStale(s, names.get(s.id));
+function applyStale(list: { id: number; names: string[]; noRestart?: true }[]): void {
+  const stale = new Map(list.map((x) => [x.id, x]));
+  for (const s of sessions) markStale(s, stale.get(s.id));
 }
-api.on<{ id: number; names: string[] }[]>('session:env-stale', applyStale);
+api.on<{ id: number; names: string[]; noRestart?: true }[]>('session:env-stale', applyStale);
 void api.envStale().then(applyStale);
 
 // ---------- место на хостах ----------

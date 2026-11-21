@@ -10,9 +10,9 @@ import { CommandStore } from './command-store';
 import { ClaudeMdStore } from './claude-md';
 import { PromptStore } from './prompt-store';
 import { RunApprovals } from './run-approvals';
-import { createRunHandlers, registerRunChannels, runChannel, runConfirm } from './run-file';
+import { createRunHandlers, registerRunChannels, removeOrphanedEnvFiles, removeOwnEnvFiles, runChannel, runConfirm } from './run-file';
 import { launcherFor } from './run-terminal';
-import { childEnvNow, envReady, useManagedEnv } from './child-env';
+import { childEnvNow, envReady, loginShell, useManagedEnv } from './child-env';
 import { loginPath } from './env-eval';
 import { ManagedEnv } from './managed-env';
 import { openTarget } from './open-external';
@@ -97,7 +97,7 @@ const sessions = new SessionManager(app.getPath('userData'), (channel, payload) 
 const managedEnv = new ManagedEnv({
   file: path.join(app.getPath('userData'), 'env-vars.json'),
   home: os.homedir(),
-  loginPath: () => loginPath(process.env as Record<string, string>, process.env.SHELL || '/bin/sh'),
+  loginPath: () => loginPath(process.env as Record<string, string>, loginShell('/bin/sh')),
   onChange: () => {
     if (!win || win.isDestroyed()) return;
     win.webContents.send('env:changed', managedEnv.view());
@@ -202,8 +202,9 @@ const remote = new RemoteSessions({
   gitAuth: (urls) => collectGitAuth(urls, createCliRunner(app.getPath('userData'), undefined, HOST_AGNOSTIC_TOKEN_ENV)),
   claudeToken: () => claudeToken.get(),
   env: managedEnv,
-  mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), childEnvNow(), process.platform) }),
-  memory: (repo) => readMemory(claudePaths(os.homedir(), childEnvNow(), process.platform).configDir, repo),
+  // Свои чтения каталога настроек Claude - по унаследованному окружению, как окно «Расширения» и CLAUDE.md.
+  mirror: () => buildMirror({ home: os.homedir(), ...claudePaths(os.homedir(), process.env, process.platform) }),
+  memory: (repo) => readMemory(claudePaths(os.homedir(), process.env, process.platform).configDir, repo),
   mic: (host) => (voiceOn(host) ? mic.socketFor(host) : null),
   onChild: (sid) => childSessions.add(sid),
 });
@@ -249,7 +250,10 @@ let heldLock: string | null = null;
 // Поиск одного вида идёт один: новый запрос отменяет прежний и его git.
 const searches = new SearchRunner();
 const allowedPaths = new AllowedPaths(() => [...projects.load().projects.flatMap((p) => p.repos), ...sessions.liveDirs()]);
+const runEnvDir = path.join(app.getPath('userData'), 'run-env');
+removeOrphanedEnvFiles(runEnvDir);
 const runs = createRunHandlers({
+  envDir: runEnvDir,
   allowed: allowedPaths,
   approvals: runApprovals,
   confirm: runConfirm((options) => tell(options)),
@@ -581,10 +585,7 @@ ipcMain.handle('session:restart', async (_event, projectId: unknown, id: unknown
     if (!project) throw new Error('Проект не найден');
     return { remote: await remote.restart(project, id) };
   }
-  const info = sessions.restartInfo(id);
-  if (!info) throw new Error('Сессию нельзя перезапустить: разговор в ней ещё не начат');
-  await sessions.terminate(id);
-  return { resume: info.resume };
+  return sessions.restart(id);
 });
 ipcMain.handle('remote:claude-token:status', () => claudeToken.status());
 ipcMain.handle('remote:claude-token:set', (_event, value: unknown) => claudeToken.set(value));
@@ -594,12 +595,14 @@ ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id:
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
   deleteHistory(repo, id);
 });
-ipcMain.handle('session:resume', async (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown) => {
+ipcMain.handle('session:resume', async (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown, parent?: unknown) => {
   await envReady();
   const project = sessionProject(projects.load(), projectId, cwd, addDirs)?.id;
   if (!isSessionId(id) || !project) throw new Error('Некорректное продолжение сессии');
   if (!historyExists(cwd as string, id)) throw new Error('Журнал сессии не найден');
-  return sessions.create(project, cwd as string, addDirs as string[], undefined, id);
+  // Открывшая приходит при перезапуске дочерней вкладки; чужая и закрытая отбрасываются.
+  const opener = typeof parent === 'number' && sessions.projectOf(parent) === project ? parent : undefined;
+  return sessions.create(project, cwd as string, addDirs as string[], undefined, id, opener);
 });
 ipcMain.handle('trackers:status', () => trackers.status());
 ipcMain.handle('tasks:list', (_event, projectId: unknown, assignedToMe: unknown, tracked: unknown, recheck: unknown) =>
@@ -974,6 +977,7 @@ const releaseHeldLock = (): void => {
   if (heldLock) releaseLock(heldLock);
 };
 app.on('will-quit', releaseHeldLock);
+app.on('will-quit', removeOwnEnvFiles);
 process.on('exit', releaseHeldLock);
 
 app.whenReady().then(() => {

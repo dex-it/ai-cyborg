@@ -77,17 +77,19 @@ describe('процессы Cyborg получают управляемое окр
     assert.equal(r.stdout.trim(), '1|1|managed|unset');
   });
 
-  it('claude plugin: запуск через оболочку из управляемого SHELL, с управляемым PATH', async () => {
+  it('claude plugin: оболочку выбирает унаследованный SHELL, а не выбранный; PATH управляемый', async () => {
     probe('claude', 'echo ran-claude');
-    use(path.join(dir, 'bin'), { SHELL: path.join(fakeBin, 'shell') });
+    process.env.SHELL = path.join(fakeBin, 'shell');
+    use(path.join(dir, 'bin'), { SHELL: '/nonexistent/managed-shell' });
     const r = await createClaudeRunner()(['plugin', 'list'], dir, 10_000);
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /ran-claude/);
     assert.match(logged()[0], /^managed\|unset\|plugin list/);
   });
 
-  it('проверка claude паспорта: ищется в управляемом PATH', async () => {
-    useManagedEnv(portOf(overlay({ SHELL: path.join(fakeBin, 'shell'), PATH: `${path.join(dir, 'bin')}:/usr/bin:/bin` })));
+  it('проверка claude паспорта: оболочка унаследованная, claude ищется в управляемом PATH', async () => {
+    process.env.SHELL = path.join(fakeBin, 'shell');
+    useManagedEnv(portOf(overlay({ SHELL: '/nonexistent/managed-shell', PATH: `${path.join(dir, 'bin')}:/usr/bin:/bin` })));
     assert.equal(await systemClaudeAvailable(), false);
     probe('claude');
     assert.equal(await systemClaudeAvailable(), true);
@@ -130,10 +132,14 @@ describe('запуск ждёт готовности окружения', () => 
 
 describe('openTarget: открытие адреса и файла системной программой', () => {
   type Call = { command: string; args: string[]; env: NodeJS.ProcessEnv };
-  const fakeSpawn = (calls: Call[], failWith?: string): OpenSpawn => (command, args, options) => {
+  const fakeSpawn = (calls: Call[], failWith?: string, exitCode: number | null = 0): OpenSpawn => (command, args, options) => {
     calls.push({ command, args, env: options.env });
     const handlers: Record<string, (arg?: any) => void> = {};
-    setImmediate(() => (failWith ? handlers.error?.(Object.assign(new Error(failWith), { code: failWith })) : handlers.spawn?.()));
+    setImmediate(() => {
+      if (failWith) return handlers.error?.(Object.assign(new Error(failWith), { code: failWith }));
+      handlers.spawn?.();
+      if (exitCode !== null) setImmediate(() => handlers.exit?.(exitCode));
+    });
     return { once: (event: string, cb: (arg?: any) => void) => void (handlers[event] = cb), unref() {} } as never;
   };
 
@@ -162,6 +168,13 @@ describe('openTarget: открытие адреса и файла системн
       throw new Error('не запустить');
     };
     assert.equal(await openTarget('x', { platform: 'linux', spawn: boom, fallback: async () => 'fb' }), 'не запустить');
+  });
+
+  it('открыватель вышел с ненулевым кодом - отказ с кодом; нулевой - открыто; не вышел за срок - открыто', async () => {
+    assert.equal(await openTarget('x', { platform: 'linux', spawn: fakeSpawn([], undefined, 3), fallback: async () => 'fb' }), 'xdg-open завершился с кодом 3');
+    assert.equal(await openTarget('x', { platform: 'darwin', spawn: fakeSpawn([], undefined, 1), fallback: async () => 'fb' }), 'open завершился с кодом 1');
+    assert.equal(await openTarget('x', { platform: 'linux', spawn: fakeSpawn([], undefined, 0), fallback: async () => 'fb' }), '');
+    assert.equal(await openTarget('x', { platform: 'linux', spawn: fakeSpawn([], undefined, null), exitWaitMs: 20, fallback: async () => 'fb' }), '');
   });
 
   it('платформа без xdg-open и open - сразу запасной путь', async () => {

@@ -94,4 +94,17 @@ describe('окружение дочерних процессов собирае�
     const offenders = sources('src/main').filter((file) => file !== path.join('src/main', 'child-env.ts') && /\.\.\.process\.env|\benv:\s*process\.env\b/.test(code(file)));
     assert.deepEqual(offenders, []);
   });
+
+  it('оболочку -lc выбирает унаследованный SHELL через loginShell: чтений SHELL из собранного окружения в запусках нет', () => {
+    // run-terminal.ts принимает env, уже прошедший withLoginShell в run-file.ts.
+    const allowed = [path.join('src/main', 'child-env.ts'), path.join('src/main', 'run-terminal.ts')];
+    const offenders = sources('src/main').filter((file) => !allowed.includes(file) && /\benv\.SHELL\b/.test(code(file)));
+    assert.deepEqual(offenders, []);
+  });
+
+  it('правило имени переменной одно: регулярку имени держит src/shared/env-vars.ts, демон и главный процесс её импортируют', () => {
+    const own = path.join('src/shared', 'env-vars.ts');
+    const offenders = sources('src').filter((file) => file !== own && /\[A-Za-z_\]\[A-Za-z0-9_\]\{0,127\}/.test(code(file)));
+    assert.deepEqual(offenders, []);
+  });
 });

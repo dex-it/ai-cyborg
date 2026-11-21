@@ -1,4 +1,4 @@
-import { MAX_CANDIDATES, defsOf, stateLabel, type Candidate, type EnvVarView, type EnvView } from '../shared/env-vars';
+import { MAX_CANDIDATES, candidateLabel, defsOf, stateLabel, type Candidate, type EnvVarView, type EnvView } from '../shared/env-vars';
 import { byId, el } from './dom';
 
 export interface EnvApi {
@@ -27,20 +27,30 @@ export class EnvDialog {
   private readonly body = byId('env-body');
   private readonly error = byId('env-error');
   private view: EnvView = { vars: [], problems: [], starting: false };
+  /** Раскрытые «Показать» значения: до закрытия окна; запись верна, пока состояние переменной то же. */
+  private readonly revealed = new Map<string, { value: string; stamp: string }>();
 
   constructor(
     private readonly api: EnvApi,
     private readonly onView: (view: EnvView) => void,
   ) {
     byId('env-close').addEventListener('click', () => this.dialog.close());
+    this.dialog.addEventListener('close', () => {
+      if (this.dialog.open) return;
+      this.revealed.clear();
+      this.body.replaceChildren();
+    });
     byId('env-add').addEventListener('click', () => void this.addVar(byId<HTMLInputElement>('env-new-name')));
     byId('env-unset-new').addEventListener('click', () => void this.unsetNew(byId<HTMLInputElement>('env-new-name')));
   }
 
   async open(): Promise<void> {
     if (this.dialog.open) return;
+    this.revealed.clear();
     this.showError('');
-    this.update(await this.api.envView());
+    this.view = await this.api.envView();
+    this.onView(this.view);
+    this.render();
     this.dialog.showModal();
   }
 
@@ -100,6 +110,7 @@ export class EnvDialog {
     card.append(head);
     for (const note of v.notes) card.append(el('div', 'hint', note));
     if (v.status.kind === 'failed' && v.status.stderr) card.append(el('pre', 'env-stderr', v.status.stderr));
+    if (v.candidates.length) card.append(this.picker(v));
     for (const c of v.candidates) card.append(this.candidate(v, c));
     card.append(this.adder(v));
     const actions = el('div', 'env-actions');
@@ -111,13 +122,36 @@ export class EnvDialog {
     if (v.status.kind === 'evaluating') actions.append(button('Отменить вычисление', () => void this.run(() => this.api.envCancel(v.name))));
     if (v.choice.kind === 'selected' && !v.unapplied) actions.append(button('Показать значение', () => void this.reveal(v.name, card)));
     card.append(actions);
+    const shown = this.revealed.get(v.name);
+    if (shown && shown.stamp === this.stamp(v)) card.append(el('pre', 'env-value', shown.value));
     return card;
+  }
+
+  private stamp(v: EnvVarView): string {
+    return JSON.stringify([v.choice, v.status.kind, v.unapplied]);
+  }
+
+  /** Выпадающий список кандидатов: смена пункта выбирает кандидата; кнопка вычисляет выбранного заново (повторный выбор того же). */
+  private picker(v: EnvVarView): HTMLElement {
+    const row = el('div', 'env-pick');
+    const list = document.createElement('select');
+    list.setAttribute('aria-label', `Кандидат ${v.name}`);
+    for (const c of v.candidates) list.append(new Option(candidateLabel(c), c.id));
+    const chosen = v.choice.kind === 'selected' ? v.choice.candidate : undefined;
+    const current = v.candidates.find((c) => c.id === chosen)?.id;
+    list.value = current ?? v.candidates[0].id;
+    const evaluating = v.status.kind === 'evaluating';
+    list.disabled = evaluating;
+    list.addEventListener('change', () => void this.select(v.name, list.value));
+    const apply = button(evaluating ? 'Вычисляется…' : current === undefined ? 'Выбрать' : 'Вычислить заново', () => void this.select(v.name, list.value), current === undefined ? '' : 'active');
+    apply.disabled = evaluating;
+    row.append(list, apply);
+    return row;
   }
 
   private candidate(v: EnvVarView, c: Candidate): HTMLElement {
     const row = el('div', 'env-candidate');
-    const picked = v.choice.kind === 'selected' && v.choice.candidate === c.id;
-    if (picked) row.classList.add('selected');
+    if (v.choice.kind === 'selected' && v.choice.candidate === c.id) row.classList.add('selected');
     const input = document.createElement('input');
     input.type = 'text';
     input.spellcheck = false;
@@ -134,7 +168,6 @@ export class EnvDialog {
     row.append(
       el('span', 'env-kind', c.kind === 'literal' ? 'значение' : 'выражение'),
       input,
-      button(picked ? 'Выбрано' : 'Выбрать', () => void this.select(v.name, c.id), picked ? 'active' : ''),
       button('×', () => void this.save((defs) => {
         const def = defs.find((d) => d.name === v.name);
         if (def) def.candidates = def.candidates.filter((x) => x.id !== c.id);
@@ -167,6 +200,7 @@ export class EnvDialog {
   }
 
   private async select(name: string, id: string): Promise<void> {
+    this.revealed.delete(name);
     await this.run(async () => {
       const result = await this.api.envSelect(name, id);
       if (!result.ok && result.reason !== 'cancelled') this.showError(`${name}: не вычислено${result.stderr ? ` (${result.stderr})` : ''}`);
@@ -175,6 +209,8 @@ export class EnvDialog {
 
   private async reveal(name: string, card: HTMLElement): Promise<void> {
     const value = await this.api.envReveal(name).catch(() => null);
+    const v = this.view.vars.find((x) => x.name === name);
+    if (v) this.revealed.set(name, { value: value ?? 'не задана', stamp: this.stamp(v) });
     card.querySelector('.env-value')?.remove();
     card.append(el('pre', 'env-value', value ?? 'не задана'));
   }

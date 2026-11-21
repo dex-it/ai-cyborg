@@ -2792,6 +2792,7 @@ label.disabled .hint {
   color: var(--fg-dim);
 }
 
+.env-pick,
 .env-candidate,
 .env-add,
 .env-actions,
@@ -2819,6 +2820,12 @@ label.disabled .hint {
   color: var(--fg-dim);
 }
 
+.env-pick select {
+  flex: 1;
+  min-width: 0;
+}
+
+.env-pick button.active,
 .env-actions button.active,
 .env-candidate button.active {
   border-color: var(--accent);

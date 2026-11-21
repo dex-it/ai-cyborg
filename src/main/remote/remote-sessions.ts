@@ -772,6 +772,7 @@ export class RemoteSessions implements RemoteToolsPort {
   async restart(project: Project, id: number): Promise<RemoteInfo> {
     const entry = this.byId.get(id);
     if (!entry || entry.ghost || entry.gone) throw new Error('Удалённая сессия не найдена');
+    if (entry.origin === 'tool') throw new Error('перезапуск недоступен: сессию ведёт вызвавшая');
     const link = this.link(entry.host);
     if (link.state !== 'online') throw new Error(`нет связи с ${entry.host}`);
     if (!link.features.includes('sleep')) throw new Error('демон на хосте старой версии не усыпляет сессию по запросу: закройте её и откройте заново');

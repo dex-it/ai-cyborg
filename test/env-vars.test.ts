@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { defsOf, indicatorText, readDef, readDefs, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
+import { candidateLabel, defsOf, indicatorText, readDef, readDefs, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
 
 const none = () => null;
 const view = (vars: Partial<EnvVarView>[], over: Partial<EnvView> = {}): EnvView => ({
@@ -101,5 +101,16 @@ describe('показ состояния', () => {
     const v = view([{ name: 'X', candidates: [{ id: 'aaaaaaaa', kind: 'literal', value: 'v' }], choice: { kind: 'unset' } }]);
     assert.deepEqual(defsOf(v), [{ name: 'X', candidates: [{ id: 'aaaaaaaa', kind: 'literal', value: 'v' }] }]);
     assert.match(staleTitle(['A', 'B']), /A, B/);
+    assert.match(staleTitle(['A', 'B']), /Перезапуск продолжит разговор/);
+    assert.match(staleTitle(['A'], true), /Перезапуск недоступен: сессию ведёт вызвавшая/);
+  });
+
+  it('подпись кандидата в списке: значение как есть, команда с пометкой, пустое названо, длинное обрезано', () => {
+    assert.equal(candidateLabel({ id: 'a', kind: 'literal', value: 'abc' }), 'abc');
+    assert.equal(candidateLabel({ id: 'a', kind: 'expr', command: 'pass show  x\n' }), 'команда: pass show x');
+    assert.equal(candidateLabel({ id: 'a', kind: 'literal', value: '' }), '(пустое значение)');
+    const long = candidateLabel({ id: 'a', kind: 'literal', value: 'x'.repeat(200) }, 20);
+    assert.equal(long.length, 20);
+    assert.ok(long.endsWith('…'));
   });
 });

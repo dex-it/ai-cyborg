@@ -453,6 +453,126 @@ describe('ManagedEnv: старт Cyborg', () => {
     assert.equal(env.overlay().set.get('ENVT_A'), 'human');
   });
 
+  /** Вычисление, которое держится, пока тест не отпустит его по имени команды; отмена снимает с исходом cancelled. */
+  const gated = () => {
+    const calls: string[] = [];
+    const gates = new Map<string, (value: string) => void>();
+    const fake = ((command: string, o: { signal: AbortSignal }) =>
+      new Promise((resolve) => {
+        calls.push(command);
+        gates.set(command, (value) => resolve({ ok: true, value }));
+        o.signal.addEventListener('abort', () => resolve({ ok: false, reason: 'cancelled', stderr: '' }));
+      })) as never;
+    return { calls, gates, fake };
+  };
+  const choiceOf = (file: string, name: string) => read(file).vars.find((v: { name: string }) => v.name === name).choice;
+
+  it('сохранение определений во время стартового вычисления не теряет выбор: значение, досчитанное стартом, попадает в overlay', async (t) => {
+    const { calls, gates, fake } = gated();
+    const { env, file } = managed(
+      t,
+      [
+        { name: 'ENVT_A', candidates: [expr(1, 'cmdA')], choice: selected(1) },
+        { name: 'ENVT_B', candidates: [expr(1, 'cmdB')], choice: selected(1) },
+      ],
+      { evaluate: fake },
+    );
+    const ready = env.start();
+    await until(() => calls.includes('cmdA'));
+    env.save([
+      { name: 'ENVT_A', candidates: [expr(1, 'cmdA')] },
+      { name: 'ENVT_B', candidates: [expr(1, 'cmdB')] },
+      { name: 'ENVT_C', candidates: [] },
+    ]);
+    assert.deepEqual(choiceOf(file, 'ENVT_A'), { kind: 'selected', candidate: ID(1) });
+    assert.deepEqual(choiceOf(file, 'ENVT_B'), { kind: 'selected', candidate: ID(1) });
+    assert.equal(env.view().vars[0].status.kind, 'evaluating', 'стартовое вычисление идёт, его не отменили');
+    gates.get('cmdA')?.('va');
+    await until(() => calls.includes('cmdB'));
+    gates.get('cmdB')?.('vb');
+    await ready;
+    assert.deepEqual(calls, ['cmdA', 'cmdB']);
+    assert.equal(env.overlay().set.get('ENVT_A'), 'va');
+    assert.equal(env.overlay().set.get('ENVT_B'), 'vb');
+  });
+
+  it('правка другого кандидата той же переменной не отменяет её стартовое вычисление', async (t) => {
+    const { calls, gates, fake } = gated();
+    const { env } = managed(t, [{ name: 'ENVT_A', candidates: [expr(1, 'cmdA'), literal(2, 'x')], choice: selected(1) }], { evaluate: fake });
+    const ready = env.start();
+    await until(() => calls.includes('cmdA'));
+    env.save([{ name: 'ENVT_A', candidates: [expr(1, 'cmdA'), literal(2, 'y')] }]);
+    gates.get('cmdA')?.('va');
+    await ready;
+    assert.deepEqual(calls, ['cmdA']);
+    assert.equal(env.overlay().set.get('ENVT_A'), 'va');
+  });
+
+  it('сохранение определений после неудачного старта оставляет выбор и признак «не применена»', async (t) => {
+    const { env, file } = managed(t, [{ name: 'ENVT_A', candidates: [expr(1, 'bad')], choice: selected(1) }], { evaluate: (async () => ({ ok: false, reason: 'exit', stderr: 'нет gpg-agent' })) as never });
+    await env.start();
+    assert.equal(env.view().vars[0].unapplied, true);
+    env.save([{ name: 'ENVT_A', candidates: [expr(1, 'bad')] }, { name: 'ENVT_C', candidates: [] }]);
+    assert.deepEqual(choiceOf(file, 'ENVT_A'), { kind: 'selected', candidate: ID(1) });
+    const [a] = env.view().vars;
+    assert.equal(a.unapplied, true);
+    assert.equal(a.status.kind, 'failed', 'причина ошибки в окне не пропала');
+  });
+
+  it('правка текста выбранного выражения по-прежнему возвращает «не трогать»: вычисленное по старому тексту не действует', async (t) => {
+    const { env, file } = managed(t, [{ name: 'ENVT_A', candidates: [expr(1, 'bad')], choice: selected(1) }], { evaluate: (async () => ({ ok: false, reason: 'exit', stderr: '' })) as never });
+    await env.start();
+    env.save([{ name: 'ENVT_A', candidates: [expr(1, 'other')] }]);
+    assert.deepEqual(choiceOf(file, 'ENVT_A'), { kind: 'untouched' });
+  });
+
+  it('выбор другого выражения на старте побеждает: очередь не запускает прежний текст под тем же ключом', { timeout: 5000 }, async (t) => {
+    const { calls, gates, fake } = gated();
+    const { env, file } = managed(
+      t,
+      [
+        { name: 'ENVT_A', candidates: [expr(1, 'cmdA')], choice: selected(1) },
+        { name: 'ENVT_B', candidates: [expr(1, 'cmdB1'), expr(2, 'cmdB2')], choice: selected(1) },
+      ],
+      { evaluate: fake },
+    );
+    const ready = env.start();
+    await until(() => calls.includes('cmdA'));
+    const picked = env.select('ENVT_B', ID(2));
+    await until(() => calls.includes('cmdB2'));
+    gates.get('cmdA')?.('va');
+    gates.get('cmdB2')?.('vb-new');
+    assert.deepEqual(await picked, { ok: true });
+    await ready;
+    assert.deepEqual(calls, ['cmdA', 'cmdB2'], 'прежний кандидат B не запускался');
+    assert.equal(env.overlay().set.get('ENVT_A'), 'va');
+    assert.equal(env.overlay().set.get('ENVT_B'), 'vb-new');
+    assert.deepEqual(choiceOf(file, 'ENVT_B'), { kind: 'selected', candidate: ID(2) });
+  });
+
+  it('снятие и «Отменить» на старте убирают переменную из очереди', async (t) => {
+    const { calls, gates, fake } = gated();
+    const { env } = managed(
+      t,
+      [
+        { name: 'ENVT_A', candidates: [expr(1, 'cmdA')], choice: selected(1) },
+        { name: 'ENVT_B', candidates: [expr(1, 'cmdB')], choice: selected(1) },
+        { name: 'ENVT_C', candidates: [expr(1, 'cmdC')], choice: selected(1) },
+      ],
+      { evaluate: fake },
+    );
+    const ready = env.start();
+    await until(() => calls.includes('cmdA'));
+    env.unset('ENVT_B');
+    env.cancel('ENVT_C');
+    gates.get('cmdA')?.('va');
+    await ready;
+    assert.deepEqual(calls, ['cmdA']);
+    assert.equal(env.overlay().unset.has('ENVT_B'), true);
+    assert.equal(env.overlay().set.has('ENVT_C'), false);
+    assert.equal(env.view().vars[2].status.kind, 'failed');
+  });
+
   it('dispose снимает идущие вычисления', async (t) => {
     const pidFile = path.join(os.tmpdir(), `cyborg-dispose-${process.pid}-${Date.now()}`);
     t.after(() => fs.rmSync(pidFile, { force: true }));

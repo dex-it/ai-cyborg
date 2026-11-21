@@ -60,6 +60,15 @@ export function childEnvNow(own?: Own): Record<string, string> {
   return composeEnv(process.env, provider.overlay(), own);
 }
 
+/** Оболочка для `-lc` и PATH логин-оболочки: решение самого Cyborg, берётся из унаследованного окружения. Выбранная в «Окружении» SHELL уходит дочерним процессам, но не выбирает, чем их запускать: негодный путь сломал бы запуск всех сессий. */
+export const loginShell = (fallback: string): string => process.env.SHELL || fallback;
+
+/** Окружение, где SHELL - та, чем Cyborg запускает (унаследованная): для проверок оболочки вызывающим, который сам берёт SHELL из окружения. */
+export function withLoginShell(env: Record<string, string>): Record<string, string> {
+  const { SHELL: _managed, ...rest } = env;
+  return process.env.SHELL ? { ...rest, SHELL: process.env.SHELL } : rest;
+}
+
 /** Запуски ждут конца вычисления выражений при старте Cyborg. */
 export async function childEnv(own?: Own): Promise<Record<string, string>> {
   await provider.ready();

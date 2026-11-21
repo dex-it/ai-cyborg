@@ -131,14 +131,14 @@ export function terminalLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv
 export type RunLaunch = (cmd: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ error?: string }>;
 
 /** macOS ждёт osascript и берёт его stderr; на Linux эмулятор отрывается от Cyborg, как запуск воркспейса. */
-export function launcherFor(platform: NodeJS.Platform, detached: RunLaunch, waited: (cmd: string, args: string[]) => Promise<{ error?: string }> = launchAndWait): RunLaunch {
-  return platform === 'darwin' ? (cmd, args) => waited(cmd, args) : detached;
+export function launcherFor(platform: NodeJS.Platform, detached: RunLaunch, waited: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => Promise<{ error?: string }> = launchAndWait): RunLaunch {
+  return platform === 'darwin' ? (cmd, args, options) => waited(cmd, args, options.env) : detached;
 }
 
 /** osascript живёт, пока Terminal не принял команду; отказ в разрешении на управление Terminal приходит в stderr. */
-export function launchAndWait(cmd: string, args: string[], exec: typeof execFile = execFile): Promise<{ error?: string }> {
+export function launchAndWait(cmd: string, args: string[], env: NodeJS.ProcessEnv, exec: typeof execFile = execFile): Promise<{ error?: string }> {
   return new Promise((resolve) => {
-    exec(cmd, args, { timeout: 120_000 }, (error, _stdout, stderr) => {
+    exec(cmd, args, { timeout: 120_000, env }, (error, _stdout, stderr) => {
       resolve(error ? { error: String(stderr).trim() || error.message } : {});
     });
   });

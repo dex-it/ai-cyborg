@@ -4,7 +4,7 @@ import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
 import { claudeArgs, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
-import { childEnvNow, envStampNow, staleNames, type EnvStamp } from './child-env.ts';
+import { childEnvNow, envStampNow, loginShell, staleNames, type EnvStamp } from './child-env.ts';
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
 import { childExitText, REPORT_ACCEPTED, REPORTED_ERROR, reportNote, reportText } from './report-text.ts';
@@ -256,7 +256,7 @@ export class SessionManager {
       CYBORG_SETTINGS: this.settingsFile,
       ...(this.agentd ? { CYBORG_NODE: process.execPath, CYBORG_AGENTD: this.agentd } : {}),
     });
-    const shell = env.SHELL || '/bin/bash';
+    const shell = loginShell('/bin/bash');
     const mcp = this.mcp;
     const plugins = this.plugins();
     const args = [...plugins.dirs.flatMap((dir) => ['--plugin-dir', dir]), ...claudeArgs(addDirs, prompt, resume, mcp && plugins.core ? MCP_SESSION_PROMPT : SESSION_PROMPT)];
@@ -336,10 +336,11 @@ export class SessionManager {
   }
 
   /** Сессии, чьё окружение при запуске отличается от нынешнего управляемого: имена переменных по каждой. */
-  staleSessions(): { id: number; names: string[] }[] {
+  staleSessions(): { id: number; names: string[]; noRestart?: true }[] {
     return [...this.sessions.values()]
       .filter((s) => s.envStamp && s.state !== 'exited')
-      .map((s) => ({ id: s.id, names: staleNames(s.envStamp as EnvStamp) }))
+      // Вкладку удалённой сессии, открытой другой сессией, ведёт вызвавшая: перезапуск её потерял бы.
+      .map((s) => ({ id: s.id, names: staleNames(s.envStamp as EnvStamp), ...(s.remote?.origin === 'tool' ? { noRestart: true as const } : {}) }))
       .filter((s) => s.names.length);
   }
 
@@ -349,6 +350,18 @@ export class SessionManager {
     const session = valid === null ? undefined : this.sessions.get(valid);
     if (!session || session.remote || session.state === 'exited' || !session.claudeSid) return null;
     return { project: session.project, cwd: session.cwd, addDirs: session.dirs.slice(1), resume: session.claudeSid };
+  }
+
+  /** Перезапуск локальной сессии: живая открывшая не получает сообщения о выходе и возвращается, чтобы report_done новой вкладки дошёл до неё. */
+  async restart(id: unknown): Promise<{ resume: string; parent?: number }> {
+    const info = this.restartInfo(id);
+    if (!info) throw new Error('Сессию нельзя перезапустить: разговор в ней ещё не начат');
+    const valid = id as number;
+    const parent = this.sessions.get(valid)?.parent;
+    const live = parent !== undefined && this.sessions.has(parent) && this.sessions.get(parent)?.state !== 'exited' ? parent : undefined;
+    if (live !== undefined) this.noteClosing(valid, live);
+    await this.terminate(valid);
+    return { resume: info.resume, ...(live !== undefined ? { parent: live } : {}) };
   }
 
   /** Работающие сессии: у завершившейся вкладка может оставаться, но процесса нет. */

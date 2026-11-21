@@ -908,16 +908,24 @@ test('SessionManager: сессия получает управляемое ок�
   assert.ok(shell);
 });
 
-test('SessionManager: оболочка запуска берётся из окружения сессии: управляемый SHELL действует', (t) => {
-  t.after(() => useManagedEnv(null));
+test('SessionManager: оболочку запуска выбирает унаследованный SHELL, управляемый уходит только в окружение сессии', (t) => {
+  const inherited = process.env.SHELL;
+  process.env.SHELL = '/opt/inherited/shell';
+  t.after(() => {
+    if (inherited === undefined) delete process.env.SHELL;
+    else process.env.SHELL = inherited;
+    useManagedEnv(null);
+  });
   useManagedEnv(portOf({ set: new Map([['SHELL', '/opt/managed/shell']]), unset: new Set() }));
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-sm-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
   let shell = '';
-  const manager = new SessionManager(userData, () => {}, ((file: string) => ((shell = file), fakePty())) as any);
+  let seenEnv: NodeJS.ProcessEnv = {};
+  const manager = new SessionManager(userData, () => {}, ((file: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => ((shell = file), (seenEnv = options.env), fakePty())) as any);
   t.after(() => manager.killAll());
   manager.create('p', os.tmpdir(), []);
-  assert.equal(shell, '/opt/managed/shell');
+  assert.equal(shell, '/opt/inherited/shell');
+  assert.equal(seenEnv.SHELL, '/opt/managed/shell');
 });
 
 test('SessionManager: устаревшие сессии - те, чьё окружение при запуске отличается от нынешнего; вышедшие не в счёт', (t) => {
@@ -944,6 +952,35 @@ test('SessionManager: данные для перезапуска - проект,
   assert.equal(manager.restartInfo('1'), null);
   manager.kill(id);
   assert.equal(manager.restartInfo(id), null, 'вышла');
+});
+
+test('SessionManager.restart: дочерняя вкладка возвращается под ту же открывшую, выход старой ей не сообщается, итог новой доходит', async (t) => {
+  const { manager } = managerIn(t);
+  const outbox = (id: number): string[] => (manager as unknown as { sessions: Map<number, { outbox: string[] }> }).sessions.get(id)?.outbox ?? [];
+  const parent = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', ['/b'], 'задача', undefined, parent);
+  manager.ingest(child, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'conv-3' })], { replay: false });
+  const reply = await manager.restart(child);
+  assert.deepEqual(reply, { resume: 'conv-3', parent });
+  assert.equal(outbox(parent).length, 0, 'открывшей не пишут, что дочерняя вышла: она перезапущена');
+  const again = manager.create('p', '/a', ['/b'], undefined, reply.resume, reply.parent);
+  assert.equal(manager.parentOf(again), parent);
+  manager.reportLocal(again, { status: 'ok', summary: 'готово' });
+  assert.equal(outbox(parent).length, 1, 'итог новой вкладки дошёл до открывшей');
+});
+
+test('SessionManager.restart: открывшая закрыта - без неё; без разговора и чужой номер - отказ', async (t) => {
+  const { manager } = managerIn(t);
+  const parent = manager.create('p', '/a', []);
+  const child = manager.create('p', '/a', [], 'задача', undefined, parent);
+  await assert.rejects(manager.restart(child), /разговор в ней ещё не начат/);
+  await assert.rejects(manager.restart(9999), /разговор в ней ещё не начат/);
+  manager.ingest(child, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'conv-4' })], { replay: false });
+  manager.kill(parent);
+  assert.deepEqual(await manager.restart(child), { resume: 'conv-4' });
+  const alone = manager.create('p', '/a', []);
+  manager.ingest(alone, [JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'conv-5' })], { replay: false });
+  assert.deepEqual(await manager.restart(alone), { resume: 'conv-5' });
 });
 
 test('SessionManager: удалённая вкладка перезапуску через restartInfo не подлежит', (t) => {

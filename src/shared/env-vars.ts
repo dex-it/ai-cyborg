@@ -117,6 +117,12 @@ export function defsOf(view: EnvView): { name: string; candidates: Candidate[] }
   return view.vars.map((v) => ({ name: v.name, candidates: v.candidates }));
 }
 
+/** Подпись кандидата в выпадающем списке: литерал - значением, выражение - командой с пометкой; длинное обрезается. */
+export function candidateLabel(c: Candidate, max = 60): string {
+  const text = (c.kind === 'literal' ? c.value : `команда: ${c.command}`).replace(/\s+/g, ' ').trim() || '(пустое значение)';
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 /** Состояние переменной словами для строки окна. */
 export function stateLabel(v: EnvVarView): string {
   if (v.status.kind === 'evaluating') return 'вычисляется…';
@@ -127,8 +133,9 @@ export function stateLabel(v: EnvVarView): string {
 }
 
 /** Подсказка вкладки сессии, запущенной с прежним окружением. */
-export function staleTitle(names: readonly string[]): string {
-  return `Окружение сессии устарело: ${names.join(', ')}. Перезапуск продолжит разговор с новым окружением.`;
+export function staleTitle(names: readonly string[], noRestart = false): string {
+  const tail = noRestart ? 'Перезапуск недоступен: сессию ведёт вызвавшая.' : 'Перезапуск продолжит разговор с новым окружением.';
+  return `Окружение сессии устарело: ${names.join(', ')}. ${tail}`;
 }
 
 /** Текст индикатора в нижней строке: число выбранных и снятых, ошибки вычисления. */

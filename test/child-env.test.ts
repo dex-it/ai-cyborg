@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { childEnv, childEnvNow, composeEnv, envReady, useManagedEnv, type EnvPort, type Overlay } from '../src/main/child-env';
+import { childEnv, childEnvNow, composeEnv, envReady, loginShell, useManagedEnv, withLoginShell, type EnvPort, type Overlay } from '../src/main/child-env';
 
 const overlay = (set: Record<string, string> = {}, unset: string[] = []): Overlay => ({ set: new Map(Object.entries(set)), unset: new Set(unset) });
 const port = (o: Overlay, ready: Promise<void> = Promise.resolve()): EnvPort => ({ overlay: () => o, ready: () => ready, stamp: (remote) => ({ digests: new Map(), remote }), stale: () => [] });
@@ -75,5 +75,24 @@ describe('childEnvNow и childEnv', () => {
     useManagedEnv(null);
     assert.equal('ENVT_A' in childEnvNow(), false);
     await envReady();
+  });
+});
+
+describe('оболочка запуска', () => {
+  it('loginShell и withLoginShell берут унаследованный SHELL: выбранная в окружении не подменяет оболочку -lc', () => {
+    const saved = process.env.SHELL;
+    try {
+      process.env.SHELL = '/opt/inherited/sh';
+      useManagedEnv(port(overlay({ SHELL: '/opt/managed/sh' })));
+      assert.equal(childEnvNow().SHELL, '/opt/managed/sh', 'процессу уходит выбранная');
+      assert.equal(loginShell('/bin/bash'), '/opt/inherited/sh');
+      assert.equal(withLoginShell(childEnvNow()).SHELL, '/opt/inherited/sh');
+      delete process.env.SHELL;
+      assert.equal(loginShell('/bin/bash'), '/bin/bash');
+      assert.equal('SHELL' in withLoginShell(childEnvNow()), false, 'унаследованной нет: терминалу запуска остаётся запасная оболочка');
+    } finally {
+      if (saved === undefined) delete process.env.SHELL;
+      else process.env.SHELL = saved;
+    }
   });
 });

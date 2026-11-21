@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { childEnv } from './child-env';
+import { childEnv, loginShell } from './child-env';
 import {
   CAPABILITIES,
   GROUPS,
@@ -333,7 +333,7 @@ export interface PassportDeps {
 export async function systemClaudeAvailable(): Promise<boolean> {
   const env = await childEnv();
   return new Promise((resolve) => {
-    execFile(env.SHELL || '/bin/sh', ['-lc', 'command -v claude'], { timeout: 5000, env }, (error) => resolve(!error));
+    execFile(loginShell('/bin/sh'), ['-lc', 'command -v claude'], { timeout: 5000, env }, (error) => resolve(!error));
   });
 }
 

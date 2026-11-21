@@ -68,6 +68,9 @@ export class ManagedEnv {
   private readonly status = new Map<string, VarStatus>();
   private problems: string[] = [];
   private starting = false;
+  private disposed = false;
+  /** Имена, которым стартовое вычисление ещё должно значение: любое действие человека над именем снимает его отсюда (побеждает последнее действие). */
+  private readonly queue = new Set<string>();
   private cached: Overlay = { set: new Map(), unset: new Set() };
   private readyPromise: Promise<void> = Promise.resolve();
   private pathPromise: Promise<string> | null = null;
@@ -153,6 +156,7 @@ export class ManagedEnv {
 
   /** Идущее вычисление имени отменяется, его результат состояния не трогает. */
   private abort(name: string): void {
+    this.queue.delete(name);
     this.runner.cancel(keyOf(name));
     this.status.delete(name);
   }
@@ -299,6 +303,7 @@ export class ManagedEnv {
   cancel(name: unknown): void {
     const def = this.def(name);
     if (this.status.get(def.name)?.kind !== 'evaluating') return;
+    this.queue.delete(def.name);
     this.runner.cancel(keyOf(def.name));
     this.status.set(def.name, { kind: 'failed', reason: REASON_TEXT.cancelled, stderr: '' });
     this.deps.onChange?.();
@@ -336,8 +341,9 @@ export class ManagedEnv {
       if (prev && JSON.stringify(prev.candidates) !== JSON.stringify(def.candidates)) touched.push(def.name);
     }
     for (const prev of this.defs) if (!next.some((d) => d.name === prev.name)) touched.push(prev.name);
-    for (const name of touched) this.abort(name);
     const values = new Map<string, string>();
+    // Выбранное выражение с прежним текстом остаётся выбранным и без значения: его вычисляет старт либо вычисление не удалось, и до следующего старта выбор не теряется.
+    const keeps = new Set<string>();
     const final = next.map((def) => {
       if (def.choice.kind !== 'selected') return def;
       const candidate = (def.choice as { candidate: string }).candidate;
@@ -349,12 +355,16 @@ export class ManagedEnv {
       }
       const prev = this.defs.find((d) => d.name === def.name);
       const same = prev?.candidates.find((c) => c.id === candidate);
-      if (same?.kind === 'expr' && same.command === cand.command && this.values.has(def.name)) {
-        values.set(def.name, this.values.get(def.name) as string);
-        return def;
-      }
-      return { ...def, choice: { kind: 'untouched' } as const };
+      if (same?.kind !== 'expr' || same.command !== cand.command) return { ...def, choice: { kind: 'untouched' } as const };
+      if (this.values.has(def.name)) values.set(def.name, this.values.get(def.name) as string);
+      keeps.add(def.name);
+      return def;
     });
+    for (const name of touched) {
+      // Идущее вычисление выбранного выражения с прежним текстом - стартовое: его правка другого кандидата не касается. Чужое (выбор человека другого кандидата) отменяется.
+      const foreign = this.status.get(name)?.kind === 'evaluating' && !this.queue.has(name);
+      if (!keeps.has(name) || foreign) this.abort(name);
+    }
     this.commit(final);
     this.values.clear();
     for (const [name, value] of values) this.values.set(name, value);
@@ -363,26 +373,38 @@ export class ManagedEnv {
 
   /** Старт Cyborg: выражения выбранных переменных вычисляются заново, по очереди (по одному pinentry); запуски процессов ждут конца. */
   start(): Promise<void> {
-    const pending = this.defs.filter((d) => this.chosen(d)?.kind === 'expr');
+    const pending = this.defs.filter((d) => this.chosen(d)?.kind === 'expr').map((d) => d.name);
     if (!pending.length) return this.readyPromise;
     this.starting = true;
-    for (const def of pending) this.status.set(def.name, { kind: 'evaluating' });
+    for (const name of pending) {
+      this.queue.add(name);
+      this.status.set(name, { kind: 'evaluating' });
+    }
     this.deps.onChange?.();
     this.readyPromise = (async () => {
       try {
-        for (const def of pending) {
-          const cand = this.chosen(def);
-          if (cand?.kind !== 'expr' || this.status.get(def.name)?.kind !== 'evaluating') continue;
-          const result = await this.run(def.name, cand.command);
+        for (const name of pending) {
+          // Очередь снимает действие человека над именем: его выбор уже вычисляется или состоялся, старый кандидат ему не помеха.
+          if (this.disposed) break;
+          if (!this.queue.has(name)) continue;
+          const def = this.defs.find((d) => d.name === name);
+          const cand = def && this.chosen(def);
+          if (cand?.kind !== 'expr') {
+            this.queue.delete(name);
+            continue;
+          }
+          const result = await this.run(name, cand.command);
           if ('cancelled' in result && result.cancelled) continue;
-          if (!result.ok) this.fail(def.name, result);
+          this.queue.delete(name);
+          if (!result.ok) this.fail(name, result);
           else {
-            this.values.set(def.name, result.value);
-            this.status.delete(def.name);
+            this.values.set(name, result.value);
+            this.status.delete(name);
             this.changed();
           }
         }
       } finally {
+        this.queue.clear();
         this.starting = false;
         this.deps.onChange?.();
       }
@@ -392,6 +414,7 @@ export class ManagedEnv {
 
   /** Cyborg закрывается: идущие вычисления снимаются вместе с группами процессов. */
   dispose(): void {
+    this.disposed = true;
     for (const def of this.defs) this.runner.cancel(keyOf(def.name));
   }
 }
