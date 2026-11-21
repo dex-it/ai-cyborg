@@ -27,7 +27,7 @@ export function ownNotes(name: string): string[] {
   if (name === 'GIT_TERMINAL_PROMPT' || name === 'GIT_SSH_COMMAND') notes.push('не действует в сессиях на хостах: демон ставит её сам');
   if (name === 'CLAUDE_CONFIG_DIR') notes.push('собственные чтения Cyborg - окно «Расширения», зеркало настройки и память проекта для хостов, редактор глобального CLAUDE.md - берут каталог из окружения, унаследованного при запуске Cyborg');
   if (name === 'PATH') notes.push('при вычислении выражений берётся PATH логин-оболочки');
-  if (name === 'CLAUDE_CODE_OAUTH_TOKEN') notes.push('на хостах заменяет токен из «Вход Claude на хостах…»; снятая - агент токена не получает');
+  if (name === 'CLAUDE_CODE_OAUTH_TOKEN') notes.push('на хостах заменяет токен из окна «Хосты», вкладка «Вход Claude»; снятая - агент токена не получает');
   return notes;
 }
 

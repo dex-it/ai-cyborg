@@ -48,6 +48,6 @@ export function parsePreflight(output: string, claudeToken = false): PreflightRe
   } catch {
     loggedIn = false;
   }
-  if (!loggedIn && !claudeToken) return { missing: ['claude на хосте не залогинен: выполните на хосте claude auth login либо задайте токен в «Воркспейс → Вход Claude на хостах…»'] };
+  if (!loggedIn && !claudeToken) return { missing: ['claude на хосте не залогинен: выполните на хосте claude auth login либо задайте токен в «Воркспейс → Хосты…», вкладка «Вход Claude»'] };
   return { home: home as string, installed: (kv.get('agentd') ?? '').split(/\s+/).filter(Boolean), tools: { gh: !!kv.get('gh'), glab: !!kv.get('glab') }, loggedIn };
 }

@@ -145,17 +145,11 @@ export function staleTitle(names: readonly string[], noRestart = false): string 
   return `Окружение сессии устарело: ${names.join(', ')}. ${tail}`;
 }
 
-/** Текст индикатора в нижней строке: число выбранных и снятых, ошибки вычисления. */
-export function indicatorText(view: EnvView): string {
-  const counts = indicatorCounts(view);
-  return counts ? `Окружение: ${counts}` : 'Окружение';
+/** Подсказка имени: имена с запросом без учёта регистра, начинающиеся с него - первыми; пустой запрос - все. */
+export function matchNames(names: readonly string[], query: string): string[] {
+  const q = query.trim().toUpperCase();
+  if (!q) return [...names];
+  const hits = names.filter((name) => name.toUpperCase().includes(q));
+  return [...hits.filter((name) => name.toUpperCase().startsWith(q)), ...hits.filter((name) => !name.toUpperCase().startsWith(q))];
 }
 
-/** Счётчики рядом со значком: «+N −M ошибка K» без нулевых частей, пусто без управляемых переменных. */
-export function indicatorCounts(view: EnvView): string {
-  if (view.starting) return 'вычисляется…';
-  const selected = view.vars.filter((v) => v.choice.kind === 'selected').length;
-  const unset = view.vars.filter((v) => v.choice.kind === 'unset').length;
-  const failed = view.vars.filter((v) => v.unapplied || v.status.kind === 'failed').length;
-  return [...(selected ? [`+${selected}`] : []), ...(unset ? [`−${unset}`] : []), ...(failed ? [`ошибка ${failed}`] : [])].join(' ');
-}

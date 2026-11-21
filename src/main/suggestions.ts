@@ -77,6 +77,10 @@ export function modelText(text: string, submit: boolean): { refuse: string } | {
   return { submit };
 }
 
+// Claude Code пропускает SGR из displayContent в терминал: служебная строка приглушена, чтобы не спорить с ответом.
+const DIM = '\x1b[2m';
+const UNDIM = '\x1b[22m';
+
 /** Ответ без комментария с кнопками в конце: он служебный и читателю ответа не нужен. */
 /** Комментарий, из которого не прошла ни одна кнопка, остаётся на экране как есть: видно, что модель предлагала. */
 export function displaySuggestions(delta: string): string | null {
@@ -87,7 +91,7 @@ export function displaySuggestions(delta: string): string | null {
     const buttons = parseSuggestions(body);
     if (!buttons.length) return line;
     changed = true;
-    return `✦ Кнопки на полосе: ${buttons.map((b) => `«${b.label}»`).join(', ')}${line.slice(body.length)}`;
+    return `${DIM}✦ Кнопки на полосе: ${buttons.map((b) => `«${b.label}»`).join(', ')}${UNDIM}${line.slice(body.length)}`;
   });
   return changed ? lines.join('') : null;
 }

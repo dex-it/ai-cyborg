@@ -1200,7 +1200,7 @@ export function uniqueNames(names: string[]): string[] {
 const SID = /^[0-9a-f-]{8,64}$/;
 const DU_TIMEOUT_MS = 20_000;
 const GIT_PROBE_TIMEOUT_MS = 20_000;
-/** Сессий, которые окно «Место на хостах» замеряет одновременно (допущение, D-36). */
+/** Сессий, которые окно «Хосты» замеряет одновременно (допущение, D-36). */
 const DISK_POOL = 4;
 /** Ответ на disk уходит не позже: у Cyborg предел 120 с, остаток - на канал (допущение, D-36). */
 const DISK_BUDGET_MS = 90_000;

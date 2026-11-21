@@ -1048,7 +1048,7 @@ describe('доступы git и Claude', () => {
   it('claude на хосте без входа: без токена - отказ с подсказкой, с токеном - запуск', async (t) => {
     const { ssh } = world(t);
     ssh.preflight = ((base) => (home: string) => base(home).replace('{"loggedIn":true}', '{"loggedIn":false}'))(ssh.preflight);
-    await assert.rejects(side(t, ssh).remote.create(project, human, { origin: 'human' }), /не залогинен[\s\S]*Вход Claude на хостах/);
+    await assert.rejects(side(t, ssh).remote.create(project, human, { origin: 'human' }), /не залогинен[\s\S]*Хосты…/);
     const info = await side(t, ssh, { deps: { claudeToken: () => CLAUDE } }).remote.create(project, human, { origin: 'human' });
     assert.equal(info.host, 'dev1');
   });

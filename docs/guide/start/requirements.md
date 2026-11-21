@@ -53,7 +53,7 @@ description: "Системные требования и зависимости 
 | Хост | `git` | клоны репозиториев проекта |
 | Хост | `claude` в `PATH` логин-оболочки | сама сессия |
 | Хост | `script` (util-linux) | pty для `claude` без `tmux` и `screen` |
-| Хост | вход `claude` либо токен в Cyborg | `claude auth login` на хосте или токен из `claude setup-token` в «Воркспейс → Вход Claude на хостах…» |
+| Хост | вход `claude` либо токен в Cyborg | `claude auth login` на хосте или токен из `claude setup-token` в «Воркспейс → Хосты…», вкладка «Вход Claude» |
 | Хост | `gh` и `glab` | необязательно: без них агент работает, но не откроет PR и MR |
 | Хост | `sshd` с `AllowStreamLocalForwarding` | Cyborg пробрасывает на хост обратный туннель unix-сокета к MCP-серверу |
 | Проект | `origin` у каждого репозитория проекта | клон на хосте делается из `origin` |

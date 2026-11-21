@@ -768,7 +768,6 @@ async function main() {
   const envView = await ev('window.cyborg.envSave([{ name: "SMOKE_ENV", candidates: [{ kind: "literal", value: "smoke-value" }, { kind: "expr", command: "pass show smoke/token" }] }])');
   const exprId = envView.vars[0].candidates[1].id;
   assert.deepEqual(await ev(`window.cyborg.envSelect("SMOKE_ENV", ${JSON.stringify(exprId)})`), { ok: true });
-  await waitFor('индикатор показывает одну выбранную', async () => /\+1/.test(await text('#env-indicator')));
   assert.equal(await ev('window.cyborg.envReveal("SMOKE_ENV")'), 'smoke-secret', 'значение выражения не вычислено');
   assert.ok(!readFileSync(join(userData, 'env-vars.json'), 'utf8').includes('smoke-secret'), 'значение выражения попало на диск');
   await waitFor('прежняя вкладка помечена устаревшей', async () => (await ev('document.querySelectorAll("#session-list .env-stale").length')) >= 1);
@@ -780,7 +779,7 @@ async function main() {
   assert.equal(await clickMenu(mainEv, 'Окружение…'), true, '«Окружение…» недоступно');
   await waitFor('окно «Окружение» повторно из меню', async () => (await envOpen()) === true);
   assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV]").length'), 1, 'при открытии нет карточки переменной из файла');
-  const revealButton = '[...document.querySelectorAll("#env-body button")].find((x) => x.textContent === "Показать значение")';
+  const revealButton = 'document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] button[aria-label=\\"Показать значение\\"]")';
   await waitFor('кнопка «Показать значение»', async () => (await ev(`!!${revealButton}`)) === true);
   await ev(`${revealButton}.click()`);
   await waitFor('значение раскрыто', async () => /smoke-secret/.test(await text('#env-body .env-value')));
@@ -794,21 +793,23 @@ async function main() {
     await ev('document.querySelector("#env-close").click()');
     await waitFor('окно «Окружение» закрыто после сочетания', async () => (await envOpen()) === false);
   }
-  await ev('document.querySelector("#env-indicator").click()');
-  await waitFor('окно «Окружение» по индикатору', async () => (await envOpen()) === true);
-  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV]").length'), 1, 'по индикатору нет карточки переменной');
+  assert.equal(await clickMenu(mainEv, 'Окружение…'), true, '«Окружение…» недоступно');
+  await waitFor('окно «Окружение» из меню после правки при закрытом окне', async () => (await envOpen()) === true);
+  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV]").length'), 1, 'нет карточки переменной');
   assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV2]").length'), 1, 'переменная, добавленная при закрытом окне, не показана при открытии');
   assert.equal(await ev('document.querySelectorAll("#env-body .env-value").length'), 0, 'раскрытое значение пережило закрытие окна');
-  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV] select[aria-label=\\"Кандидат SMOKE_ENV\\"] option").length'), 2, 'у переменной нет выпадающего списка кандидатов');
-  await ev('(() => { const list = document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] .env-pick select"); list.value = list.options[0].value; list.dispatchEvent(new Event("change")); })()');
-  await waitFor('смена пункта списка выбрала литерал', async () => (await ev('window.cyborg.envReveal("SMOKE_ENV")')) === 'smoke-value');
-  // Правка выбранного литерала действует сразу: раскрытое прежнее значение окно не держит.
-  await waitFor('кнопка «Показать значение» у литерала', async () => (await ev(`!!${revealButton}`)) === true);
-  await ev(`${revealButton}.click()`);
-  await waitFor('литерал раскрыт', async () => (await text('#env-body .env-value')) === 'smoke-value');
+  assert.equal(await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV] input[type=radio]").length'), 2, 'у кандидатов переменной нет отметок выбора');
+  await ev('document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] input[type=radio]").click()');
+  await waitFor('отметка выбрала литерал', async () => (await ev('window.cyborg.envReveal("SMOKE_ENV")')) === 'smoke-value');
+  // Смена выбора прячет раскрытое значение; у литерала показа нет - он виден в поле.
+  await waitFor('раскрытое значение убрано сменой выбора', async () => (await ev('document.querySelectorAll("#env-body .env-value").length')) === 0);
+  assert.equal(await ev(`!!${revealButton}`), false, 'у литерала есть показ значения');
   await ev('(() => { const f = document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] input[aria-label=\\"Значение SMOKE_ENV\\"]"); f.value = "smoke-value-2"; f.dispatchEvent(new Event("change")); })()');
   await waitFor('правка литерала дошла до процессов', async () => (await ev('window.cyborg.envReveal("SMOKE_ENV")')) === 'smoke-value-2');
-  await waitFor('окно не показывает прежнее значение литерала', async () => !/smoke-value(?!-2)/.test(await text('#env-body .env-value')));
+  await ev('[...document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV] button")].find((b) => b.textContent === "+ значение").click()');
+  await waitFor('строка нового значения', async () => (await ev('!!document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] .env-add input")')) === true);
+  await ev('(() => { const f = document.querySelector("#env-body .env-var[data-name=SMOKE_ENV] .env-add input"); f.value = "smoke-value-3"; f.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); })()');
+  await waitFor('«+ значение» добавило кандидата', async () => (await ev('document.querySelectorAll("#env-body .env-var[data-name=SMOKE_ENV] input[type=radio]").length')) === 3);
   await ev('(async () => { const view = await window.cyborg.envView(); await window.cyborg.envSelect("SMOKE_ENV", view.vars[0].candidates[1].id); })()');
   await ev('document.querySelector("#env-close").click()');
   const envTabs = await tabs();
@@ -818,7 +819,7 @@ async function main() {
   await send('Input.insertText', { text: 'env SMOKE_ENV' });
   await combo(0, 'Enter', 'Enter', 13);
   await waitFor('новая сессия видит выбранное значение', async () => (await visibleTerminal()).replace(/\s+/g, '').includes('envvalSMOKE_ENV=[smoke-secret]'));
-  log('окружение: окно, выбор значения выражения, индикатор, пометка прежних вкладок, значение в новой сессии, не на диске');
+  log('окружение: окно, выбор значения выражения, пометка прежних вкладок, значение в новой сессии, не на диске');
 
   await terminate(app, () => stderrOfMain());
   assert.ok(!existsSync(`${legacyFile}.lock`), 'замок остался после SIGTERM');

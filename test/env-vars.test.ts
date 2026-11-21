@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { candidateLabel, defsOf, indicatorCounts, indicatorText, readDef, readDefs, revealStamp, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
+import { candidateLabel, defsOf, matchNames, readDef, readDefs, revealStamp, staleTitle, stateLabel, type EnvVarView, type EnvView } from '../src/shared/env-vars';
 
 const none = () => null;
 const view = (vars: Partial<EnvVarView>[], over: Partial<EnvView> = {}): EnvView => ({
@@ -73,14 +73,6 @@ describe('readDefs', () => {
 });
 
 describe('показ состояния', () => {
-  it('индикатор: число выбранных, снятых и ошибок; идущий старт перебивает', () => {
-    assert.equal(indicatorText(view([])), 'Окружение');
-    assert.equal(indicatorText(view([{ choice: { kind: 'selected', candidate: 'a' } }, { choice: { kind: 'unset' } }, { choice: { kind: 'unset' } }])), 'Окружение: +1 −2');
-    assert.equal(indicatorText(view([{ choice: { kind: 'selected', candidate: 'a' }, unapplied: true }, { status: { kind: 'failed', reason: 'x', stderr: '' } }])), 'Окружение: +1 ошибка 2');
-    assert.equal(indicatorText(view([], { starting: true })), 'Окружение: вычисляется…');
-    assert.equal(indicatorCounts(view([])), '');
-    assert.equal(indicatorCounts(view([{ choice: { kind: 'selected', candidate: 'a' } }, { choice: { kind: 'unset' } }])), '+1 −1');
-  });
 
   it('состояние переменной словами: не тронута, выбрана, снята, вычисляется, ошибка, значения нет', () => {
     const [a, b, c, d, e, f] = view([
@@ -124,5 +116,14 @@ describe('показ состояния', () => {
     const long = candidateLabel({ id: 'a', kind: 'literal', value: 'x'.repeat(200) }, 20);
     assert.equal(long.length, 20);
     assert.ok(long.endsWith('…'));
+  });
+});
+
+describe('подсказка имени', () => {
+  it('без учёта регистра, начинающиеся с запроса - первыми; пустой запрос - все', () => {
+    const names = ['LC_PAPER', 'PAPERSIZE', 'PATH', 'HOME'];
+    assert.deepEqual(matchNames(names, 'pa'), ['PAPERSIZE', 'PATH', 'LC_PAPER']);
+    assert.deepEqual(matchNames(names, ' '), names);
+    assert.deepEqual(matchNames(names, 'zz'), []);
   });
 });

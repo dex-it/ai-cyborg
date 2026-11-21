@@ -249,9 +249,9 @@ date: 2026-10-26
 | FR-21009 | Вычисление выражения: момент, окружение запуска и значение | 21-managed-env | автотест | `test/env-eval.test.ts`, `test/managed-env.test.ts` |
 | FR-21010 | Неудача, таймаут и отмена вычисления | 21-managed-env | автотест | `test/env-eval.test.ts`, `test/managed-env.test.ts` |
 | FR-21011 | Последнее действие над переменной побеждает | 21-managed-env | автотест | `test/managed-env.test.ts` |
-| FR-21012 | Хранение выбора и стартовое вычисление | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/env-vars.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
+| FR-21012 | Хранение выбора и стартовое вычисление | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
 | FR-21013 | Правка определений в окне | 21-managed-env | автотест | `test/managed-env.test.ts` |
-| FR-21014 | Значок, окно «Окружение», сочетание клавиш и пункт меню | 21-managed-env | автотест + smoke | `test/env-vars.test.ts`, `test/managed-env.test.ts`, `test/env-dialog.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
-| FR-21015 | Показ вычисленного значения | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/env-vars.test.ts`, `scripts/smoke.mjs` |
+| FR-21014 | Окно «Окружение», сочетание клавиш и пункт меню | 21-managed-env | автотест + smoke | `test/env-vars.test.ts`, `test/managed-env.test.ts`, `test/env-dialog.test.ts`, `test/menu.test.ts`, `scripts/smoke.mjs` |
+| FR-21015 | Показ вычисленного значения | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `test/env-vars.test.ts`, `test/env-dialog.test.ts`, `scripts/smoke.mjs` |
 | FR-21016 | Пометка устаревших сессий и перезапуск | 21-managed-env | автотест + smoke | `test/managed-env.test.ts`, `src/main/sessions.test.ts`, `test/session-resume.test.ts`, `test/remote-link.test.ts`, `test/agentd.test.ts`, `test/static-guards.test.ts`, `scripts/smoke.mjs` |
 | FR-21017 | Пометки, где значение переменной не действует | 21-managed-env | автотест | `test/managed-env.test.ts`, `test/static-guards.test.ts` |

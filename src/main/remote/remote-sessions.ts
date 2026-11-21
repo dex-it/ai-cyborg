@@ -539,7 +539,7 @@ export class RemoteSessions implements RemoteToolsPort {
     }
   }
 
-  /** Место на хосте и его сессии для окна «Место на хостах». */
+  /** Место на хосте и его сессии для окна «Хосты». */
   async disk(project: Project, host: string): Promise<HostDisk> {
     if (!(project.hosts ?? []).includes(host)) throw new Error('Хост не из проекта');
     const link = this.link(host);
