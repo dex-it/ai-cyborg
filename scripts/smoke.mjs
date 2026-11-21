@@ -117,6 +117,20 @@ async function main() {
   };
   const wheelUp = (modifiers) => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 600, y: 400, deltaX: 0, deltaY: -100, modifiers });
   const text = (selector) => ev(`document.querySelector(${JSON.stringify(selector)})?.innerText ?? ''`);
+  // На невысоком окне (раннер macOS) длинный ARGS подставного claude уносит первые строки за верх: смотрим и начало вывода.
+  const terminalText = async () => {
+    const shown = () => ev('(() => { const e = [...document.querySelectorAll(".xterm-rows")].find((x) => x.offsetParent); return e ? e.innerText : ""; })()');
+    const visible = await shown();
+    const box = await ev('(() => { const e = [...document.querySelectorAll(".xterm-screen")].find((x) => x.offsetParent); if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()');
+    if (!box) return visible;
+    const wheel = (deltaY) => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: box.x, y: box.y, deltaX: 0, deltaY });
+    await wheel(-100000);
+    await sleep(150);
+    const top = await shown();
+    await wheel(100000);
+    await sleep(150);
+    return `${top}\n${visible}`;
+  };
   const tabs = () => ev('document.querySelectorAll("#session-list > *").length');
   const fontSize = () => ev('localStorage.getItem("cyborg.fontSize")');
 
@@ -295,7 +309,7 @@ async function main() {
   assert.equal(await tabs(), 0, 'чужой модификатор открыл сессию');
   await combo(commandModifier | SHIFT, 'N', 'KeyN', 78);
   await waitFor('вкладка сессии', async () => (await tabs()) === 1);
-  await waitFor('вывод подставного claude в терминале', async () => /fake-claude ready/.test(await text('.xterm-rows')));
+  await waitFor('вывод подставного claude в терминале', async () => /fake-claude ready/.test(await terminalText()));
   log('новая сессия по клавише своей системы, pty и терминал');
 
   await ev(`window.cyborg.input(1, 'cd ${worktree}\\r')`);
@@ -798,7 +812,7 @@ async function main() {
   const envTabs = await tabs();
   await combo(commandModifier | SHIFT, 'N', 'KeyN', 78);
   await waitFor('вкладка новой сессии', async () => (await tabs()) === envTabs + 1);
-  await waitFor('новая сессия запущена', async () => (await visibleTerminal()).includes('fake-claude ready'));
+  await waitFor('новая сессия запущена', async () => (await terminalText()).includes('fake-claude ready'));
   await send('Input.insertText', { text: 'env SMOKE_ENV' });
   await combo(0, 'Enter', 'Enter', 13);
   await waitFor('новая сессия видит выбранное значение', async () => (await visibleTerminal()).replace(/\s+/g, '').includes('envvalSMOKE_ENV=[smoke-secret]'));
