@@ -11,6 +11,7 @@ import type { MrDetailsResult, MrFilter, MrListResult, MrRef, SessionStart } fro
 import type { ProjectsProblem, ProjectsState } from './projects';
 import type { PassportView } from '../shared/passport';
 import type { EnvView } from '../shared/env-vars';
+import type { SideAnswer } from '../shared/side-question';
 import type { TaskDetailsResult } from './task-details';
 import type { ClaudeTokenStatus } from './remote/claude-token';
 import type { HostDisk, PurgeResult } from '../shared/host-disk';
@@ -52,6 +53,8 @@ const api = {
   envStale: (): Promise<{ id: number; names: string[]; noRestart?: true }[]> => ipcRenderer.invoke('env:stale'),
   /** Перезапуск сессии с новым окружением: локальная продолжается с --resume, удалённая засыпает и просыпается. */
   restartSession: (projectId: string, id: number): Promise<{ resume?: string; parent?: number; remote?: RemoteInfo }> => ipcRenderer.invoke('session:restart', projectId, id),
+  /** Вопрос по выделению форку сессии через её мод cyborg-ask. */
+  sideAsk: (id: number, prompt: string): Promise<SideAnswer> => ipcRenderer.invoke('side:ask', id, prompt),
   loadCommands: (): Promise<CommandsConfig> => ipcRenderer.invoke('commands:load'),
   saveCommands: (text: string, scope: CommandsScope): Promise<{ error?: string }> => ipcRenderer.invoke('commands:save', text, scope),
   loadPrompts: (): Promise<{ raw: unknown; problem?: string }> => ipcRenderer.invoke('prompts:load'),

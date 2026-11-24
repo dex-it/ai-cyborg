@@ -312,6 +312,22 @@ async function main() {
   await waitFor('вывод подставного claude в терминале', async () => /fake-claude ready/.test(await terminalText()));
   log('новая сессия по клавише своей системы, pty и терминал');
 
+  const readyRow = await ev(`(() => { const r = [...document.querySelectorAll('.xterm-rows > div')].find((d) => d.offsetParent && d.textContent.includes('fake-claude ready')); if (!r) return null; const b = r.getBoundingClientRect(); return { x: Math.round(b.left + 2), y: Math.round(b.top + b.height / 2), w: Math.round(b.width) }; })()`);
+  assert.ok(readyRow, 'строки fake-claude ready не видно');
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: readyRow.x, y: readyRow.y, button: 'left', buttons: 1, clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: readyRow.x + 160, y: readyRow.y, button: 'left', buttons: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: readyRow.x + 160, y: readyRow.y, button: 'left', buttons: 0, clickCount: 1 });
+  const shiftKey = { key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16 };
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...shiftKey, modifiers: SHIFT });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', ...shiftKey, modifiers: 0 });
+  const side = () => ev(`(() => { const d = [...document.querySelectorAll('.side-dialog')].find((x) => !x.hidden); return d ? { fragment: d.querySelector('.side-fragment').textContent, answer: d.querySelector('.side-answer')?.textContent ?? '', focus: d.contains(document.activeElement) } : null; })()`);
+  const asked = await waitFor('окно вопроса по выделенному', async () => ((await side())?.answer.includes('cyborg-ask') ? side() : null));
+  assert.ok(asked.fragment.length > 0 && 'fake-claude ready'.startsWith(asked.fragment.trim().slice(0, 4)), `фрагмент окна: ${asked.fragment}`);
+  assert.equal(asked.focus, true, 'фокус не в окне вопроса');
+  await combo(0, 'Escape', 'Escape', 27);
+  await waitFor('Esc закрыл окно вопроса и вернул фокус терминалу', async () => (await side()) === null && (await ev('document.activeElement?.classList.contains("xterm-helper-textarea")')));
+  log('выделение и отдельный Shift: окно вопроса по сессии, без мода cyborg-ask - понятный отказ, Esc возвращает в терминал');
+
   await ev(`window.cyborg.input(1, 'cd ${worktree}\\r')`);
   await waitFor('переход дерева в worktree по событию хука', async () => (await text('#tree-meta')).includes(worktree));
   log('рабочий каталог сессии отслежен по событиям хуков');
