@@ -12,6 +12,7 @@ import { acceptsDrop, dropIntoSession } from './drop-path';
 import { childSlot, moveItem } from './reorder';
 import { addRunButton } from './run-button';
 import { clickSelection, sessionsCount } from './selection';
+import { historyMatch, historyOrder } from './history-model';
 import { windowTitle } from './title';
 import { canCreateWorkspace, fileAfterDir, fileAfterEdit, fileAfterName, initialFileField, projectsProblemText, type FileField } from './workspace-text';
 import { initSourcesSection } from './sources';
@@ -1360,14 +1361,32 @@ function requestSession(anchor: HTMLElement = newSessionButton): void {
 
 // ---------- прошлые сессии ----------
 
+/** Запрос отбора «Сессий» живёт до закрытия приложения: перезагрузка списка его не сбрасывает. */
+let historyQuery = '';
+const HISTORY_ROW = '.history-item:not([hidden])';
+
 function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = ''): void {
+  const typing = document.activeElement?.classList.contains('history-filter') ?? false;
   historyEl.classList.remove('selecting');
   const noteEl = note ? [el('div', 'history-note', note)] : [];
   if (typeof entries === 'string') {
     historyEl.replaceChildren(el('div', 'menu-title', entries), ...noteEl);
     return;
   }
+  const all = historyOrder(entries);
   const keyOf = (entry: HistoryEntry): string => `${entry.host ?? ''}\n${entry.repo}\n${entry.id}`;
+  const toggleFavorite = (entry: HistoryEntry): void => {
+    const on = !entry.favorite;
+    api
+      .favoriteHistory(owner.id, entry.id, on)
+      .then(() => {
+        if (project !== owner) return;
+        const next = all.filter((e) => rows.has(keyOf(e))).map((e) => (e === entry ? { ...e, favorite: on } : e));
+        renderHistory(owner, next, note);
+        historyEl.querySelector<HTMLElement>(`.history-item[data-key="${CSS.escape(keyOf(entry))}"]`)?.focus();
+      })
+      .catch((err) => alert(ipcErrorText(err)));
+  };
   // Спящая удалённая сессия убирается с клонами на хосте; отказ уборки (незапушенная работа) - окном.
   const removeEntry = async (entry: HistoryEntry): Promise<void> => {
     if (!entry.host) return api.deleteHistory(owner.id, entry.repo, entry.id);
@@ -1383,6 +1402,18 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = 
   const cancel = el('button', '', 'Отмена');
   const bar = el('div', 'history-bar');
   bar.append(count, selectAll, removeSelected, cancel);
+  const filter = document.createElement('input');
+  filter.type = 'search';
+  filter.className = 'history-filter';
+  filter.placeholder = 'Поиск сессии';
+  filter.setAttribute('aria-label', 'Поиск по заголовку, репозиторию и хосту');
+  filter.spellcheck = false;
+  filter.value = historyQuery;
+  const empty = el('div', 'history-note', 'Ничего не найдено');
+  const favTitle = el('div', 'menu-title history-group', 'Избранное');
+  const restTitle = el('div', 'menu-title history-group', 'Остальные');
+  const head = el('div', 'history-head');
+  head.append(filter, bar);
   const sync = (): void => {
     bar.hidden = !selected.size;
     historyEl.classList.toggle('selecting', selected.size > 0);
@@ -1410,9 +1441,8 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = 
     selected.delete(key);
   };
   const afterDelete = (): void => {
-    sync();
     if (!rows.size) renderHistory(owner, 'Прошлых сессий нет', note);
-    else rove(historyEl, '.history-item');
+    else applyFilter();
   };
   const deleteSelected = async (): Promise<void> => {
     const targets = [...rows].filter(([key]) => selected.has(key));
@@ -1432,16 +1462,53 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = 
     afterDelete();
     if (failed.length) alert(`Не удалось удалить:\n${failed.join('\n')}`);
   };
+  const applyFilter = (): void => {
+    let favShown = 0;
+    let restShown = 0;
+    for (const [key, { entry, item }] of rows) {
+      item.hidden = !historyMatch(entry, historyQuery);
+      if (item.hidden) selected.delete(key);
+      else if (entry.favorite) favShown++;
+      else restShown++;
+    }
+    favTitle.hidden = !favShown;
+    restTitle.hidden = !favShown || !restShown;
+    empty.hidden = favShown + restShown > 0;
+    sync();
+    rove(historyEl, HISTORY_ROW);
+  };
+  filter.addEventListener('input', () => {
+    historyQuery = filter.value;
+    applyFilter();
+  });
+  filter.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && filter.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      filter.value = historyQuery = '';
+      applyFilter();
+    }
+  });
   selectAll.addEventListener('click', () => {
-    selected = new Set(rows.keys());
+    selected = new Set([...rows].filter(([, { item }]) => !item.hidden).map(([key]) => key));
     sync();
   });
   removeSelected.addEventListener('click', () => void deleteSelected());
   cancel.addEventListener('click', clear);
-  for (const entry of entries) {
+  for (const entry of all) {
     const key = keyOf(entry);
     const item = asMenuItem(el('div', 'menu-item history-item'), 'option');
-    item.title = `${entry.host ? `Разбудить на ${entry.host}` : 'Продолжить'}: ${entry.title}\nВыделить: ${shortcut(mac, 'щелчок')}, диапазон: Shift+щелчок`;
+    item.dataset.key = key;
+    item.classList.toggle('favorite', !!entry.favorite);
+    item.title = `${entry.host ? `Разбудить на ${entry.host}` : 'Продолжить'}: ${entry.title}\nВыделить: ${shortcut(mac, 'щелчок')}, диапазон: Shift+щелчок\nИзбранное: звезда или *`;
+    const star = el('button', 'history-star', entry.favorite ? '★' : '☆');
+    star.title = entry.favorite ? 'Убрать из избранного (*)' : 'В избранное (*)';
+    star.setAttribute('aria-pressed', String(!!entry.favorite));
+    star.tabIndex = -1;
+    star.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleFavorite(entry);
+    });
     const check = document.createElement('input');
     check.type = 'checkbox';
     check.className = 'history-check';
@@ -1472,6 +1539,7 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = 
       check,
       el('span', 'history-title', entry.title),
       el('span', 'repo-path', `${basename(entry.repo)}${entry.host ? ` · ${entry.host} · спит` : ''}${entry.child ? ' · дочерняя' : ''} · ${ago(entry.updated, Date.now())}`),
+      star,
       remove,
     );
     item.addEventListener('click', (event) => {
@@ -1487,6 +1555,9 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = 
         event.preventDefault();
         if (selected.size) void deleteSelected();
         else remove.click();
+      } else if (event.key === '*') {
+        event.preventDefault();
+        toggleFavorite(entry);
       } else if (event.key === 'Escape' && selected.size) {
         event.preventDefault();
         clear();
@@ -1494,9 +1565,15 @@ function renderHistory(owner: Project, entries: HistoryEntry[] | string, note = 
     });
     rows.set(key, { entry, item, check });
   }
-  historyEl.replaceChildren(bar, ...noteEl, ...[...rows.values()].map((row) => row.item));
-  sync();
-  rove(historyEl, '.history-item');
+  const items = [...rows.values()];
+  const favItems = items.filter((row) => row.entry.favorite).map((row) => row.item);
+  const restItems = items.filter((row) => !row.entry.favorite).map((row) => row.item);
+  historyEl.replaceChildren(head, ...noteEl, ...(favItems.length ? [favTitle, ...favItems, restTitle] : []), ...restItems, empty);
+  applyFilter();
+  if (typing) {
+    filter.focus();
+    filter.setSelectionRange(filter.value.length, filter.value.length);
+  }
 }
 
 const waking = new Set<string>();
@@ -1974,7 +2051,7 @@ bindList(repoMenu, '.menu-item');
 historyEl.setAttribute('role', 'listbox');
 historyEl.setAttribute('aria-label', 'Прошлые сессии');
 historyEl.setAttribute('aria-multiselectable', 'true');
-bindList(historyEl, '.history-item');
+bindList(historyEl, HISTORY_ROW);
 document.addEventListener('click', (event) => {
   if (!repoMenu.contains(event.target as Node)) closeRepoMenu(false);
 });

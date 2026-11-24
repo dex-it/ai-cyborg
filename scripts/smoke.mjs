@@ -967,6 +967,22 @@ async function historyBulk() {
   assert.equal((await state()).bar, true, 'нет полосы выделения');
   await ev('[...document.querySelectorAll(".history-bar button")].find((b) => b.textContent === "Отмена").click()');
   assert.deepEqual(await state(), { bar: false, count: 'Выбрано: 0', marks: '00' }, '«Отмена» не сняла выделение');
+
+  const titles = () => ev('[...document.querySelectorAll(".history-item:not([hidden]) .history-title")].map((e) => e.textContent).join()');
+  await click('.history-star', 1);
+  await waitFor('избранная сессия встала первой', async () => (await titles()) === 'сессия 5,сессия 1');
+  assert.deepEqual(JSON.parse(readFileSync(join(data, 'session-favorites.json'), 'utf8')), { h1: [ids[4]] }, 'отметка не записана в userData');
+  assert.equal(await tabs(), tabsBefore, 'звезда открыла сессию');
+  const filterBy = (q) => ev(`(() => { const f = document.querySelector(".history-filter"); f.value = ${JSON.stringify(q)}; f.dispatchEvent(new Event("input")); })()`);
+  await filterBy('СЕССИЯ 1');
+  assert.equal(await titles(), 'сессия 1', 'отбор по заголовку');
+  await filterBy('нет такой');
+  assert.equal(await titles(), '', 'отбор без совпадений');
+  assert.equal(await ev('[...document.querySelectorAll("#history .history-note")].some((n) => !n.hidden && n.textContent === "Ничего не найдено")'), true, 'нет пометки «Ничего не найдено»');
+  await filterBy('');
+  await click('.history-star', 0);
+  await waitFor('звезда снята', async () => (await titles()) === 'сессия 1,сессия 5');
+  log('сессии: звезда ставит сессию первой и пишется в userData, поиск отбирает по заголовку');
   await click('.history-item', 0);
   await waitFor('клик без выделения продолжил сессию', async () => (await tabs()) === tabsBefore + 1);
   log('сессии: «Отмена» снимает выделение, клик без выделения продолжает сессию');

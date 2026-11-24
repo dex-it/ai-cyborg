@@ -29,6 +29,7 @@ import { BuiltinPlugins } from './builtin-plugins';
 import type { SearchReply } from '../shared/search-pattern';
 import { ChildSessions } from './child-sessions';
 import { deleteHistory, historyExists, isSessionId, listHistory, type HistoryEntry } from './history';
+import { SessionFavorites } from './session-favorites';
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
 import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
@@ -108,9 +109,10 @@ const managedEnv = new ManagedEnv({
 useManagedEnv(managedEnv);
 const childSessions = new ChildSessions(path.join(app.getPath('userData'), 'child-sessions.json'));
 sessions.onChild = (sid) => childSessions.add(sid);
-const markChildren = (entries: HistoryEntry[]): HistoryEntry[] => {
+const sessionFavorites = new SessionFavorites(path.join(app.getPath('userData'), 'session-favorites.json'));
+const markEntries = (projectId: string, entries: HistoryEntry[], favorites = sessionFavorites.of(projectId)): HistoryEntry[] => {
   const children = childSessions.all();
-  return entries.map((e) => (children.has(e.id) ? { ...e, child: true } : e));
+  return entries.map((e) => ({ ...e, ...(children.has(e.id) ? { child: true } : {}), ...(favorites.has(e.id) ? { favorite: true } : {}) }));
 };
 const builtinPlugins = new BuiltinPlugins(path.join(__dirname, 'plugins'), path.join(app.getPath('userData'), 'builtin-plugins.json'));
 sessions.plugins = () => builtinPlugins.forSession();
@@ -544,24 +546,32 @@ ipcMain.handle('remote:search', (_event, id: unknown, mode: unknown, request: un
 ipcMain.handle('history:list', async (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
   if (!project) return [];
-  return markChildren(listHistory(project.repos));
+  const favorites = sessionFavorites.of(project.id);
+  return markEntries(project.id, listHistory(project.repos, undefined, undefined, favorites), favorites);
 });
 // Отдельно от локальных: «История» показывает свои строки сразу, не дожидаясь ssh к хостам.
 ipcMain.handle('history:remote', async (_event, projectId: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
   if (!project?.hosts?.length) return { entries: [], unreachable: [] };
   const found = await remote.history(project);
-  return { ...found, entries: markChildren(found.entries) };
+  return { ...found, entries: markEntries(project.id, found.entries) };
+});
+ipcMain.handle('history:favorite', (_event, projectId: unknown, id: unknown, on: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project || typeof on !== 'boolean') throw new Error('Некорректная отметка сессии');
+  sessionFavorites.set(project.id, id, on);
 });
 ipcMain.handle('remote:wake', (_event, projectId: unknown, host: unknown, sid: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
   if (!project || typeof host !== 'string' || typeof sid !== 'string') throw new Error('Некорректное пробуждение сессии');
   return remote.wake(project, host, sid);
 });
-ipcMain.handle('remote:remove-asleep', (_event, projectId: unknown, host: unknown, sid: unknown) => {
+ipcMain.handle('remote:remove-asleep', async (_event, projectId: unknown, host: unknown, sid: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
   if (!project || typeof host !== 'string' || typeof sid !== 'string') throw new Error('Некорректное удаление сессии');
-  return remote.removeAsleep(project, host, sid);
+  const refused = await remote.removeAsleep(project, host, sid);
+  if (!refused) sessionFavorites.set(project.id, sid, false);
+  return refused;
 });
 ipcMain.handle('remote:disk', (_event, projectId: unknown, host: unknown) => {
   const project = projects.load().projects.find((p) => p.id === projectId);
@@ -602,6 +612,7 @@ ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id:
   const project = projects.load().projects.find((p) => p.id === projectId);
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
   deleteHistory(repo, id);
+  sessionFavorites.set(project.id, id, false);
 });
 ipcMain.handle('session:resume', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown, parent?: unknown) =>
   resumeSession(
