@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { parseSideAnswer, type SideQuestions } from './side-questions.ts';
 
 // Порт на 127.0.0.1 виден всем пользователям машины: вызывающую сессию называет только токен из её --mcp-config.
 
@@ -74,6 +75,7 @@ export class McpServer {
   constructor(
     private readonly backend: McpBackend,
     private readonly version: string,
+    private readonly side?: SideQuestions,
   ) {
     this.server = http.createServer((req, res) => void this.serve(req, res));
   }
@@ -126,11 +128,13 @@ export class McpServer {
   }
 
   private async serve(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const send = (status: number, body?: unknown, headers: Record<string, string> = {}): void => {
+    const send: Send = (status, body, headers = {}) => {
       if (body === undefined) res.writeHead(status, headers).end();
       else res.writeHead(status, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(body));
     };
-    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname !== '/mcp') return send(404);
+    const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    const sideRoute = this.side && (pathname === '/side/next' || pathname === '/side/answer');
+    if (pathname !== '/mcp' && !sideRoute) return send(404);
     // Страница в браузере дотянется до 127.0.0.1, но всегда шлёт Origin; клиент CC его не шлёт.
     if (req.headers.origin !== undefined) return send(403);
     const caller = this.callers.get(/^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '');
@@ -143,6 +147,7 @@ export class McpServer {
     } catch {
       return send(413);
     }
+    if (sideRoute && this.side) return this.serveSide(this.side, pathname, caller, body, res, send);
     let message: unknown;
     try {
       message = JSON.parse(body);
@@ -153,7 +158,30 @@ export class McpServer {
     if (!answer) return send(202);
     send('error' in answer && answer.id === null ? 400 : 200, answer);
   }
+
+  /** Долгий опрос мода cyborg-ask и его ответы; вопрос, отданный в оборванное соединение, возвращается в очередь. */
+  private async serveSide(side: SideQuestions, pathname: string, caller: number, body: string, res: http.ServerResponse, send: Send): Promise<void> {
+    if (pathname === '/side/next') {
+      const gone = new AbortController();
+      res.on('close', () => gone.abort());
+      const ask = await side.next(caller, gone.signal);
+      if (!ask) return res.destroyed ? undefined : send(204);
+      if (res.destroyed) return side.requeue(caller, ask);
+      return send(200, ask);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return send(400);
+    }
+    const reply = parseSideAnswer(parsed);
+    if (!reply) return send(400);
+    send(side.answer(caller, reply.id, reply.answer) ? 204 : 404);
+  }
 }
+
+export type Send = (status: number, body?: unknown, headers?: Record<string, string>) => void;
 
 function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {

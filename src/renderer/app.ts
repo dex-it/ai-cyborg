@@ -59,6 +59,8 @@ import { RemotePaste } from './remote-paste';
 import { osc8Handler, termLinkProvider, type LinkOpeners } from './term-links';
 import { initMic } from './mic';
 import { restartPlan } from './restart-plan';
+import { AppSelection, ShiftTap } from './shift-tap';
+import { SideDialog } from './side-dialog';
 
 interface FileTab {
   viewer: Viewer;
@@ -753,6 +755,29 @@ for (const type of ['keydown', 'pointerup'] as const) window.addEventListener(ty
 let lastSpace = { id: -1, at: -Infinity };
 const SPACE_FRESH_MS = 2_000;
 
+const sideTaps = new WeakMap<Terminal, { tap: ShiftTap; app: AppSelection }>();
+const sideDialogs = new WeakMap<Session, SideDialog>();
+
+/** Выделение в терминале и отдельное нажатие Shift: окно с ответом форка сессии по этому фрагменту. */
+function openSideQuestion(id: number, fragment: string): void {
+  const s = findSession(id);
+  if (!s || !fragment.trim()) return;
+  let dialog = sideDialogs.get(s);
+  if (!dialog) {
+    dialog = new SideDialog(s.termPane, {
+      ask: (prompt) => api.sideAsk(s.id, prompt),
+      open: (link) => {
+        if (link.kind === 'web') void api.openUrl(link.url);
+        else if (link.kind === 'file') linkOpeners.openPath(link.path);
+      },
+      root: s.cwd,
+      focusTerminal: () => s.term.focus(),
+    });
+    sideDialogs.set(s, dialog);
+  }
+  dialog.start(fragment);
+}
+
 function createTerminal(id: number, paste?: RemotePaste): Terminal {
   const term = new Terminal({
     fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Ubuntu Mono', monospace",
@@ -765,10 +790,14 @@ function createTerminal(id: number, paste?: RemotePaste): Terminal {
   });
   term.registerLinkProvider(termLinkProvider(term, linkOpeners));
   // Claude без дисплея (на хосте по SSH) копирует выделение только через OSC 52; чтение буфера программе не даётся.
+  const sideTap = new ShiftTap();
+  const sideApp = new AppSelection();
+  sideTaps.set(term, { tap: sideTap, app: sideApp });
   term.parser.registerOscHandler(52, (data) => {
     const focused = document.hasFocus() && !!term.textarea && document.activeElement === term.textarea;
     const text = osc52Allowed(focused, performance.now(), lastUserAt) ? osc52Text(data) : undefined;
     if (text !== undefined) {
+      sideApp.copied(text, performance.now());
       paste?.copied();
       void navigator.clipboard.writeText(text).catch(() => undefined);
     }
@@ -780,6 +809,16 @@ function createTerminal(id: number, paste?: RemotePaste): Terminal {
     api.input(id, data);
   });
   term.attachCustomKeyEventHandler((event) => {
+    const now = performance.now();
+    if (event.type === 'keydown') sideApp.key(event.key);
+    if (sideTap.key(event, now, term.hasSelection() || sideApp.live(now))) {
+      if (term.hasSelection()) openSideQuestion(id, term.getSelection());
+      else {
+        const copied = sideApp.copiedText(now);
+        if (copied !== undefined) openSideQuestion(id, copied);
+        else void navigator.clipboard.readText().then((text) => openSideQuestion(id, text), () => undefined);
+      }
+    }
     // Claude Code понимает ESC+CR как перевод строки; keypress гасится, иначе xterm шлёт по нему свой \r и промпт уходит.
     if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey) {
       if (event.type === 'keydown') api.input(id, '\x1b\r');
@@ -892,6 +931,16 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
   container.append(innerTabs, innerPanes);
   sessionsEl.append(container);
   term.open(host);
+  host.addEventListener(
+    'mousedown',
+    (event) => {
+      const side = sideTaps.get(term);
+      side?.tap.pointer();
+      side?.app.pointerDown(event.clientX, event.clientY);
+    },
+    true,
+  );
+  host.addEventListener('mouseup', (event) => sideTaps.get(term)?.app.pointerUp(event.clientX, event.clientY, performance.now(), term.hasSelection()), true);
   for (const note of remote?.notes ?? []) term.write(`\x1b[2mCyborg: ${note}\x1b[0m\r\n`);
 
   const stripTab = makeTab('session', '', () => closeSession(session, false));

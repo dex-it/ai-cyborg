@@ -42,6 +42,7 @@ import { ProjectStore } from './projects';
 import { SessionManager } from './sessions';
 import { resumeSession } from './session-resume';
 import { McpServer } from './mcp';
+import { SideQuestions } from './side-questions';
 import { createSessionTools, Handoffs, type ButtonsToolsPort, type PassportToolsPort, type RemoteToolsPort, type SessionsPort } from './session-tools';
 import { collectGitAuth, HOST_AGNOSTIC_TOKEN_ENV } from './remote/auth';
 import { ClaudeTokenStore } from './remote/claude-token';
@@ -159,7 +160,8 @@ const passportPort: PassportToolsPort = {
   isProbe: (id) => passport.isProbe(id),
   report: (caller, args) => passport.report(caller, args),
 };
-const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools, buttonsPort, passportPort), app.getVersion());
+const sideQuestions = new SideQuestions();
+const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools, buttonsPort, passportPort), app.getVersion(), sideQuestions);
 // На Linux без связки ключей safeStorage шифрует постоянным ключом: такое хранение токен на диск не пускает.
 const claudeToken = new ClaudeTokenStore(path.join(app.getPath('userData'), 'remote-claude-token.bin'), {
   available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
@@ -420,7 +422,10 @@ const passport = new PassportService({
   emit: (channel, payload) => sendToWindow(channel, payload),
   claudeAvailable: systemClaudeAvailable,
 });
-onSessionExit = (id) => passport.sessionEnded(id);
+onSessionExit = (id) => {
+  passport.sessionEnded(id);
+  sideQuestions.drop(id);
+};
 ipcMain.handle('passport:view', (_event, projectId: unknown) => passport.view(projectId));
 ipcMain.handle('passport:act', (_event, projectId: unknown, action: unknown) => passport.act(projectId, action));
 ipcMain.handle('projects:load', () => projects.load());
@@ -682,6 +687,9 @@ ipcMain.handle('mrs:details', (_event, id: unknown) => {
 });
 // Аргументы не проверены: SessionManager отбрасывает недопустимые (session-args.ts), главный процесс не бросает.
 ipcMain.on('session:input', (_event, id: unknown, data: unknown) => sessions.write(id, data));
+ipcMain.handle('side:ask', (_event, id: unknown, prompt: unknown) =>
+  typeof id === 'number' && typeof prompt === 'string' ? sideQuestions.ask(id, prompt) : { ok: false, reason: 'bad-request' },
+);
 ipcMain.on('session:resize', (_event, id: unknown, cols: unknown, rows: unknown) => sessions.resize(id, cols, rows));
 ipcMain.on('session:kill', (_event, id: unknown) => sessions.kill(id));
 ipcMain.on('session:release', (_event, id: unknown) => sessions.release(id));
