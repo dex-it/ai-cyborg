@@ -60,6 +60,10 @@ describe('история сессий', () => {
         ],
       );
       assert.equal(listHistory([repo], root, 1).length, 1);
+      // избранная старая сессия идёт сверх лимита и не съедает его место
+      assert.deepEqual(listHistory([repo], root, 1, new Set([ID_A])).map((e) => e.id), [ID_B, ID_A]);
+      assert.deepEqual(listHistory([repo], root, 0, new Set([ID_A])).map((e) => e.id), [ID_A]);
+      assert.deepEqual(listHistory([repo], root, 1, new Set([ID_C])).map((e) => e.id), [ID_B]);
       assert.equal(historyExists(repo, ID_A, root), true);
       assert.equal(historyExists(repo, '../x', root), false);
       assert.equal(historyExists('/w/none', ID_A, root), false);

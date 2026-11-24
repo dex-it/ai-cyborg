@@ -98,6 +98,7 @@ const api = {
   clearClaudeToken: (): Promise<ClaudeTokenStatus> => ipcRenderer.invoke('remote:claude-token:clear'),
   deleteHistory: (projectId: string, repo: string, id: string): Promise<void> =>
     ipcRenderer.invoke('history:delete', projectId, repo, id),
+  favoriteHistory: (projectId: string, id: string, on: boolean): Promise<void> => ipcRenderer.invoke('history:favorite', projectId, id, on),
   resumeSession: (projectId: string, cwd: string, addDirs: string[], id: string, parent?: number): Promise<number> =>
     ipcRenderer.invoke('session:resume', projectId, cwd, addDirs, id, parent),
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),

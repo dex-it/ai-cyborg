@@ -13,6 +13,8 @@ export interface HistoryEntry {
   host?: string;
   /** Сессию открыла другая сессия. */
   child?: boolean;
+  /** Человек отметил сессию звездой: она стоит первой и не отсекается лимитом. */
+  favorite?: boolean;
 }
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -120,8 +122,8 @@ export function readJournalFacts(file: string): JournalFacts | null {
   }
 }
 
-/** Интерактивные сессии репозиториев, свежие первыми; журнал без заголовка не показывается. */
-export function listHistory(repos: string[], root = claudeProjectsDir(), limit = LIMIT): HistoryEntry[] {
+/** Интерактивные сессии репозиториев, свежие первыми; журнал без заголовка не показывается. Сессии из keep (избранные) идут сверх лимита. */
+export function listHistory(repos: string[], root = claudeProjectsDir(), limit = LIMIT, keep: ReadonlySet<string> = new Set()): HistoryEntry[] {
   const candidates: { id: string; repo: string; file: string; size: number; updated: number }[] = [];
   for (const repo of new Set(repos)) {
     for (const dir of journalDirs(repo, root)) {
@@ -146,15 +148,24 @@ export function listHistory(repos: string[], root = claudeProjectsDir(), limit =
   }
   candidates.sort((a, b) => b.updated - a.updated);
   const entries: HistoryEntry[] = [];
+  let recent = 0;
+  let kept = candidates.filter((c) => keep.has(c.id)).length;
   for (const c of candidates) {
-    if (entries.length >= limit) break;
+    const favorite = keep.has(c.id);
+    if (favorite) kept--;
+    else if (recent >= limit) {
+      if (!kept) break;
+      continue;
+    }
     let facts: JournalFacts;
     try {
       facts = journalFacts(...readEdges(c.file, c.size));
     } catch {
       continue;
     }
-    if (facts.interactive && facts.title) entries.push({ id: c.id, repo: c.repo, title: facts.title, updated: c.updated });
+    if (!facts.interactive || !facts.title) continue;
+    entries.push({ id: c.id, repo: c.repo, title: facts.title, updated: c.updated });
+    if (!favorite) recent++;
   }
   return entries;
 }

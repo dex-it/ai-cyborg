@@ -146,7 +146,7 @@ flowchart LR
 | Где | Что | Кто пишет |
 |---|---|---|
 | Файл воркспейса | Проекты, источники задач, кнопки воркспейса | Cyborg, по вашим действиям |
-| Папка настроек Cyborg | `commands.json`, `prompts.json`, `hubs.json`, `builtin-plugins.json`, `extensions-usage.json`, `child-sessions.json`, `run-approvals.json`, «Недавние», события сессий, хуки | Cyborg |
+| Папка настроек Cyborg | `commands.json`, `prompts.json`, `hubs.json`, `builtin-plugins.json`, `extensions-usage.json`, `child-sessions.json`, `session-favorites.json`, `run-approvals.json`, «Недавние», события сессий, хуки | Cyborg |
 | Хост SSH, `~/.cyborg` | Агент, клоны, каталоги сессий, зеркало настройки Claude | Cyborg по вашему запуску удалённой сессии |
 | Настройки окна (`localStorage`) | Размер шрифта, фильтры, вид окон; отдельно у каждого воркспейса | Интерфейс |
 | `~/.claude`, `.claude/`, `.mcp.json` | Настройки, плагины, журналы Claude Code | Claude Code; Cyborg читает, а меняет вызовом `claude plugin` |
