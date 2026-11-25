@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_LIMITS, type Auth, type GitCred, type MirrorFile, type Msg, type RepoSpec, type Vars } from '../../agentd/protocol';
 import type { EnvPort } from '../child-env';
+import type { ModelChoice } from '../claude-args';
 import { cleanMessage } from '../clean-text';
 import { lowSpace, readHostDisk, readPurge, type HostDisk, type PurgeResult } from '../../shared/host-disk';
 import type { Project } from '../projects';
@@ -104,6 +105,7 @@ export interface CreateExtra {
   keep?: boolean;
   spawnedBy?: number;
   limits?: Limits;
+  choice?: ModelChoice;
 }
 
 interface Entry {
@@ -260,6 +262,7 @@ export class RemoteSessions implements RemoteToolsPort {
         selected,
         branch: args.branch,
         ...(args.prompt ? { prompt: args.prompt } : {}),
+        ...extra.choice,
         origin: extra.origin,
         keep: entry.keep,
         ...(extra.spawnedBy ? { spawnedBy: extra.spawnedBy } : {}),

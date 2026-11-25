@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BuiltinPlugins, CORE_PLUGIN, hooksOf } from '../src/main/builtin-plugins';
-import { PARALLEL_SKILL } from '../src/main/claude-args';
+import { EXECUTION_SKILL, PARALLEL_SKILL } from '../src/main/claude-args';
 
 function fixture(t: { after: (fn: () => void) => void }, names: string[]): { root: string; file: string } {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-builtin-'));
@@ -73,7 +73,7 @@ describe('встроенные плагины Cyborg', () => {
     assert.equal(list[0].name, CORE_PLUGIN);
     assert.equal(PARALLEL_SKILL.split(':')[0], CORE_PLUGIN);
     for (const p of list) assert.equal(JSON.parse(fs.readFileSync(path.join('plugins', p.name, '.claude-plugin', 'plugin.json'), 'utf8')).name, p.name);
-    assert.ok(list[0].components.some((c) => c.kind === 'skill' && `${CORE_PLUGIN}:${c.name}` === PARALLEL_SKILL));
+    for (const skill of [PARALLEL_SKILL, EXECUTION_SKILL]) assert.ok(list[0].components.some((c) => c.kind === 'skill' && `${CORE_PLUGIN}:${c.name}` === skill), skill);
     assert.ok(list.find((p) => p.name === 'cyborg-limits')?.hooks.some((h) => h.kind === 'mod'));
   });
 });

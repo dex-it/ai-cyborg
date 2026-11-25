@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
+import { CHILD_PROMPT, EXECUTION_SKILL, MCP_CHILD_PROMPT, REMOTE_EXECUTION_RULE } from '../src/main/claude-args';
 import { COORDINATION_PROMPT, COORDINATION_SKILL, ISOLATION_PROMPT, MCP_SESSION_PROMPT, PARALLEL_PROMPT, PARALLEL_SKILL, PEER_MESSAGE_RULE, REMOTE_SYSTEM_PROMPT, SESSION_PROMPT, TASK_RULE, claudeArgs } from '../src/main/claude-args';
 import { LABEL_MAX, TEXT_MAX } from '../src/main/commands';
 import { CLOSE_AGENT_TOOL, CLOSE_SESSION_TOOL, LIST_SESSIONS_TOOL, OPEN_SESSION_TOOL, REPORT_DONE_TOOL, SEND_TO_SESSION_TOOL, SET_TASK_TOOL, SPAWN_AGENT_TOOL } from '../src/main/session-tools';
@@ -130,6 +131,9 @@ describe('Кнопки от модели: инструкция сессии', ()
     assert.ok(PARALLEL_PROMPT.includes(`скилл ${PARALLEL_SKILL}`));
     assert.ok(MCP_SESSION_PROMPT.startsWith(ISOLATION_PROMPT) && MCP_SESSION_PROMPT.includes(PARALLEL_PROMPT));
     assert.ok(MCP_SESSION_PROMPT.endsWith(SUGGEST_PROMPT), 'кнопки от модели остаются последними');
+    assert.ok(MCP_CHILD_PROMPT.includes(CHILD_PROMPT) && MCP_CHILD_PROMPT.endsWith(SUGGEST_PROMPT) && !MCP_SESSION_PROMPT.includes(CHILD_PROMPT));
+    assert.ok(CHILD_PROMPT.includes(`скилл ${EXECUTION_SKILL}`));
+    assert.ok(REMOTE_SYSTEM_PROMPT.includes(REMOTE_EXECUTION_RULE));
     assert.ok(!SESSION_PROMPT.includes(PARALLEL_PROMPT));
   });
 

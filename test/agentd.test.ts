@@ -605,6 +605,21 @@ describe('daemon: сон и пробуждение', () => {
     assert.match(String(c.got.find((m) => m.rid === 10)?.message), /не спит/);
   });
 
+  it('модель и effort spawn ложатся в meta и повторяются в запуске после wake; неизвестная модель - отказ', async (t) => {
+    const r = rig(t, { tickMs: 10 });
+    const { c, conn, sid } = await open(r, { model: 'sonnet', effort: 'medium' });
+    const launch = () => fs.readFileSync(path.join(sessDir(r, sid), 'launch.sh'), 'utf8');
+    assert.ok(launch().includes(`'--model' 'sonnet' '--effort' 'medium'`));
+    assert.equal(readMeta(r, sid).model, 'sonnet');
+    await putToSleep(r, c, sid);
+    conn.receive({ type: 'wake', rid: 9, sid, token: 'N'.repeat(43), cols: 100, rows: 30 } as Msg);
+    await until(() => r.spawned.length === 2);
+    assert.ok(launch().includes(`'--model' 'sonnet' '--effort' 'medium'`));
+    const bad = await open(r, { sid: 'cccccccc-1', model: '--x' }, 'inst-2');
+    assert.match(String(bad.c.of('error')[0]?.message ?? bad.c.got.at(-1)?.message), /model - одно из/);
+    assert.equal(fs.existsSync(path.join(r.home, '.cyborg', 'sessions', 'cccccccc-1')), false);
+  });
+
   it('wake сессии, куда ни разу не писали, начинает разговор заново под тем же номером, а не --resume без журнала', async (t) => {
     const r = rig(t, { tickMs: 10 });
     const { c, conn, sid } = await open(r);

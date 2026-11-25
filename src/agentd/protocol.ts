@@ -92,6 +92,8 @@ export interface SpawnMsg extends AgentExtra {
   selected: number;
   branch: string;
   prompt?: string;
+  model?: string;
+  effort?: string;
   origin: 'tool' | 'human';
   keep: boolean;
   spawnedBy?: number;
@@ -111,6 +113,9 @@ export interface SessionMeta {
   keep: boolean;
   spawnedBy?: number;
   branch: string;
+  /** Модель и effort запуска: wake продолжает разговор на них же. */
+  model?: string;
+  effort?: string;
   /** Пути клонов всех репозиториев проекта; при старте есть только клон выбранного, остальные агент клонирует сам по url. */
   clones: { name: string; path: string; url?: string }[];
   /** Клон выбранного репозитория: стартовый cwd. */

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { McpBackend, McpTool } from './mcp.ts';
 import { branchNameProblem } from './branch-name.ts';
 import { cleanMessage } from './clean-text.ts';
+import { EFFORTS, MODELS, readModelChoice, type ModelChoice } from './claude-args.ts';
 import type { SayResult, SessionInfo } from './sessions.ts';
 
 export const OPEN_SESSION_TOOL = 'open_session';
@@ -171,6 +172,12 @@ function reportPassportTool(): McpTool {
   };
 }
 
+/** Без них дочерняя получила бы модель по умолчанию, а не подобранную под её часть. */
+const MODEL_PROPS = {
+  model: { type: 'string', enum: [...MODELS], description: 'Модель новой сессии; не задана - модель Claude Code по умолчанию.' },
+  effort: { type: 'string', enum: [...EFFORTS], description: 'Effort новой сессии; не задан - по умолчанию.' },
+};
+
 function spawnAgentTool(dirs: string[], hosts: string[]): McpTool {
   return {
     name: SPAWN_AGENT_TOOL,
@@ -199,6 +206,7 @@ function spawnAgentTool(dirs: string[], hosts: string[]): McpTool {
           additionalProperties: false,
         },
         keep: { type: 'boolean', description: 'Не удалять клоны, если сессия завершится сама, без close_agent.' },
+        ...MODEL_PROPS,
       },
       required: ['host', 'repo', 'branch', 'prompt'],
       additionalProperties: false,
@@ -238,6 +246,7 @@ function localTools(dirs: string[]): McpTool[] {
         properties: {
           prompt: { type: 'string', minLength: 1, description: 'Первое сообщение новой сессии: задание целиком. Не начинается с «-».' },
           repo: { type: 'string', enum: dirs, description: 'Рабочий каталог новой сессии - один из каталогов проекта.' },
+          ...MODEL_PROPS,
         },
         required: ['prompt', 'repo'],
         additionalProperties: false,
@@ -332,19 +341,21 @@ export function promptProblem(text: string, name: string, limitHint = ''): strin
   return null;
 }
 
-export interface OpenSessionArgs {
+export interface OpenSessionArgs extends ModelChoice {
   prompt: string;
   repo: string;
 }
 
 /** Аргументы от модели; ошибка - строка, её текст вернётся модели. */
 export function validateOpenSession(value: unknown, dirs: string[]): OpenSessionArgs | string {
-  const { prompt, repo } = args(value);
+  const { prompt, repo, model, effort } = args(value);
   if (typeof prompt !== 'string' || !prompt.trim()) return 'prompt - непустая строка';
   const problem = promptProblem(prompt, 'prompt', ': сократи задание или передай его файлом');
   if (problem) return problem;
   if (typeof repo !== 'string' || !dirs.includes(repo)) return `repo - один из каталогов проекта: ${dirs.join(', ')}`;
-  return { prompt: prompt.trim(), repo };
+  const choice = readModelChoice({ model, effort });
+  if (typeof choice === 'string') return choice;
+  return { prompt: prompt.trim(), repo, ...choice };
 }
 
 export function validateSend(value: unknown, peers: SessionInfo[], caller: number): { id: number; message: string } | string {
@@ -385,7 +396,7 @@ export interface Limits {
   idle_timeout_min?: number;
 }
 
-export interface SpawnArgs {
+export interface SpawnArgs extends ModelChoice {
   host: string;
   repo: string;
   branch: string;
@@ -402,7 +413,7 @@ const LIMIT_RANGES: Record<keyof Limits, [number, number]> = {
 
 /** Аргументы spawn_agent от модели; ошибка - строка, её текст вернётся модели. */
 export function validateSpawn(value: unknown, dirs: string[], hosts: string[]): SpawnArgs | string {
-  const { host, repo, branch, prompt, limits, keep } = args(value);
+  const { host, repo, branch, prompt, limits, keep, model, effort } = args(value);
   if (typeof host !== 'string' || !hosts.includes(host)) return `host - один из хостов проекта: ${hosts.join(', ')}`;
   if (typeof repo !== 'string' || !dirs.includes(repo)) return `repo - один из каталогов проекта: ${dirs.join(', ')}`;
   const bad = branchNameProblem(branch);
@@ -411,7 +422,9 @@ export function validateSpawn(value: unknown, dirs: string[], hosts: string[]): 
   const problem = promptProblem(prompt, 'prompt', ': сократи задание или передай его файлом');
   if (problem) return problem;
   if (keep !== undefined && typeof keep !== 'boolean') return 'keep - true или false';
-  const out: SpawnArgs = { host, repo, branch: branch as string, prompt: prompt.trim(), keep: keep === true };
+  const choice = readModelChoice({ model, effort });
+  if (typeof choice === 'string') return choice;
+  const out: SpawnArgs = { host, repo, branch: branch as string, prompt: prompt.trim(), keep: keep === true, ...choice };
   if (limits === undefined) return out;
   if (typeof limits !== 'object' || limits === null || Array.isArray(limits)) return 'limits - объект';
   const parsed: Limits = {};
@@ -545,6 +558,7 @@ export interface RemoteHandoff {
 
 interface Pending extends HandoffRequest {
   prompt: string;
+  choice: ModelChoice;
   remote?: RemoteHandoff;
   resolve: (id: number) => void;
   reject: (error: Error) => void;
@@ -562,17 +576,17 @@ export class Handoffs {
   ) {}
 
   /** Номер новой сессии, когда интерфейс её создал. */
-  request(from: number, repo: string, prompt: string, remote?: RemoteHandoff): Promise<number> {
+  request(from: number, repo: string, prompt: string, remote?: RemoteHandoff, choice: ModelChoice = {}): Promise<number> {
     const hid = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.fail(hid, `интерфейс Cyborg не открыл вкладку за ${this.timeoutMs / 1000} с`), this.timeoutMs);
-      this.pending.set(hid, { hid, from, repo, prompt, remote, resolve, reject, timer });
+      this.pending.set(hid, { hid, from, repo, prompt, choice, remote, resolve, reject, timer });
       if (!this.send({ hid, from, repo, ...(remote ? { host: remote.host } : {}) })) this.fail(hid, 'окно Cyborg закрыто');
     });
   }
 
   /** Передача для session:create: ключ одноразовый, каталог - тот, что выбрала модель. */
-  take(hid: unknown, cwd: unknown): Pick<Pending, 'prompt' | 'remote' | 'from' | 'resolve' | 'reject'> | null {
+  take(hid: unknown, cwd: unknown): Pick<Pending, 'prompt' | 'choice' | 'remote' | 'from' | 'resolve' | 'reject'> | null {
     const entry = typeof hid === 'string' ? this.pending.get(hid) : undefined;
     if (!entry || entry.repo !== cwd) return null;
     this.pending.delete(entry.hid);
@@ -716,13 +730,13 @@ export function createSessionTools(
         const valid = validateSpawn(value, dirs, sessions.hostsOf?.(caller) ?? []);
         if (typeof valid === 'string') throw new Error(valid);
         await remote.prepare(valid.host, valid.repo, valid.limits);
-        const id = await handoffs.request(caller, valid.repo, valid.prompt, { host: valid.host, branch: valid.branch, limits: valid.limits, keep: valid.keep });
+        const id = await handoffs.request(caller, valid.repo, valid.prompt, { host: valid.host, branch: valid.branch, limits: valid.limits, keep: valid.keep }, { model: valid.model, effort: valid.effort });
         return `Открыта вкладка удалённой сессии ${id} на ${valid.host}: клоны готовятся, итог придёт сообщением после report_done.`;
       }
       if (name !== OPEN_SESSION_TOOL) throw new Error(`неизвестный инструмент ${name}`);
       const valid = validateOpenSession(value, dirs);
       if (typeof valid === 'string') throw new Error(valid);
-      const id = await handoffs.request(caller, valid.repo, valid.prompt);
+      const id = await handoffs.request(caller, valid.repo, valid.prompt, undefined, { model: valid.model, effort: valid.effort });
       return `Открыта вкладка сессии ${id} в ${valid.repo}.`;
     },
   };
