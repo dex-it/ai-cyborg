@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { claudeArgs, remoteSystemPrompt } from '../main/claude-args.ts';
+import { claudeArgs, modelArgs, readModelChoice, remoteSystemPrompt } from '../main/claude-args.ts';
 import { listDir, readTextFile, walkFiles } from '../main/files.ts';
 import { gitBranch, gitFiles, gitHeadContent, gitRoot, gitStatus } from '../main/git.ts';
 import { gitDiffSearch, gitGrep } from '../main/git-search.ts';
@@ -498,6 +498,8 @@ export class Daemon {
     const limits = { ...DEFAULT_LIMITS, ...msg.limits };
     if (this.liveCount() >= limits.maxPerHost) return fail(`на хосте уже ${this.liveCount()} удалённых сессий (предел ${limits.maxPerHost})`);
     if (!/^[0-9a-f-]{8,64}$/.test(msg.sid) || this.sessions.has(msg.sid)) return fail('некорректный номер сессии');
+    const choice = readModelChoice({ model: msg.model, effort: msg.effort });
+    if (typeof choice === 'string') return fail(choice);
     const dir = path.join(this.root, 'sessions', msg.sid);
     const work = path.join(this.root, 'work', msg.sid);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -513,6 +515,7 @@ export class Daemon {
       keep: msg.keep,
       spawnedBy: msg.spawnedBy,
       branch: msg.branch,
+      ...choice,
       clones,
       cwd: clones[selected].path,
       port: 0,
@@ -680,9 +683,11 @@ export class Daemon {
     const prompt = remoteSystemPrompt(others);
     // Номер разговора задаётся при запуске: по нему wake продолжает тот же разговор.
     // В сессию, куда ни разу не писали, claude журнала не завёл: --resume упал бы «No conversation found», разговор начинается заново под тем же номером.
+    const choice = readModelChoice({ model: sess.meta.model, effort: sess.meta.effort });
+    const model = typeof choice === 'string' ? [] : modelArgs(choice);
     const args = opts.resume && fs.existsSync(this.journalOf(sess.meta))
-      ? claudeArgs(addDirs, undefined, sess.sid, prompt)
-      : ['--session-id', sess.sid, ...claudeArgs(addDirs, opts.prompt, undefined, prompt)];
+      ? [...model, ...claudeArgs(addDirs, undefined, sess.sid, prompt)]
+      : ['--session-id', sess.sid, ...model, ...claudeArgs(addDirs, opts.prompt, undefined, prompt)];
     write(
       'launch.sh',
       `#!/bin/sh\ntty > "$CYBORG_DIR/tty"\nexec claude --settings "$CYBORG_SETTINGS" --mcp-config "$CYBORG_MCP" ${args.map(shQuote).join(' ')}\n`,

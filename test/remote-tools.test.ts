@@ -83,10 +83,12 @@ describe('validateSpawn', () => {
       keep: true,
       limits: { max_agents_per_host: 2, task_timeout_min: 30 },
     });
+    assert.deepEqual(validateSpawn({ ...ok, model: 'opus', effort: 'xhigh' }, DIRS, ['dev1']), { host: 'dev1', repo: '/repo/a', branch: 'feat/x', prompt: 'задание', keep: false, model: 'opus', effort: 'xhigh' });
   });
 
   it('отвергает хост и каталог вне проекта, ветку-ключ, пустое задание, неверные пределы', () => {
     assert.match(validateSpawn({ ...ok, host: 'evil' }, DIRS, ['dev1']) as string, /dev1/);
+    assert.match(validateSpawn({ ...ok, model: 'claude-x' }, DIRS, ['dev1']) as string, /model - одно из/);
     assert.match(validateSpawn({ ...ok, repo: '/etc' }, DIRS, ['dev1']) as string, /\/repo\/a/);
     assert.equal(typeof validateSpawn({ ...ok, branch: '--upload-pack=x' }, DIRS, ['dev1']), 'string');
     assert.match(validateSpawn({ ...ok, prompt: '  ' }, DIRS, ['dev1']) as string, /непустая/);
@@ -144,9 +146,9 @@ describe('createSessionTools: удалённая часть', () => {
 
   it('spawn_agent проверяет хост, затем передаёт вкладку с хостом, веткой и keep', async () => {
     const { backend, calls, requested } = rig('local');
-    assert.match(await backend.call(1, 'spawn_agent', { host: 'dev1', repo: '/repo/a', branch: 'b', prompt: 'p', keep: true }), /удалённой сессии 7 на dev1/);
+    assert.match(await backend.call(1, 'spawn_agent', { host: 'dev1', repo: '/repo/a', branch: 'b', prompt: 'p', keep: true, model: 'sonnet', effort: 'high' }), /удалённой сессии 7 на dev1/);
     assert.deepEqual(calls, [['prepare', 'dev1', '/repo/a', undefined]]);
-    assert.deepEqual(requested, [[1, '/repo/a', 'p', { host: 'dev1', branch: 'b', limits: undefined, keep: true }]]);
+    assert.deepEqual(requested, [[1, '/repo/a', 'p', { host: 'dev1', branch: 'b', limits: undefined, keep: true }, { model: 'sonnet', effort: 'high' }]]);
   });
 
   it('удалённая сессия не вызывает spawn_agent и close_agent, даже зная имя', async () => {

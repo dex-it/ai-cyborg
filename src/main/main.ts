@@ -499,7 +499,7 @@ ipcMain.handle('session:create', async (_event, projectId: unknown, cwd: unknown
     const handoff = handoffs.take(start.handoff, cwd);
     if (!handoff) throw new Error('Переданная задача не найдена или устарела');
     try {
-      const id = sessions.create(project, cwd as string, addDirs as string[], handoff.prompt, undefined, handoff.from);
+      const id = sessions.create(project, cwd as string, addDirs as string[], handoff.prompt, undefined, handoff.from, handoff.choice);
       handoff.resolve(id);
       return id;
     } catch (error) {
@@ -522,7 +522,7 @@ ipcMain.handle('remote:create', async (_event, arg: unknown) => {
     try {
       const args = validateRemoteCreate({ host: handoff.remote.host, repo: input.repo, branch: handoff.remote.branch, prompt: handoff.prompt }, project);
       if (typeof args === 'string') throw new Error(args);
-      const info = await remote.create(project, args, { origin: 'tool', keep: handoff.remote.keep, spawnedBy: handoff.from, limits: handoff.remote.limits });
+      const info = await remote.create(project, args, { origin: 'tool', keep: handoff.remote.keep, spawnedBy: handoff.from, limits: handoff.remote.limits, choice: handoff.choice });
       handoff.resolve(info.id);
       return info;
     } catch (error) {

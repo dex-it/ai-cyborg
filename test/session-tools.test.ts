@@ -17,6 +17,7 @@ import {
   TASK_SUMMARY_MAX,
 } from '../src/main/session-tools';
 import { AUTO_ALLOWED_TOOLS, hookSettings } from '../src/main/session-state';
+import { modelArgs } from '../src/main/claude-args';
 
 const DIRS = ['/repo/a', '/repo/b'];
 
@@ -35,6 +36,20 @@ describe('validateOpenSession', () => {
     assert.match(validateOpenSession({ prompt: 'я'.repeat(MAX_TEXT_BYTES / 2 + 1), repo: '/repo/a' }, DIRS) as string, /байт/);
     assert.match(validateOpenSession({ prompt: 'x', repo: '/repo/c' }, DIRS) as string, /\/repo\/a, \/repo\/b/);
     assert.equal(typeof validateOpenSession(null, DIRS), 'string');
+  });
+
+  it('модель и effort - из перечня, без них ключей в итоге нет', () => {
+    assert.deepEqual(validateOpenSession({ prompt: 'x', repo: '/repo/a', model: 'sonnet', effort: 'medium' }, DIRS), { prompt: 'x', repo: '/repo/a', model: 'sonnet', effort: 'medium' });
+    assert.match(validateOpenSession({ prompt: 'x', repo: '/repo/a', model: 'gpt' }, DIRS) as string, /model - одно из: haiku, sonnet, opus, fable/);
+    assert.match(validateOpenSession({ prompt: 'x', repo: '/repo/a', effort: '--dangerously-skip-permissions' }, DIRS) as string, /effort - одно из/);
+  });
+});
+
+describe('modelArgs', () => {
+  it('ключи claude только для заданного', () => {
+    assert.deepEqual(modelArgs({ model: 'opus', effort: 'high' }), ['--model', 'opus', '--effort', 'high']);
+    assert.deepEqual(modelArgs({ effort: 'low' }), ['--effort', 'low']);
+    assert.deepEqual(modelArgs(undefined), []);
   });
 });
 
@@ -256,7 +271,11 @@ describe('createSessionTools', () => {
   it('open_session передаёт задачу интерфейсу и называет номер новой сессии; list_sessions - перечень', async () => {
     const { backend, requested } = tools([peer(1, 'working')]);
     assert.match(await backend.call(1, 'open_session', { prompt: 'задача', repo: '/repo/b' }), /сессии 42 в \/repo\/b/);
-    assert.deepEqual(requested, [[1, '/repo/b', 'задача']]);
+    await backend.call(1, 'open_session', { prompt: 'механика', repo: '/repo/a', model: 'sonnet', effort: 'low' });
+    assert.deepEqual(requested, [
+      [1, '/repo/b', 'задача', undefined, { model: undefined, effort: undefined }],
+      [1, '/repo/a', 'механика', undefined, { model: 'sonnet', effort: 'low' }],
+    ]);
     assert.equal(JSON.parse(await backend.call(1, 'list_sessions', {}))[0].self, true);
   });
 
@@ -287,6 +306,7 @@ describe('Handoffs', () => {
     assert.equal(handoffs.take(hid, '/repo/b'), null);
     const taken = handoffs.take(hid, '/repo/a');
     assert.equal(taken?.prompt, 'задание');
+    assert.deepEqual(taken?.choice, {});
     assert.equal(handoffs.take(hid, '/repo/a'), null);
     taken!.resolve(7);
     assert.equal(await pending, 7);
