@@ -5,7 +5,7 @@ import { CHILD_PROMPT, EXECUTION_SKILL, MCP_CHILD_PROMPT, REMOTE_EXECUTION_RULE 
 import { COORDINATION_PROMPT, COORDINATION_SKILL, ISOLATION_PROMPT, MCP_SESSION_PROMPT, PARALLEL_PROMPT, PARALLEL_SKILL, PEER_MESSAGE_RULE, REMOTE_SYSTEM_PROMPT, SESSION_PROMPT, TASK_RULE, claudeArgs } from '../src/main/claude-args';
 import { LABEL_MAX, TEXT_MAX } from '../src/main/commands';
 import { CLOSE_AGENT_TOOL, CLOSE_SESSION_TOOL, LIST_SESSIONS_TOOL, OPEN_SESSION_TOOL, REPORT_DONE_TOOL, SEND_TO_SESSION_TOOL, SET_TASK_TOOL, SPAWN_AGENT_TOOL } from '../src/main/session-tools';
-import { displaySuggestions, parseSuggestions, SUGGEST_MAX, SUGGEST_PROMPT } from '../src/main/suggestions';
+import { displaySuggestions, parseSuggestions, SUGGEST_MAX, SUGGEST_PROMPT, withoutSuggestions } from '../src/main/suggestions';
 
 const tail = (json: string, before = 'Готово.\n\n'): string => `${before}<!-- cyborg-buttons: ${json} -->`;
 const button = { label: 'Тест', text: 'напиши тест' };
@@ -14,6 +14,29 @@ describe('Кнопки от модели: разбор хвоста ответа
   it('комментарий в конце ответа даёт кнопки без Enter; конечные пробелы и переводы строки не мешают', () => {
     assert.deepEqual(parseSuggestions(tail(JSON.stringify([button])) + '\n \n'), [{ ...button, submit: false }]);
     assert.deepEqual(parseSuggestions(`<!-- cyborg-buttons:[{"label":"A","text":"a","description":"д"}]-->`), [{ label: 'A', text: 'a', submit: false, description: 'д' }]);
+  });
+
+  it('точка после «]» и после «-->» не мешает: модель закрывает её по привычке', () => {
+    const json = JSON.stringify([button]);
+    const expected = [{ ...button, submit: false }];
+    assert.deepEqual(parseSuggestions(`Готово.\n\n<!-- cyborg-buttons: ${json}. -->`), expected);
+    assert.deepEqual(parseSuggestions(`Готово.\n\n<!-- cyborg-buttons: ${json} -->.`), expected);
+    assert.deepEqual(parseSuggestions(`Готово.\n\n<!-- cyborg-buttons: ${json}. -->. \n`), expected);
+    assert.deepEqual(parseSuggestions(`<!-- cyborg-buttons: ${json}.-->`), expected);
+  });
+
+  it('точка внутри JSON не чинится: комментарий не разбирается', () => {
+    assert.deepEqual(parseSuggestions('Готово.\n\n<!-- cyborg-buttons: [{"label":"A".,"text":"a"}] -->'), []);
+    assert.deepEqual(parseSuggestions('Готово.\n\n<!-- cyborg-buttons: . -->'), []);
+  });
+
+  it('длинная серия точек и пробелов в ответе разбирается за линейное время', () => {
+    const started = Date.now();
+    for (const message of ['.'.repeat(200_000) + 'x', ' .'.repeat(100_000) + 'x', 'x' + '.'.repeat(200_000)]) {
+      assert.deepEqual(parseSuggestions(message), []);
+      assert.equal(withoutSuggestions(message), message);
+    }
+    assert.ok(Date.now() - started < 1000, 'квадратичный разбор блокировал бы главный процесс');
   });
 
   it('submit принимается как у кнопок файла; сочетание и отключение от модели не принимаются: поля отбрасываются', () => {
@@ -160,6 +183,11 @@ describe('Кнопки от модели: инструкция сессии', ()
     assert.ok(body.includes('[CC5 → CC7]') && PEER_MESSAGE_RULE.includes('[CCn → CCm]'), 'метка в скилле и в промпте одного вида');
   });
 
+  it('инструкция не оставляет точки у закрывающего маркера, которую модель перенесла бы в комментарий', () => {
+    assert.doesNotMatch(SUGGEST_PROMPT, /--> ?\./);
+    assert.match(SUGGEST_PROMPT, /ни точки, ни других знаков между «\]» и -->/);
+  });
+
   it('пример из инструкции сам разбирается', () => {
     const example = /<!-- cyborg-buttons: .* -->/.exec(SUGGEST_PROMPT)?.[0] ?? '';
     assert.equal(parseSuggestions(example).length, 1);
@@ -182,6 +210,12 @@ describe('Кнопки модели на экране: хук MessageDisplay', (
   it('комментарий, из которого не прошла ни одна кнопка, виден как есть', () => {
     assert.equal(displaySuggestions('<!-- cyborg-buttons: [{"label":"Удалить","text":"!rm -rf /"}] -->\n'), null);
     assert.equal(displaySuggestions('<!-- cyborg-buttons: не JSON -->\n'), null);
+  });
+
+  it('точка у комментария не мешает ни экрану, ни ответу без комментария', () => {
+    assert.equal(displaySuggestions('<!-- cyborg-buttons: [{"label":"Тесты","text":"npm test"}]. -->.\n'), '\x1b[2m✦ Кнопки на полосе: «Тесты»\x1b[22m\n');
+    assert.equal(withoutSuggestions('Готово.\n\n<!-- cyborg-buttons: [{"label":"A","text":"a"}]. -->.'), 'Готово.');
+    assert.equal(withoutSuggestions('Готово.'), 'Готово.');
   });
 
   it('отброшенная кнопка не называется на экране', () => {
