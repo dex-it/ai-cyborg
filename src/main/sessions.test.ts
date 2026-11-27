@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
+import { LOGIN_GATE, MCP_SESSION_PROMPT, SESSION_PROMPT } from './claude-args.ts';
 import { useManagedEnv, type EnvPort, type Overlay } from './child-env.ts';
 import { prepareEventsDir, createEventsFile } from './events-store.ts';
 import { SessionManager, SETTINGS_TTL_MS, SUBMIT_DELAY_MS, waitingReason } from './sessions.ts';
@@ -516,7 +516,7 @@ test('SessionManager с MCP: конфиг сессии в файле 0600, кл�
   manager.plugins = () => ({ dirs: ['/app/plugins/cyborg', '/app/plugins/cyborg-limits'], core: true });
   const id = manager.create('p', '/repo/a', ['/repo/b']);
   assert.equal('CYBORG_PLUGIN' in box.call.env, false);
-  assert.match(box.call.args[1], /^exec claude --settings "\$CYBORG_SETTINGS" --mcp-config /);
+  assert.match(box.call.args[1], /^if \[ -z "\$CLAUDE_CODE_OAUTH_TOKEN[\s\S]*\nexec claude --settings "\$CYBORG_SETTINGS" --mcp-config /);
   const file = box.call.env.CYBORG_MCP;
   assert.equal(file, path.join(userData, 'sessions', `${process.pid}-${id}.mcp.json`));
   assert.equal(mode(file), 0o600);
@@ -535,7 +535,7 @@ test('SessionManager с MCP: конфиг сессии в файле 0600, кл�
 test('SessionManager без MCP запускает claude без --mcp-config', (t) => {
   const { manager, box } = spawningManager(t);
   manager.create('p', os.tmpdir(), []);
-  assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" "$@"');
+  assert.equal(box.call.args[1], `${LOGIN_GATE}\nexec claude --settings "$CYBORG_SETTINGS" "$@"`);
   assert.equal(box.call.args[4], SESSION_PROMPT);
   assert.equal('CYBORG_MCP' in box.call.env, false);
   assert.equal('CYBORG_PLUGIN' in box.call.env, false);
@@ -561,7 +561,7 @@ test('SessionManager с плагином без MCP: скиллы подключ
   const { manager, box } = spawningManager(t);
   manager.plugins = () => ({ dirs: ['/app/plugins/cyborg'], core: true });
   manager.create('p', os.tmpdir(), []);
-  assert.equal(box.call.args[1], 'exec claude --settings "$CYBORG_SETTINGS" "$@"');
+  assert.equal(box.call.args[1], `${LOGIN_GATE}\nexec claude --settings "$CYBORG_SETTINGS" "$@"`);
   assert.deepEqual(box.call.args.slice(3, 5), ['--plugin-dir', '/app/plugins/cyborg']);
   assert.equal(box.call.args[6], SESSION_PROMPT);
 });

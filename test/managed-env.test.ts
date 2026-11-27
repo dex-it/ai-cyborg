@@ -687,3 +687,63 @@ describe('имена и пометки', () => {
     assert.deepEqual(ownNotes('ENVT_PLAIN'), []);
   });
 });
+
+describe('ManagedEnv: общий файл двух окон', () => {
+  const twin = (t: { after: (fn: () => void) => void }, file: string, store: string) => {
+    const other = new ManagedEnv({
+      file,
+      home: path.dirname(file),
+      loginPath: async () => `${fakeBin}:${process.env.PATH}`,
+      inherited: () => ({ ENVT_INHERITED: 'from-parent', FAKE_PASS_DIR: store, FAKE_PASS_LOG: path.join(store, 'calls.log'), PATH: process.env.PATH }),
+    });
+    t.after(() => other.dispose());
+    return other;
+  };
+
+  it('снятие в одном окне другое применяет к своим запускам', async (t) => {
+    const { env, file, store } = withPass(t, { 'claude-agent/oauth': 'sk-ant-oat01-SECRET' }, [{ name: 'CLAUDE_CODE_OAUTH_TOKEN', candidates: [expr(1, 'pass show claude-agent/oauth')] }]);
+    const other = twin(t, file, store);
+    assert.deepEqual(await env.select('CLAUDE_CODE_OAUTH_TOKEN', ID(1)), { ok: true });
+    other.reload();
+    await until(() => other.overlay().set.get('CLAUDE_CODE_OAUTH_TOKEN') === 'sk-ant-oat01-SECRET');
+    env.unset('CLAUDE_CODE_OAUTH_TOKEN');
+    other.reload();
+    assert.equal(other.overlay().set.has('CLAUDE_CODE_OAUTH_TOKEN'), false);
+    assert.equal(other.overlay().unset.has('CLAUDE_CODE_OAUTH_TOKEN'), true);
+  });
+
+  it('выбранный литерал и удаление переменной доходят сразу', (t) => {
+    const { env, file, store } = withPass(t, {}, [{ name: 'ENVT_L', candidates: [literal(1, 'a'), literal(2, 'b')], choice: selected(1) }]);
+    const other = twin(t, file, store);
+    void env.select('ENVT_L', ID(2));
+    other.reload();
+    assert.equal(other.overlay().set.get('ENVT_L'), 'b');
+    env.remove('ENVT_L');
+    other.reload();
+    assert.equal(other.overlay().set.has('ENVT_L'), false);
+    assert.deepEqual(other.view().vars, []);
+  });
+
+  it('своя запись и неизменный файл ничего не трогают', (t) => {
+    const { env, changes } = withPass(t, {}, [{ name: 'ENVT_L', candidates: [literal(1, 'a')], choice: selected(1) }]);
+    const before = changes.length;
+    env.reload();
+    assert.equal(changes.length, before);
+    assert.equal(env.overlay().set.get('ENVT_L'), 'a');
+  });
+
+  it('испорченный файл прежнее состояние не трогает', (t) => {
+    const { env, file } = withPass(t, {}, [{ name: 'ENVT_L', candidates: [literal(1, 'a')], choice: selected(1) }]);
+    fs.writeFileSync(file, '{oops');
+    env.reload();
+    assert.equal(env.overlay().set.get('ENVT_L'), 'a');
+  });
+
+  it('наблюдение за каталогом подхватывает правку соседа без вызова reload', async (t) => {
+    const { env, file, store } = withPass(t, {}, [{ name: 'ENVT_L', candidates: [literal(1, 'a'), literal(2, 'b')], choice: selected(1) }]);
+    const other = twin(t, file, store);
+    other.watch();
+    await env.select('ENVT_L', ID(2));
+    await until(() => other.overlay().set.get('ENVT_L') === 'b');
+  });
+});
