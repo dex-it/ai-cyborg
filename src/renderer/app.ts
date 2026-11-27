@@ -879,6 +879,8 @@ async function newSession(repo: string, start?: TrackerStart): Promise<void> {
 
 async function createSessionView(owner: Project, repo: string, start?: StartFrom, resume?: string, remote?: RemoteInfo, opener?: Session): Promise<void> {
   const addDirs = owner.repos.filter((r) => r !== repo);
+  // До запуска: продолженная сессия допишет в журнал записи с каталогом запуска.
+  const cwd = remote ? remote.cwd : resume ? ((await api.resumeCwd(owner.id, repo, resume).catch(() => null)) ?? repo) : repo;
   // В канал идут только ссылка и намерение: название, ветки и автор в первое сообщение не попадают.
   const id = remote
     ? remote.id
@@ -901,7 +903,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
                   : { mr: refOf(start.mr), intent: start.intent }
                 : { jira: { key: start.jira.key }, ...(start.button ? { button: start.button } : {}) }),
       );
-  const root = remote ? remote.cwd : ((await api.gitRoot(repo)) ?? repo);
+  const root = remote ? remote.cwd : ((await api.gitRoot(cwd)) ?? repo);
   const parent = start && 'handoff' in start ? start.parent : opener;
   const color = parent?.color ?? sessionColor(colorIndex++);
   const paste = remote ? new RemotePaste() : undefined;
@@ -953,7 +955,7 @@ async function createSessionView(owner: Project, repo: string, start?: StartFrom
     id,
     project: owner,
     repo,
-    cwd: remote ? remote.cwd : repo,
+    cwd,
     root,
     exited: false,
     remote: remote && { host: remote.host, roots: remote.roots, online: true, reported: remote.reported === true, fs: remoteFs(id) },

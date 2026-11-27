@@ -102,6 +102,7 @@ const api = {
   deleteHistory: (projectId: string, repo: string, id: string): Promise<void> =>
     ipcRenderer.invoke('history:delete', projectId, repo, id),
   favoriteHistory: (projectId: string, id: string, on: boolean): Promise<void> => ipcRenderer.invoke('history:favorite', projectId, id, on),
+  resumeCwd: (projectId: string, repo: string, id: string): Promise<string | null> => ipcRenderer.invoke('history:cwd', projectId, repo, id),
   resumeSession: (projectId: string, cwd: string, addDirs: string[], id: string, parent?: number): Promise<number> =>
     ipcRenderer.invoke('session:resume', projectId, cwd, addDirs, id, parent),
   trackersStatus: (): Promise<TrackersStatus> => ipcRenderer.invoke('trackers:status'),
