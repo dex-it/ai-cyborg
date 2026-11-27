@@ -348,7 +348,7 @@ export function fixPrompt(cap: Capability, repo: string): string {
     'Настройка паспорта проекта. Цель сессии: настроить репозиторий так, чтобы следующий агент легко, чётко и консистентно получал из него информацию о проекте. Ты ведёшь человека по всем открытым пунктам паспорта по одному, пока пункты не кончатся или человек не скажет «стоп».',
     `Начни с нажатого пункта: способность «${cap.name}» (id ${cap.id}). Вопрос к проекту: ${cap.question}`,
     `Файл паспорта: ${PASSPORT_DIR}/${cap.file} в репозитории ${repo}.`,
-    `Список открытых пунктов отдаёт инструмент ${LIST_PASSPORT_ITEMS_TOOL}: вызови его сразу. Нажатого пункта в списке нет (его уже закрыли) - начни с первого пункта списка. Список строится по дереву этой сессии: по её worktree, если она ушла в него, иначе по рабочей копии. Ведёшь пункты по одному, второй не начинай, пока не закончен первый.`,
+    `Список открытых пунктов отдаёт инструмент ${LIST_PASSPORT_ITEMS_TOOL}: вызови его сразу. Нажатого пункта в списке нет (его уже закрыли) - начни с первого пункта списка. Файлы способностей список проверяет в дереве этой сессии (её worktree, если она ушла в него, иначе рабочая копия), исходы пробы и закрытия берёт из рабочей копии проекта. Ведёшь пункты по одному, второй не начинай, пока не закончен первый.`,
     'По каждому пункту: вытяни информацию из человека вопросами (что в проекте есть, что решено, почему), зафиксируй её в документах проекта в форме, удобной агенту (коротко, однозначно, без воды), и поставь ссылку на документ в файл паспорта.',
     'Паспорт - не описание проекта, а указатель: файл только говорит, где в проекте лежит ответ на вопрос, - ссылки на документы с короткой подписью, что это за документ. Самого описания, требований, решений, результатов проверок и регламентов в файле паспорта быть не должно.',
     'Ссылка - Markdown-ссылка на существующий файл или каталог проекта, путь от корня репозитория или от каталога файла паспорта, например [Требования](docs/brd.md). Пока в файле нет рабочей ссылки, у способности пробел.',
@@ -424,24 +424,18 @@ export class PassportService {
     return this.compute(project, (repo) => repo);
   }
 
-  /** Счёт точки и окна по деревьям `dirOf`: окно смотрит на рабочие копии, сессия исправления - на своё дерево (D-55). */
+  /** Счёт точки и окна: файлы - в деревьях `dirOf` (D-55), состояние - всегда в рабочей копии (D-59). */
   private async compute(project: Project, dirOf: (repo: string) => string): Promise<PassportView> {
     const main = this.mainOf(project);
     const problems: string[] = [];
     const states = new Map<string, PassportState>();
     for (const repo of project.repos) {
-      const loaded = loadState(dirOf(repo));
+      // В worktree незакоммиченного state.json нет (D-59).
+      const loaded = loadState(repo);
       states.set(repo, loaded.state);
       if (loaded.problem) problems.push(loaded.problem);
     }
-    // «Не нужно» пишет только окно и только в рабочую копию (act): отметка читается оттуда, а не из дерева сессии.
-    let offState = main ? states.get(main) : undefined;
-    if (main && dirOf(main) !== main) {
-      const loaded = loadState(main);
-      offState = loaded.state;
-      if (loaded.problem) problems.push(loaded.problem);
-    }
-    const notNeeded = new Set(offState?.notNeeded ?? []);
+    const notNeeded = new Set((main ? states.get(main) : undefined)?.notNeeded ?? []);
     const capabilities: CapabilityView[] = [];
     for (const group of GROUPS) {
       for (const cap of CAPABILITIES.filter((c) => c.group === group.id)) {
@@ -452,7 +446,7 @@ export class PassportService {
           const file = await capFile(dirOf(repo), cap, state);
           if (file.problem) problems.push(file.problem);
           const probe = state.probe?.outcomes[cap.id] ?? null;
-          // Закрытие в сессии действует, пока файл тот же (D-56): заменяет исход пробы и «Подтвердить», но не пробел по файлам.
+          // Закрытие действует, пока файл тот же (D-56): заменяет исход пробы и «Подтвердить», не пробел по файлам; из worktree окно видит его после слияния (D-59).
           const closed = file.hash !== null && state.closed[cap.id]?.hash === file.hash;
           // Найденный проверенный ответ заменяет паспортный файл, принятый человеком - и его метки (D-53).
           const fileWhy = closed || probe?.outcome !== 'found' ? file.all : probe.confirmed ? [] : file.all.filter((r) => r === 'warn' || r === 'approx');
@@ -721,19 +715,18 @@ export class PassportService {
     if (!row) throw new Error(`${cap.id} в репозитории ${valid.repo} не проверяется`);
     if (row.closed) throw new Error('Пункт уже закрыт');
     if (!row.gap) throw new Error('У пункта нет пробела: закрывать нечего');
-    // Закрытие опирается на файл: полный перечень причин, без послабления D-53 по найденному ответу пробы.
-    const dir = dirOf(valid.repo);
-    const file = await capFile(dir, cap, loadState(dir).state);
+    // Файл - дерева сессии, состояние - рабочей копии (D-59); полный перечень причин, без послабления D-53.
+    const file = await capFile(dirOf(valid.repo), cap, loadState(valid.repo).state);
     if (file.all.length) throw new Error(`У файла ${PASSPORT_DIR}/${cap.file} пробел: ${file.all.map((r) => REASON_TEXT[r]).join(', ')}. Поправь файл и вызови снова`);
     if (!sourceResolves(valid.source, project.repos.map(dirOf))) {
       throw new Error(`Источник ${valid.source} не найден в дереве ${tree}: путь от корня репозитория, строка не за концом файла`);
     }
     const entry: ClosedEntry = { hash: file.hash!, answer: valid.answer, source: valid.source, at: new Date().toISOString() };
-    saveState(dir, (s) => {
+    saveState(valid.repo, (s) => {
       s.closed[cap.id] = entry;
     });
     this.deps.emit('passport:changed', { projectId: project.id });
     const left = (await this.compute(project, dirOf)).count;
-    return `Пункт «${cap.name}» закрыт: отметка в ${path.join(dir, PASSPORT_DIR, STATE_FILE)}, она едет в PR вместе с документами. Открытых пунктов: ${left}. Вызови ${LIST_PASSPORT_ITEMS_TOOL} и предложи человеку следующий.`;
+    return `Пункт «${cap.name}» закрыт: отметка с хешем файла записана в ${path.join(valid.repo, PASSPORT_DIR, STATE_FILE)} рабочей копии (в PR она не едет). Окно и точка засчитают закрытие, когда файл ${PASSPORT_DIR}/${cap.file} в рабочей копии совпадёт с файлом этого дерева (после слияния). Открытых пунктов: ${left}. Вызови ${LIST_PASSPORT_ITEMS_TOOL} и предложи человеку следующий.`;
   }
 }

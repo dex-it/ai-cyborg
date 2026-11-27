@@ -600,7 +600,7 @@ test('итог новой пробы снимает закрытия во все
   assert.equal(c.porcelain(c.dirs[1]), '');
 });
 
-test('дерево сессии: список и закрытие идут в worktree, рабочая копия и окно прежние до слияния', async (t) => {
+test('дерево сессии: файлы из worktree, состояние из рабочей копии; закрытие пишется в рабочую копию и засчитывается окном после слияния файла', async (t) => {
   let tree = '';
   const f = fixture(t, 1, async (_id, repo) => (tree && repo === f.dirs[0] ? tree : repo));
   const [repo] = f.dirs;
@@ -610,7 +610,9 @@ test('дерево сессии: список и закрытие идут в wo
   assert.equal(await gitCommonDir(f.base), null);
   for (const cap of CAPABILITIES) f.put(tree, cap.file, DOC);
   fs.rmSync(path.join(f.passportDir(tree), 'why.md'));
-  f.put(tree, 'state.json', JSON.stringify({ version: 1, probe: { at: 'x', outcomes: { why: { outcome: 'unknown', answer: '', source: '' } } } }));
+  // Исход пробы только в рабочей копии и не закоммичен: worktree из коммита его не содержит.
+  f.put(repo, 'state.json', JSON.stringify({ version: 1, probe: { at: 'x', outcomes: { why: { outcome: 'unknown', answer: '', source: '' } } } }));
+  assert.equal(fs.existsSync(path.join(f.passportDir(tree), 'state.json')), false);
   await openFix(f);
   assert.equal((await f.service.view('p')).count, 12);
   let list = JSON.parse(await f.service.items(9));
@@ -619,13 +621,22 @@ test('дерево сессии: список и закрытие идут в wo
   assert.deepEqual(list.items[0].reasons, ['файла нет', 'не знает']);
   await assert.rejects(f.service.close(9, closeArgs(repo)), /файла нет/);
   f.put(tree, 'why.md', DOC);
-  const before = f.porcelain(repo);
   await f.service.close(9, closeArgs(repo));
-  assert.equal(f.porcelain(repo), before, 'рабочая копия не тронута');
-  assert.ok(loadState(tree).state.closed.why);
-  assert.deepEqual(loadState(repo).state.closed, {});
-  assert.equal((await f.service.view('p')).count, 12, 'окно смотрит на рабочую копию');
+  assert.equal(fs.existsSync(path.join(f.passportDir(tree), 'state.json')), false, 'в ветку worktree state.json не пишется');
+  assert.equal(loadState(repo).state.closed.why.hash.length > 0, true);
+  assert.equal(loadState(repo).state.probe?.outcomes.why.outcome, 'unknown', 'исход пробы цел');
+  let view = await f.service.view('p');
+  assert.equal(view.count, 12, 'файла в рабочей копии нет: хеш не сходится, окно закрытие не засчитывает');
+  assert.equal(view.capabilities.find((c) => c.id === 'why')!.closed, false);
   assert.equal(await f.service.items(9), 'Открытых пунктов нет.');
+  // Слияние: файл способности появился в рабочей копии тем же содержимым.
+  f.put(repo, 'why.md', DOC);
+  view = await f.service.view('p');
+  assert.equal(view.capabilities.find((c) => c.id === 'why')!.closed, true);
+  assert.equal(view.count, 11, 'остальные способности без файлов - пробелы, «Почему» закрыта');
+  // Правка файла в рабочей копии снимает закрытие.
+  f.put(repo, 'why.md', `${DOC} правка`);
+  assert.equal((await f.service.view('p')).capabilities.find((c) => c.id === 'why')!.closed, false);
 });
 
 test('«Не нужно» из рабочей копии действует и для дерева сессии', async (t) => {
