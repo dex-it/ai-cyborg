@@ -1,6 +1,6 @@
 ---
 id: ADR-0023
-status: review
+status: approved
 date: 2026-11-21
 relates_to: product, 20-project-passport, 15-session-mcp, ADR-0002, ADR-0003, ADR-0014, ADR-0018, ADR-0019
 origin: derived

@@ -1,7 +1,7 @@
 ---
 level: feature
 feature: 20-project-passport
-status: review
+status: approved
 date: 2026-11-20
 origin: source
 quality-checks: входных записей нет
