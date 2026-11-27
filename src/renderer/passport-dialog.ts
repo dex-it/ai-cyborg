@@ -10,6 +10,8 @@ export interface PassportHost {
   project(): Project | null;
   startProbe(project: Project, repo: string): void;
   startFix(project: Project, repo: string, capability: string): void;
+  /** Переводит к вкладке сессии; false - вкладки нет (закрыта, процесс вышел). */
+  showSession(id: number): boolean;
 }
 
 const shortRepo = (repo: string): string => repo.slice(repo.lastIndexOf('/') + 1) || repo;
@@ -152,7 +154,7 @@ export class PassportUi {
     const info = el('div', 'passport-info');
     const title = el('div', 'passport-name', cap.name + (project.repos.length > 1 && cap.group === 'tech' ? ` · ${shortRepo(cap.repo)}` : ''));
     info.append(title, el('div', 'passport-question', cap.question));
-    const state = cap.notNeeded ? 'не нужно' : cap.reasons.length ? cap.reasons.join(', ') : 'в порядке';
+    const state = cap.notNeeded ? 'не нужно' : cap.reasons.length ? cap.reasons.join(', ') : cap.closed ? 'закрыт в сессии' : 'в порядке';
     info.append(el('div', 'passport-state', state));
     if (cap.probe && cap.probe.outcome === 'found' && cap.semantic && !cap.notNeeded) {
       info.append(el('div', 'passport-answer', `Ответ агента: ${cap.probe.answer}`), el('div', 'passport-source', `Источник: ${cap.probe.source}`));
@@ -161,7 +163,12 @@ export class PassportUi {
     }
     const actions = el('div', 'passport-actions');
     const agentOff = view.agentUnavailable;
-    if (cap.gap && !cap.notNeeded) actions.append(this.button('Исправить', () => this.launch(() => this.host.startFix(project, cap.repo, cap.id)), agentOff));
+    if (cap.gap && !cap.notNeeded) {
+      const live = view.fixSession;
+      const fix = this.button('Исправить', () => this.launch(() => (live !== null && this.host.showSession(live)) || this.host.startFix(project, cap.repo, cap.id)), agentOff);
+      if (live !== null && !agentOff) fix.title = 'Перейти к сессии настройки паспорта';
+      actions.append(fix);
+    }
     if (cap.hasApprox && cap.fileReasons.includes('approx')) actions.append(this.button('Подтвердить черновик', () => void this.act({ op: 'confirmApprox', capability: cap.id, repo: cap.repo })));
     if (cap.probe?.outcome === 'found' && cap.semantic && !cap.probe.confirmed && !cap.notNeeded) {
       actions.append(this.button('Подтвердить', () => void this.act({ op: 'confirmAnswer', capability: cap.id, repo: cap.repo })));

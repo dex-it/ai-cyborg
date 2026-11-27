@@ -32,7 +32,7 @@ import { deleteHistory, historyExists, isSessionId, listHistory, resumeCwd, type
 import { SessionFavorites } from './session-favorites';
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
-import { gitBranch, gitBranches, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
+import { gitBranch, gitBranches, gitCommonDir, gitFiles, gitHeadContent, gitOriginUrl, gitRemotes, gitRoot, gitStatus, gitSwitch } from './git';
 import { appMenuTemplate, DOCS_URL, NOTIFICATIONS_MENU_ID, PROJECT_NEW_MENU_ID, PROJECT_PROPERTIES_MENU_ID, SEARCH_MENU_IDS, EXTENSIONS_MENU_IDS, type WorkspaceMenu } from './menu';
 import { notificationKey, validateNotifyArgs } from './notify-args';
 import { MrsService } from './mrs-service';
@@ -159,6 +159,9 @@ const buttonsPort: ButtonsToolsPort = {
 const passportPort: PassportToolsPort = {
   isProbe: (id) => passport.isProbe(id),
   report: (caller, args) => passport.report(caller, args),
+  isFix: (id) => passport.isFix(id),
+  items: (caller) => passport.items(caller),
+  close: (caller, args) => passport.close(caller, args),
 };
 const sideQuestions = new SideQuestions();
 const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools, buttonsPort, passportPort), app.getVersion(), sideQuestions);
@@ -421,6 +424,15 @@ const passport = new PassportService({
   localFile: path.join(app.getPath('userData'), 'passport-local.json'),
   emit: (channel, payload) => sendToWindow(channel, payload),
   claudeAvailable: systemClaudeAvailable,
+  sessionTree: async (id, repo) => {
+    // Журнал называет worktree, куда ушла сессия; живой cwd из хуков - запасной, пока разговор не начат (D-55).
+    const live = sessions.cwdInfo(id);
+    const cwd = (live?.resume ? resumeCwd(repo, live.resume) : undefined) ?? live?.cwd ?? repo;
+    const root = await gitRoot(cwd);
+    if (!root || root === repo) return repo;
+    const [own, common] = await Promise.all([gitCommonDir(repo), gitCommonDir(root)]);
+    return own && own === common ? root : repo;
+  },
 });
 onSessionExit = (id) => {
   passport.sessionEnded(id);
@@ -490,7 +502,11 @@ ipcMain.handle('session:create', async (_event, projectId: unknown, cwd: unknown
     }
     if (request?.kind === 'fix') {
       const fix = await passport.prepareFix(project, request.capability, cwd);
-      return sessions.create(project, fix.cwd, fix.addDirs, fix.prompt);
+      // Без await между запретом и регистрацией: два быстрых нажатия не открывают две вкладки настройки (D-57).
+      passport.ensureNoFix(project);
+      const id = sessions.create(project, fix.cwd, fix.addDirs, fix.prompt);
+      passport.registerFix(id, fix.run);
+      return id;
     }
     throw new Error('Некорректный старт сессии');
   }

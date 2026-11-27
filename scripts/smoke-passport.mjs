@@ -32,7 +32,12 @@ const reportBody = join(base, 'report.json');
 const reportOut = join(base, 'report.out');
 const items = CAPABILITIES.filter((id) => id !== 'why').map((id) => ({ id, outcome: id === 'domain' ? 'unknown' : 'found', answer: 'ответ агента', source: id === 'behavior' ? 'docs/нет.md' : 'docs/a.md:2' }));
 writeFileSync(reportBody, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'report_passport', arguments: { capabilities: items } } }));
-const fixture = prepareFixtures(base, { FAKE_PASSPORT_BODY: reportBody, FAKE_PASSPORT_OUT: reportOut });
+const fixListBody = join(base, 'fix-list.json');
+const fixCloseBody = join(base, 'fix-close.json');
+const fixOut = join(base, 'fix.out');
+writeFileSync(fixListBody, JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_passport_items', arguments: {} } }));
+writeFileSync(fixCloseBody, JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'close_passport_item', arguments: { id: 'autonomy', repo, answer: 'границы автономии в docs/a.md', source: 'docs/a.md:1' } } }));
+const fixture = prepareFixtures(base, { FAKE_PASSPORT_BODY: reportBody, FAKE_PASSPORT_OUT: reportOut, FAKE_PASSPORT_FIX_LIST: fixListBody, FAKE_PASSPORT_FIX_BODY: fixCloseBody, FAKE_PASSPORT_FIX_OUT: fixOut });
 
 const log = (text) => console.log(`smoke-passport: ${text}`);
 let app;
@@ -65,6 +70,34 @@ try {
   assert.match(readFileSync(reportOut, 'utf8'), /нашёл с источником 9, выдумывает 1, не знает 1/);
   assert.match(readFileSync(fixture.argsLog, 'utf8'), /report_passport/);
   log('проба: вкладка сессии, итог через report_passport, исходы в точке (7)');
+
+  const tabs = () => ev('document.querySelectorAll("#session-list > *").length');
+  const openWindow = async () => {
+    await ev('document.querySelector("#passport-dot").click()');
+    await waitFor('окно паспорта', async () => (await ev('document.querySelector("#passport-dialog").open')) && (await ev('document.querySelectorAll("#passport-body .passport-row").length')) === 12);
+  };
+  const hasButton = (id, label) => ev(`[...document.querySelectorAll("[data-capability=${id}] button")].some((b) => b.textContent === ${JSON.stringify(label)})`);
+  await openWindow();
+  await waitFor('«Исправить» у autonomy после пробы', async () => hasButton('autonomy', 'Исправить'));
+  await click('[data-capability=autonomy] button', 'Исправить');
+  await waitFor('вкладка настройки и закрытие пункта', async () => (await tabs()) === 2 && (await dot()) === '6', 30000);
+  const fixList = readFileSync(`${fixOut}.list`, 'utf8');
+  assert.ok(/autonomy/.test(fixList) && /domain/.test(fixList), 'список пунктов без autonomy и domain');
+  assert.match(readFileSync(`${fixOut}.close`, 'utf8'), /закрыт/);
+  assert.match(readFileSync(fixture.argsLog, 'utf8'), /Настройка паспорта проекта/);
+  assert.ok(state().closed.autonomy.hash, 'закрытие не записано в состояние');
+  log('настройка: вкладка с начальным промптом, список пунктов и закрытие по HTTP, точка 6');
+  await openWindow();
+  const rowState = (id) => ev(`document.querySelector("[data-capability=${id}] .passport-state").textContent`);
+  await waitFor('строка autonomy закрыта в сессии', async () => (await rowState('autonomy')) === 'закрыт в сессии');
+  await ev('document.querySelector("#passport-close").click()');
+  await ev('document.querySelector("#session-list > *:nth-child(1)").click()');
+  await openWindow();
+  await waitFor('«Исправить» у domain', async () => hasButton('domain', 'Исправить'));
+  await click('[data-capability=domain] button', 'Исправить');
+  await waitFor('переход к живой вкладке настройки', async () => (await ev('document.querySelector("#session-list > *:nth-child(2)").classList.contains("active")')) === true);
+  assert.equal(await tabs(), 2, 'вторая вкладка настройки открыта');
+  log('одна сессия на проект: «Исправить» у другого пункта переводит к живой вкладке');
 
   assert.deepEqual(git('status', '--porcelain', '-uall').trim().split('\n'), ['?? .cyborg/passport/state.json'], 'Cyborg записал в репозиторий не только состояние паспорта');
   assert.equal(git('diff', '--stat'), '', 'файлы паспорта изменены');

@@ -352,6 +352,13 @@ export class SessionManager {
     return { project: session.project, cwd: session.cwd, addDirs: session.dirs.slice(1), resume: session.claudeSid };
   }
 
+  /** Каталог, где работает локальная живая сессия (из хуков), и её разговор Claude Code, если он начат: по ним ищется дерево сессии. */
+  cwdInfo(id: number): { cwd: string; resume: string | null } | null {
+    const session = this.sessions.get(id);
+    if (!session || session.remote || session.state === 'exited') return null;
+    return { cwd: session.cwd, resume: session.claudeSid || null };
+  }
+
   /** Перезапуск локальной сессии: живая открывшая не получает сообщения о выходе и возвращается, чтобы report_done новой вкладки дошёл до неё. */
   async restart(id: unknown): Promise<{ resume: string; parent?: number }> {
     const info = this.restartInfo(id);

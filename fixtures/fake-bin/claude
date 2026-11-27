@@ -62,6 +62,17 @@ if [ -n "$FAKE_PASSPORT_BODY" ] && [ -n "$CYBORG_MCP" ]; then
       echo "passport reported";;
   esac
 fi
+# Настройка паспорта проекта: «агент» зовёт list_passport_items (тело в $FAKE_PASSPORT_FIX_LIST) и close_passport_item (тело в $FAKE_PASSPORT_FIX_BODY), ответы Cyborg - в $FAKE_PASSPORT_FIX_OUT.list и .close.
+if [ -n "$FAKE_PASSPORT_FIX_LIST" ] && [ -n "$CYBORG_MCP" ]; then
+  case "$*" in
+    *"Настройка паспорта проекта"*)
+      url=$(sed -n 's/.*"url":"\([^"]*\)".*/\1/p' "$CYBORG_MCP")
+      token=$(sed -n 's/.*Bearer \([^"]*\)".*/\1/p' "$CYBORG_MCP")
+      curl -s -X POST "$url" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d @"$FAKE_PASSPORT_FIX_LIST" > "$FAKE_PASSPORT_FIX_OUT.list"
+      curl -s -X POST "$url" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d @"$FAKE_PASSPORT_FIX_BODY" > "$FAKE_PASSPORT_FIX_OUT.close"
+      echo "passport fixed";;
+  esac
+fi
 if [ -n "$FAKE_FLOOD_ON_START" ]; then
   if [ "$FAKE_FLOOD_STYLE" = trickle ]; then trickle "$FAKE_FLOOD_ON_START"; else flood "$FAKE_FLOOD_ON_START"; fi
 fi
