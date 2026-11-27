@@ -28,7 +28,7 @@ import { fetchHub, HubStore } from './hubs';
 import { BuiltinPlugins } from './builtin-plugins';
 import type { SearchReply } from '../shared/search-pattern';
 import { ChildSessions } from './child-sessions';
-import { deleteHistory, historyExists, isSessionId, listHistory, type HistoryEntry } from './history';
+import { deleteHistory, historyExists, isSessionId, listHistory, resumeCwd, type HistoryEntry } from './history';
 import { SessionFavorites } from './session-favorites';
 import { suggestBranches } from './jira';
 import { JiraService } from './jira-service';
@@ -618,6 +618,11 @@ ipcMain.handle('history:delete', (_event, projectId: unknown, repo: unknown, id:
   if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) throw new Error('Некорректное удаление сессии');
   deleteHistory(repo, id);
   sessionFavorites.set(project.id, id, false);
+});
+ipcMain.handle('history:cwd', (_event, projectId: unknown, repo: unknown, id: unknown) => {
+  const project = projects.load().projects.find((p) => p.id === projectId);
+  if (!project || typeof repo !== 'string' || !project.repos.includes(repo) || !isSessionId(id)) return null;
+  return resumeCwd(repo, id) ?? null;
 });
 ipcMain.handle('session:resume', (_event, projectId: unknown, cwd: unknown, addDirs: unknown, id: unknown, parent?: unknown) =>
   resumeSession(

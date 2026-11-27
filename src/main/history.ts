@@ -175,6 +175,39 @@ function journalDirOf(repo: string, id: string, root: string): string | undefine
   return isSessionId(id) ? journalDirs(repo, root).find((dir) => fs.existsSync(path.join(dir, `${id}.jsonl`))) : undefined;
 }
 
+export function lastCwd(chunk: string): string | undefined {
+  let cwd: string | undefined;
+  for (const line of chunk.split('\n')) {
+    try {
+      const record = JSON.parse(line) as { cwd?: unknown };
+      if (typeof record?.cwd === 'string' && record.cwd) cwd = record.cwd;
+    } catch {
+      continue;
+    }
+  }
+  return cwd;
+}
+
+/** SessionStart продолженной сессии несёт каталог запуска, а --resume возвращает её в worktree из журнала. */
+export function resumeCwd(repo: string, id: string, root = claudeProjectsDir()): string | undefined {
+  const dir = journalDirOf(repo, id, root);
+  if (!dir) return undefined;
+  let cwd: string | undefined;
+  try {
+    const file = path.join(dir, `${id}.jsonl`);
+    const [head, tail] = readEdges(file, fs.statSync(file).size);
+    cwd = lastCwd(tail || head);
+  } catch {
+    return undefined;
+  }
+  if (!cwd || !(cwd === repo || cwd.startsWith(repo + path.sep))) return undefined;
+  try {
+    return fs.statSync(cwd).isDirectory() ? cwd : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function historyExists(repo: string, id: string, root = claudeProjectsDir()): boolean {
   return journalDirOf(repo, id, root) !== undefined;
 }

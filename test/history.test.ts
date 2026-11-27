@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { claudeArgs, SESSION_PROMPT } from '../src/main/claude-args';
-import { deleteHistory, historyExists, journalFacts, listHistory, projectDirName } from '../src/main/history';
+import { deleteHistory, historyExists, journalFacts, listHistory, projectDirName, resumeCwd } from '../src/main/history';
 import { ago } from '../src/renderer/ago';
 
 const line = (record: object): string => JSON.stringify(record);
@@ -29,6 +29,31 @@ describe('история сессий', () => {
     assert.equal(journalFacts(head, tail).title, 'Моё');
     assert.equal(journalFacts(head, tail).named, 'Моё');
     assert.equal(journalFacts(head, line({ type: 'ai-title', aiTitle: 'AI' })).title, 'AI');
+  });
+
+  it('resumeCwd: последний cwd журнала, если это живой каталог внутри репозитория', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-resume-'));
+    try {
+      const repo = path.join(tmp, 'repo');
+      const wt = path.join(repo, '.claude', 'worktrees', 'fix');
+      fs.mkdirSync(wt, { recursive: true });
+      const root = path.join(tmp, 'projects');
+      const dir = path.join(root, projectDirName(wt));
+      fs.mkdirSync(dir, { recursive: true });
+      const write = (...cwds: string[]): void =>
+        fs.writeFileSync(path.join(dir, `${ID_A}.jsonl`), cwds.map((cwd) => line({ type: 'user', cwd })).join('\n'));
+      write(repo, wt);
+      assert.equal(resumeCwd(repo, ID_A, root), wt);
+      write(wt, repo);
+      assert.equal(resumeCwd(repo, ID_A, root), repo);
+      write(path.join(repo, '.claude', 'worktrees', 'gone'));
+      assert.equal(resumeCwd(repo, ID_A, root), undefined);
+      write(tmp);
+      assert.equal(resumeCwd(repo, ID_A, root), undefined);
+      assert.equal(resumeCwd(repo, ID_B, root), undefined);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('journalFacts: сессия SDK не интерактивна', () => {
