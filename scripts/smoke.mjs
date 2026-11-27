@@ -832,7 +832,8 @@ async function main() {
   const envTabs = await tabs();
   await combo(commandModifier | SHIFT, 'N', 'KeyN', 78);
   await waitFor('вкладка новой сессии', async () => (await tabs()) === envTabs + 1);
-  await waitFor('новая сессия запущена', async () => (await terminalText()).includes('fake-claude ready'));
+  // На невысоком окне macOS прокрутка к началу не всегда доходит до строки ready: годится и следующая за ней ARGS.
+  await waitFor('новая сессия запущена', async () => /fake-claude ready|ARGS: --settings/.test(await terminalText()));
   await send('Input.insertText', { text: 'env SMOKE_ENV' });
   await combo(0, 'Enter', 'Enter', 13);
   await waitFor('новая сессия видит выбранное значение', async () => (await visibleTerminal()).replace(/\s+/g, '').includes('envvalSMOKE_ENV=[smoke-secret]'));
