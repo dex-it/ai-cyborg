@@ -3,6 +3,7 @@ import { GROUPS, OUTCOME_TEXT, dotText, dotTitle, type CapabilityView, type Pass
 import type { Project } from '../main/projects';
 import { byId, el } from './dom';
 import { ipcErrorText } from './ipc-error';
+import { fixAction } from './passport-fix';
 
 const api = window.cyborg;
 
@@ -165,7 +166,7 @@ export class PassportUi {
     const agentOff = view.agentUnavailable;
     if (cap.gap && !cap.notNeeded) {
       const live = view.fixSession;
-      const fix = this.button('Исправить', () => this.launch(() => (live !== null && this.host.showSession(live)) || this.host.startFix(project, cap.repo, cap.id)), agentOff);
+      const fix = this.button('Исправить', () => this.launch(() => fixAction(this.host, live, project, cap.repo, cap.id)), agentOff);
       if (live !== null && !agentOff) fix.title = 'Перейти к сессии настройки паспорта';
       actions.append(fix);
     }

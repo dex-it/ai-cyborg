@@ -8,6 +8,7 @@ import { CAPABILITIES, GROUPS, dotText, dotTitle, fileReasons } from '../src/sha
 import { PassportService, docLinkOk, fixPrompt, loadState, parseState, probeOutcome, saveState, sourceResolves, validateAction, validateCloseItem, validateProbeReport } from '../src/main/passport';
 import { gitCommonDir } from '../src/main/git';
 import { sessionTools } from '../src/main/session-tools';
+import { fixAction } from '../src/renderer/passport-fix';
 
 function fixture(t: import('node:test').TestContext, repos = 1, sessionTree?: (sessionId: number, repo: string) => Promise<string>) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-passport-')));
@@ -675,4 +676,34 @@ test('состояние прежнего формата читается: за�
   const mixed = parseState(JSON.stringify({ closed: { why: { hash: 'h', answer: 'a', source: 's', at: 't' }, nope: { hash: 'h' }, done: { hash: 5 }, upkeep: 'x' } }));
   assert.ok(typeof mixed === 'object');
   assert.deepEqual(mixed.closed, { why: { hash: 'h', answer: 'a', source: 's', at: 't' } });
+});
+
+test('старт вкладки настройки: два быстрых запроса открывают одну сессию, после её выхода открывается новая', async (t) => {
+  const f = fixture(t);
+  const created: string[] = [];
+  const start = (capability: string, id: number) => f.service.startFix('p', capability, f.dirs[0], (fix) => (created.push(fix.prompt), id));
+  const [a, b] = await Promise.allSettled([start('why', 3), start('architecture', 4)]);
+  assert.equal(a.status, 'fulfilled');
+  assert.equal(b.status, 'rejected');
+  assert.match(String((b as PromiseRejectedResult).reason), /уже открыта/);
+  assert.equal(created.length, 1, 'вторая сессия не создана');
+  assert.equal(f.service.isFix(3), true);
+  assert.equal(f.service.isFix(4), false);
+  f.service.sessionEnded(3);
+  assert.equal(await start('architecture', 5), 5);
+  assert.equal((await f.service.view('p')).fixSession, 5);
+});
+
+test('«Исправить» в окне: живая вкладка - переход; вкладки уже нет при устаревшем виде - открывается новая; живой нет - открывается новая', () => {
+  const calls: string[] = [];
+  const host = (alive: boolean) => ({
+    showSession: (id: number) => (calls.push(`show ${id}`), alive),
+    startFix: (project: string, repo: string, capability: string) => void calls.push(`start ${project} ${repo} ${capability}`),
+  });
+  fixAction(host(true), 7, 'P', '/r', 'why');
+  assert.deepEqual(calls.splice(0), ['show 7']);
+  fixAction(host(false), 7, 'P', '/r', 'why');
+  assert.deepEqual(calls.splice(0), ['show 7', 'start P /r why']);
+  fixAction(host(true), null, 'P', '/r', 'why');
+  assert.deepEqual(calls.splice(0), ['start P /r why']);
 });

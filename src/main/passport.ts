@@ -660,6 +660,15 @@ export class PassportService {
     return { cwd: repo, addDirs: project.repos.filter((r) => r !== repo), prompt: fixPrompt(cap, repo), run: { projectId: project.id, repo } };
   }
 
+  // Без await между запретом, созданием сессии и регистрацией: два быстрых нажатия не открывают две вкладки настройки (D-57).
+  async startFix(projectId: unknown, capability: unknown, repo: unknown, create: (fix: { cwd: string; addDirs: string[]; prompt: string }) => number): Promise<number> {
+    const fix = await this.prepareFix(projectId, capability, repo);
+    this.ensureNoFix(fix.run.projectId);
+    const id = create(fix);
+    this.registerFix(id, fix.run);
+    return id;
+  }
+
   private async fixContext(sessionId: number): Promise<{ project: Project; fix: FixRun }> {
     const fix = this.fixes.get(sessionId);
     if (!fix) throw new Error('Эта сессия не ведёт настройку паспорта');
