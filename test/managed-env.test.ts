@@ -744,6 +744,9 @@ describe('ManagedEnv: общий файл двух окон', () => {
     const other = twin(t, file, store);
     other.watch();
     await env.select('ENVT_L', ID(2));
+    // FSEvents на macOS запускается с задержкой и теряет событие сразу после watch(): повторное касание файла даёт следующее.
+    const touch = setInterval(() => fs.utimesSync(file, new Date(), new Date()), 300);
+    t.after(() => clearInterval(touch));
     await until(() => other.overlay().set.get('ENVT_L') === 'b');
   });
 });
