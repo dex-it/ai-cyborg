@@ -357,7 +357,7 @@ const stateText = (f: Fixture, repo = f.dirs[0]): string | null => {
 
 const closeArgs = (repo: string, over: Record<string, unknown> = {}) => ({ id: 'why', repo, answer: 'зафиксировано в docs/a.md', source: 'docs/a.md:1', ...over });
 
-test('промпт настройки: цель на всю сессию, пункт по одному, три условия закрытия, пропуск, «стоп», прежнее требование плана', () => {
+test('промпт настройки: цель и мерило, цикл пункта, три условия закрытия, пропуск, «стоп», план до правок', () => {
   const cap = CAPABILITIES.find((c) => c.id === 'architecture')!;
   const text = fixPrompt(cap, '/r');
   assert.match(text, /^Настройка паспорта проекта/);
@@ -368,6 +368,12 @@ test('промпт настройки: цель на всю сессию, пун
   assert.match(text, /по одному/);
   assert.match(text, /не противоречит другим пунктам/);
   assert.match(text, /человек согласился словами/);
+  assert.match(text, /отвечает на вопрос способности без домысла/);
+  assert.match(text, /вопросами по одному/);
+  assert.match(text, /Не спрашивай человека о том, что видно в проекте/);
+  assert.match(text, /Перечитай документы пунктов, закрытых в этой сессии/);
+  assert.match(text, /закрывать нечего/);
+  assert.ok(!text.includes('Кандидатов в скиллы нет'), 'нет противоречия про скиллы');
   assert.match(text, /сам вызови list_passport_items и предложи человеку следующий/);
   assert.match(text, /пропусти его до конца сессии/);
   assert.match(text, /кнопкой «Не нужно»/);
