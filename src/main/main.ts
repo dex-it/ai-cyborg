@@ -28,6 +28,7 @@ import { fetchHub, HubStore } from './hubs';
 import { BuiltinPlugins } from './builtin-plugins';
 import type { SearchReply } from '../shared/search-pattern';
 import { ChildSessions } from './child-sessions';
+import { sessionTree } from './session-tree';
 import { deleteHistory, historyExists, isSessionId, listHistory, resumeCwd, type HistoryEntry } from './history';
 import { SessionFavorites } from './session-favorites';
 import { suggestBranches } from './jira';
@@ -159,6 +160,9 @@ const buttonsPort: ButtonsToolsPort = {
 const passportPort: PassportToolsPort = {
   isProbe: (id) => passport.isProbe(id),
   report: (caller, args) => passport.report(caller, args),
+  isFix: (id) => passport.isFix(id),
+  items: (caller) => passport.items(caller),
+  close: (caller, args) => passport.close(caller, args),
 };
 const sideQuestions = new SideQuestions();
 const mcpServer = new McpServer(createSessionTools(sessionsPort, handoffs, closeSession, undefined, remoteTools, buttonsPort, passportPort), app.getVersion(), sideQuestions);
@@ -421,6 +425,7 @@ const passport = new PassportService({
   localFile: path.join(app.getPath('userData'), 'passport-local.json'),
   emit: (channel, payload) => sendToWindow(channel, payload),
   claudeAvailable: systemClaudeAvailable,
+  sessionTree: (id, repo) => sessionTree(repo, sessions.cwdInfo(id)),
 });
 onSessionExit = (id) => {
   passport.sessionEnded(id);
@@ -489,8 +494,7 @@ ipcMain.handle('session:create', async (_event, projectId: unknown, cwd: unknown
       return id;
     }
     if (request?.kind === 'fix') {
-      const fix = await passport.prepareFix(project, request.capability, cwd);
-      return sessions.create(project, fix.cwd, fix.addDirs, fix.prompt);
+      return passport.startFix(project, request.capability, cwd, (fix) => sessions.create(project, fix.cwd, fix.addDirs, fix.prompt));
     }
     throw new Error('Некорректный старт сессии');
   }

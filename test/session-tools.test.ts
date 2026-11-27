@@ -10,6 +10,8 @@ import {
   Handoffs,
   type HandoffRequest,
   MAX_TEXT_BYTES,
+  sessionTools,
+  type PassportToolsPort,
   validateClose,
   validateOpenSession,
   validateSend,
@@ -321,5 +323,56 @@ describe('Handoffs', () => {
     await assert.rejects(handoffs.request(1, '/repo/a', 'x'), /за 0.02 с/);
     assert.equal(handoffs.take(sent[1].hid, '/repo/a'), null);
     await assert.rejects(new Handoffs(() => false).request(1, '/repo/a', 'x'), /окно Cyborg закрыто/);
+  });
+});
+
+describe('инструменты настройки паспорта', () => {
+  const names = (ctx: { passport?: boolean; passportFix?: boolean }) => sessionTools(DIRS, { kind: 'local', hosts: [], ...ctx }).map((t) => t.name);
+
+  it('список и закрытие выдаются только вкладке настройки, независимо от report_passport; прочая выдача прежняя', () => {
+    const base = names({});
+    assert.ok(!base.includes('list_passport_items') && !base.includes('close_passport_item') && !base.includes('report_passport'));
+    const fix = names({ passportFix: true });
+    assert.deepEqual(fix.filter((n) => !base.includes(n)), ['list_passport_items', 'close_passport_item']);
+    const probe = names({ passport: true });
+    assert.deepEqual(probe.filter((n) => !base.includes(n)), ['report_passport']);
+    assert.deepEqual(names({ passport: true, passportFix: true }).filter((n) => !base.includes(n)), ['report_passport', 'list_passport_items', 'close_passport_item']);
+  });
+
+  it('схема закрытия: repo - из каталогов сессии, все поля обязательны, лишних нет', () => {
+    const tool = sessionTools(DIRS, { kind: 'local', hosts: [], passportFix: true }).find((t) => t.name === 'close_passport_item')!;
+    const schema = tool.inputSchema as { properties: Record<string, { enum?: string[]; minLength?: number }>; required: string[]; additionalProperties: boolean };
+    assert.deepEqual(schema.properties.repo.enum, DIRS);
+    assert.deepEqual(schema.required, ['id', 'repo', 'answer', 'source']);
+    assert.equal(schema.additionalProperties, false);
+    assert.equal(schema.properties.answer.minLength, 1);
+  });
+
+  it('вызовы уходят в порт; вкладка без регистрации настройки получает отказ, а не данные', async () => {
+    const calls: string[] = [];
+    const fixTabs = new Set([2]);
+    const port: PassportToolsPort = {
+      isProbe: () => false,
+      report: () => 'r',
+      isFix: (id) => fixTabs.has(id),
+      items: async (caller) => (calls.push(`items ${caller}`), 'список'),
+      close: async (caller, args) => (calls.push(`close ${caller} ${JSON.stringify(args)}`), 'закрыто'),
+    };
+    const backend = createSessionTools({ dirsOf: () => DIRS, peers: () => [peer(1, 'working'), peer(2, 'working')], say: async () => 'sent' }, { request: async () => 1 }, () => {}, 10, undefined, undefined, port);
+    assert.ok(backend.tools(2).some((t) => t.name === 'close_passport_item'));
+    assert.ok(!backend.tools(1).some((t) => t.name === 'close_passport_item'));
+    assert.equal(await backend.call(2, 'list_passport_items', {}), 'список');
+    assert.equal(await backend.call(2, 'close_passport_item', { id: 'why' }), 'закрыто');
+    await assert.rejects(backend.call(1, 'list_passport_items', {}), /недоступен этой сессии/);
+    await assert.rejects(backend.call(1, 'close_passport_item', { id: 'why' }), /недоступен этой сессии/);
+    assert.deepEqual(calls, ['items 2', 'close 2 {"id":"why"}']);
+    fixTabs.clear();
+    await assert.rejects(backend.call(2, 'list_passport_items', {}), /недоступен этой сессии/);
+  });
+
+  it('закрытие пункта подтверждает человек в терминале: инструменты паспорта не в автоматически разрешённых', () => {
+    const allowed = hookSettings().permissions.allow;
+    assert.ok(!AUTO_ALLOWED_TOOLS.some((t) => /passport/.test(t)));
+    assert.ok(!allowed.some((t) => /passport/.test(t)));
   });
 });

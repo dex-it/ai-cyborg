@@ -100,6 +100,15 @@ export async function gitRoot(dir: string): Promise<string | null> {
   }
 }
 
+/** Общий каталог git: у репозитория и всех его worktree один; null - dir не в git. Только чтение. */
+export async function gitCommonDir(dir: string): Promise<string | null> {
+  try {
+    return (await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
+  } catch {
+    return null;
+  }
+}
+
 export async function gitBranch(root: string): Promise<string | null> {
   try {
     return (await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();

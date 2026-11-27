@@ -77,6 +77,14 @@ export interface ProbeEntry {
   confirmed?: boolean;
 }
 
+/** Закрытие пункта в сессии исправления (FR-20010): хеш файла способности на момент закрытия, слова и источник агента - недоверенный текст. */
+export interface ClosedEntry {
+  hash: string;
+  answer: string;
+  source: string;
+  at: string;
+}
+
 /** Состояние паспорта в репозитории (D-46): ключи записываются отсортированными, чтобы слияние веток не конфликтовало зря. */
 export interface PassportState {
   version: 1;
@@ -84,9 +92,11 @@ export interface PassportState {
   /** Способность -> хеш файла на момент подтверждения «≈»; изменился файл - подтверждение снято (FR-20002). */
   approxConfirmed: Record<string, string>;
   notNeeded: string[];
+  /** Способность -> закрытие в сессии исправления; изменился файл - закрытие снято, новая проба тоже снимает (D-56). */
+  closed: Record<string, ClosedEntry>;
 }
 
-export const emptyState = (): PassportState => ({ version: 1, probe: null, approxConfirmed: {}, notNeeded: [] });
+export const emptyState = (): PassportState => ({ version: 1, probe: null, approxConfirmed: {}, notNeeded: [], closed: {} });
 
 export interface CapabilityView {
   id: string;
@@ -104,6 +114,8 @@ export interface CapabilityView {
   reasons: string[];
   gap: boolean;
   semantic: boolean;
+  /** Действует закрытие в сессии исправления: хеш файла совпадает с записью (D-56). */
+  closed: boolean;
 }
 
 export interface RepoView {
@@ -131,6 +143,8 @@ export interface PassportView {
   problems: string[];
   /** Чем кончилась последняя проба, если без исходов (прервана, ответ не разобран). */
   probeNote: string | null;
+  /** Номер живой вкладки настройки паспорта этого проекта; null - её нет (D-57). */
+  fixSession: number | null;
 }
 
 /** Текст точки: число (от 100 - «99+»), «✓», «–» или «…» (FR-20004). */

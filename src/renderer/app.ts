@@ -1786,6 +1786,12 @@ onLaunchButtonsChanged(() => {
 const passportUi = new PassportUi({
   project: () => project,
   startProbe: (owner, repo) => void createSessionView(owner, repo, { passport: { kind: 'probe' } }).catch((error) => alert(ipcErrorText(error))),
+  showSession: (id) => {
+    const s = sessions.find((x) => x.id === id && !x.exited);
+    if (!s) return false;
+    activateSession(s);
+    return true;
+  },
   startFix: (owner, repo, capability) => void createSessionView(owner, repo, { passport: { kind: 'fix', capability } }).catch((error) => alert(ipcErrorText(error))),
 });
 

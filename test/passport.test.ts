@@ -5,10 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { CAPABILITIES, GROUPS, dotText, dotTitle, fileReasons } from '../src/shared/passport';
-import { PassportService, docLinkOk, loadState, parseState, probeOutcome, saveState, sourceResolves, validateAction, validateProbeReport } from '../src/main/passport';
+import { PassportService, docLinkOk, fixPrompt, loadState, parseState, probeOutcome, saveState, sourceResolves, validateAction, validateCloseItem, validateProbeReport } from '../src/main/passport';
+import { gitCommonDir } from '../src/main/git';
 import { sessionTools } from '../src/main/session-tools';
+import { fixAction } from '../src/renderer/passport-fix';
 
-function fixture(t: import('node:test').TestContext, repos = 1) {
+function fixture(t: import('node:test').TestContext, repos = 1, sessionTree?: (sessionId: number, repo: string) => Promise<string>) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cyborg-passport-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const dirs: string[] = [];
@@ -27,6 +29,7 @@ function fixture(t: import('node:test').TestContext, repos = 1) {
     localFile: path.join(base, 'passport-local.json'),
     emit: (channel, payload) => events.push({ channel, payload }),
     claudeAvailable: async () => true,
+    sessionTree,
   });
   const passportDir = (repo: string) => path.join(repo, '.cyborg', 'passport');
   const put = (repo: string, name: string, text: string) => {
@@ -331,4 +334,393 @@ test('исправление: промпт называет способност
   assert.match(fix.prompt, /документ положи в проект/);
   await assert.rejects(f.service.prepareFix('p', 'nope', f.dirs[0]), /Некорректные/);
   await assert.rejects(f.service.prepareFix('p', 'why', '/somewhere/else'), /Некорректные/);
+});
+
+// ---------- настройка паспорта: список пунктов, закрытие, дерево сессии ----------
+
+type Fixture = ReturnType<typeof fixture>;
+
+/** Открывает вкладку настройки с номером `id`: так делает main.ts после sessions.create. */
+async function openFix(f: Fixture, id = 9, capability = 'why'): Promise<void> {
+  const fix = await f.service.prepareFix('p', capability, f.dirs[0]);
+  f.service.registerFix(id, fix.run);
+}
+
+const fillAll = (f: Fixture, repo = f.dirs[0]) => {
+  for (const cap of CAPABILITIES) f.put(repo, cap.file, DOC);
+};
+
+const stateText = (f: Fixture, repo = f.dirs[0]): string | null => {
+  const file = path.join(f.passportDir(repo), 'state.json');
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+};
+
+const closeArgs = (repo: string, over: Record<string, unknown> = {}) => ({ id: 'why', repo, answer: 'зафиксировано в docs/a.md', source: 'docs/a.md:1', ...over });
+
+test('промпт настройки: цель и мерило, цикл пункта, три условия закрытия, пропуск, «стоп», план до правок', () => {
+  const cap = CAPABILITIES.find((c) => c.id === 'architecture')!;
+  const text = fixPrompt(cap, '/r');
+  assert.match(text, /^Настройка паспорта проекта/);
+  assert.match(text, /легко, чётко и консистентно получал/);
+  assert.match(text, /architecture\.md/);
+  assert.match(text, /list_passport_items/);
+  assert.match(text, /close_passport_item/);
+  assert.match(text, /по одному/);
+  assert.match(text, /не противоречит другим пунктам/);
+  assert.match(text, /человек согласился словами/);
+  assert.match(text, /отвечает на вопрос способности без домысла/);
+  assert.match(text, /вопросами по одному/);
+  assert.match(text, /Не спрашивай человека о том, что видно в проекте/);
+  assert.match(text, /Перечитай документы пунктов, закрытых в этой сессии/);
+  assert.match(text, /закрывать нечего/);
+  assert.ok(!text.includes('Кандидатов в скиллы нет'), 'нет противоречия про скиллы');
+  assert.match(text, /сам вызови list_passport_items и предложи человеку следующий/);
+  assert.match(text, /пропусти его до конца сессии/);
+  assert.match(text, /кнопкой «Не нужно»/);
+  assert.match(text, /«стоп»/);
+  assert.match(text, /ПЛАН/);
+  assert.match(text, /До подтверждения плана человеком файлы не правь/);
+  assert.match(text, /не описание проекта, а указатель/);
+  assert.match(text, /документ положи в проект/);
+  assert.match(text, /Не коммить и не сливай/);
+  for (const reason of ['файла нет', 'есть ⚠', '≈ не подтверждено', 'нет ссылки на документ проекта']) assert.ok(text.includes(reason), reason);
+});
+
+test('настройка: инструменты - только список и закрытие, «Не нужно» агенту не отдаётся', () => {
+  const names = sessionTools(['/r'], { kind: 'local', hosts: [], passportFix: true }).map((t) => t.name);
+  assert.ok(names.includes('list_passport_items') && names.includes('close_passport_item'));
+  assert.ok(!names.some((n) => /not_needed|needed/.test(n)));
+});
+
+test('validateCloseItem: неизвестный id, чужой repo, пустые answer и source, длинное режется', () => {
+  const repos = ['/a'];
+  assert.match(String(validateCloseItem({ id: 'nope', repo: '/a', answer: 'x', source: 'y' }, repos)), /способности nope нет/);
+  assert.match(String(validateCloseItem({ id: 'why', repo: '/b', answer: 'x', source: 'y' }, repos)), /не входит в проект/);
+  assert.match(String(validateCloseItem({ id: 'why', repo: '/a', answer: '  ', source: 'y' }, repos)), /answer пуст/);
+  assert.match(String(validateCloseItem({ id: 'why', repo: '/a', answer: 'x', source: ' ' }, repos)), /source пуст/);
+  assert.match(String(validateCloseItem('x', repos)), /объект/);
+  const ok = validateCloseItem({ id: 'why', repo: '/a', answer: ' ' + 'я'.repeat(3000), source: 's'.repeat(900) }, repos);
+  assert.ok(typeof ok === 'object' && ok.answer.length === 2000 && ok.source.length === 500);
+});
+
+test('список пунктов: способности с пробелом без снятых «Не нужно», числом как у точки; вкладка не настройки - отказ', async (t) => {
+  const f = fixture(t);
+  const [repo] = f.dirs;
+  fillAll(f);
+  fs.rmSync(path.join(f.passportDir(repo), 'why.md'));
+  f.put(repo, 'behavior.md', `${DOC} ⚠`);
+  fs.rmSync(path.join(f.passportDir(repo), 'upkeep.md'));
+  await f.service.act('p', { op: 'notNeeded', capability: 'upkeep' });
+  await assert.rejects(f.service.items(9), /не ведёт настройку/);
+  await openFix(f);
+  const list = JSON.parse(await f.service.items(9));
+  assert.equal(list.tree, repo);
+  assert.deepEqual(list.items.map((i: { id: string }) => i.id), ['why', 'behavior']);
+  assert.deepEqual(list.items[0], { id: 'why', name: 'Зачем и для кого', question: 'Зачем продукт и для кого он?', repo, reasons: ['файла нет'], semantic: true, closable: true });
+  assert.deepEqual(list.items[1].reasons, ['есть ⚠']);
+  assert.deepEqual(list.pointers, []);
+  assert.equal(list.items.length + list.pointers.length, (await f.service.view('p')).count);
+  const before = stateText(f);
+  await f.service.items(9);
+  assert.equal(stateText(f), before, 'список ничего не пишет');
+});
+
+test('список пунктов: пробелов нет - «Открытых пунктов нет.»; несколько репозиториев без главного - заметка, указатель - пункт без закрытия', async (t) => {
+  const f = fixture(t);
+  fillAll(f);
+  await openFix(f);
+  assert.equal(await f.service.items(9), 'Открытых пунктов нет.');
+  const g = fixture(t, 2);
+  const [a, b] = g.dirs;
+  for (const cap of CAPABILITIES) {
+    g.put(a, cap.file, DOC);
+    if (cap.group === 'tech') g.put(b, cap.file, DOC);
+  }
+  await openFix(g);
+  assert.match(await g.service.items(9), /Главный репозиторий не отмечен/);
+  await g.service.act('p', { op: 'setMain', repo: a });
+  const list = JSON.parse(await g.service.items(9));
+  assert.deepEqual(list.items, []);
+  assert.equal(list.pointers.length, 1);
+  assert.equal(list.pointers[0].repo, b);
+  assert.equal(list.pointers[0].closable, false);
+  assert.match(list.pointers[0].text, /нет ссылки на index\.md главного/);
+});
+
+test('закрытие: каждый отказ - причина и state.json прежний', async (t) => {
+  const f = fixture(t, 2);
+  const [a, b] = f.dirs;
+  fillAll(f, a);
+  for (const cap of CAPABILITIES) if (cap.group === 'tech') f.put(b, cap.file, DOC);
+  f.put(a, 'why.md', DOC + ' ⚠');
+  f.put(a, 'behavior.md', DOC + ' ≈');
+  f.put(a, 'done.md', 'описание без ссылки');
+  fs.rmSync(path.join(f.passportDir(a), 'domain.md'));
+  await openFix(f);
+  const refused = async (args: unknown, re: RegExp) => {
+    const before = [stateText(f, a), stateText(f, b)];
+    await assert.rejects(f.service.close(9, args), re);
+    assert.deepEqual([stateText(f, a), stateText(f, b)], before);
+  };
+  await refused(closeArgs(a), /Отметьте главный репозиторий/);
+  await f.service.act('p', { op: 'setMain', repo: a });
+  await refused(closeArgs(a, { id: 'nope' }), /способности nope нет/);
+  await refused(closeArgs('/нет/такого'), /не входит в проект/);
+  await refused(closeArgs(a, { answer: ' ' }), /answer пуст/);
+  await refused(closeArgs(a, { source: '' }), /source пуст/);
+  await refused(closeArgs(b), /главном репозитории/);
+  await refused(closeArgs(a, { id: 'autonomy' }), /нет пробела/);
+  await refused(closeArgs(a), /есть ⚠/);
+  await refused(closeArgs(a, { id: 'behavior' }), /≈ не подтверждено/);
+  await refused(closeArgs(a, { id: 'done' }), /нет ссылки на документ проекта/);
+  await refused(closeArgs(a, { id: 'domain' }), /файла нет/);
+  await f.service.act('p', { op: 'notNeeded', capability: 'delivery' });
+  await refused(closeArgs(a, { id: 'delivery' }), /Не нужно/);
+  f.put(a, 'why.md', DOC);
+  // без исхода пробы пробела при рабочей ссылке нет (D-40): закрывать нечего
+  await refused(closeArgs(a), /нет пробела/);
+  saveState(a, (s) => {
+    s.probe = { at: 'x', outcomes: { why: { outcome: 'unknown', answer: '', source: '' } } };
+  });
+  await refused(closeArgs(a, { source: 'docs/нет.md' }), /Источник docs\/нет\.md не найден/);
+  await refused(closeArgs(a, { source: 'docs/a.md:99' }), /не найден/);
+  await refused(closeArgs(a, { source: 'docs' }), /не найден/);
+  await refused(closeArgs(a, { source: '../вне' }), /не найден/);
+  const probe = await f.service.prepareProbe('p');
+  f.service.registerProbe(4, probe.run);
+  await refused(closeArgs(a), /Идёт проба/);
+  await assert.rejects(f.service.close(5, closeArgs(a)), /не ведёт настройку/);
+});
+
+test('закрытие смысловой способности вместо «Подтвердить»: ждёт подтверждения снято, подтверждение пробы не тронуто, правка файла переоткрывает', async (t) => {
+  const f = fixture(t);
+  const [repo] = f.dirs;
+  fillAll(f);
+  const probe = await f.service.prepareProbe('p');
+  f.service.registerProbe(7, probe.run);
+  f.service.report(7, { capabilities: CAPABILITIES.map((c) => ({ id: c.id, outcome: 'found', answer: 'ответ', source: 'docs/a.md:2' })) });
+  const semantic = CAPABILITIES.filter((c) => c.semantic).length;
+  let view = await f.service.view('p');
+  assert.equal(view.count, semantic);
+  await openFix(f);
+  f.events.length = 0;
+  const text = await f.service.close(9, closeArgs(repo));
+  assert.match(text, new RegExp(`Открытых пунктов: ${semantic - 1}\\.`));
+  assert.match(text, /list_passport_items/);
+  assert.deepEqual(f.events, [{ channel: 'passport:changed', payload: { projectId: 'p' } }]);
+  view = await f.service.view('p');
+  assert.equal(view.count, semantic - 1);
+  const why = view.capabilities.find((c) => c.id === 'why')!;
+  assert.equal(why.closed, true);
+  assert.deepEqual(why.reasons, []);
+  assert.equal(why.gap, false);
+  assert.equal(why.probe!.confirmed, undefined);
+  const entry = loadState(repo).state.closed.why;
+  assert.equal(entry.answer, 'зафиксировано в docs/a.md');
+  assert.equal(entry.source, 'docs/a.md:1');
+  await assert.rejects(f.service.close(9, closeArgs(repo)), /уже закрыт/);
+  const list = JSON.parse(await f.service.items(9));
+  assert.ok(!list.items.some((i: { id: string }) => i.id === 'why'));
+  assert.equal(f.porcelain(repo).trim().split('\n').every((l) => l.includes('.cyborg/passport/')), true);
+  assert.equal(execFileSync('git', ['-C', repo, 'diff', '--stat'], { encoding: 'utf8' }), '');
+  // «Подтвердить» работает как прежде и не трогает закрытие
+  await f.service.act('p', { op: 'confirmAnswer', capability: 'why', repo });
+  assert.ok(loadState(repo).state.closed.why);
+  // правка файла: закрытие снято, пробел по пробе вернулся (подтверждение снято «Не то»)
+  await f.service.act('p', { op: 'rejectAnswer', capability: 'why', repo });
+  f.put(repo, 'why.md', `${DOC} правка`);
+  view = await f.service.view('p');
+  const again = view.capabilities.find((c) => c.id === 'why')!;
+  assert.equal(again.closed, false);
+  assert.deepEqual(again.reasons, ['выдумывает']);
+});
+
+test('закрытие не заменяет пробел по файлам: ссылка сломалась после закрытия - пробел вернулся', async (t) => {
+  const f = fixture(t);
+  const [repo] = f.dirs;
+  fillAll(f);
+  f.put(repo, 'why.md', '[Док](../../docs/b.md)');
+  fs.writeFileSync(path.join(repo, 'docs', 'b.md'), 'b\n');
+  const probe = await f.service.prepareProbe('p');
+  f.service.registerProbe(7, probe.run);
+  f.service.report(7, { capabilities: CAPABILITIES.map((c) => ({ id: c.id, outcome: 'found', answer: 'ответ', source: 'docs/a.md:2' })) });
+  await openFix(f);
+  await f.service.close(9, closeArgs(repo));
+  fs.rmSync(path.join(repo, 'docs', 'b.md'));
+  const why = (await f.service.view('p')).capabilities.find((c) => c.id === 'why')!;
+  assert.equal(why.closed, true);
+  assert.deepEqual(why.reasons, ['нет ссылки на документ проекта']);
+  assert.equal(why.gap, true);
+});
+
+test('найденный пробой ответ не заменяет файл при закрытии: файла нет - отказ', async (t) => {
+  const f = fixture(t);
+  const [repo] = f.dirs;
+  const probe = await f.service.prepareProbe('p');
+  f.service.registerProbe(7, probe.run);
+  f.service.report(7, { capabilities: CAPABILITIES.map((c) => ({ id: c.id, outcome: 'found', answer: 'ответ', source: 'docs/a.md:2' })) });
+  await openFix(f);
+  const before = stateText(f);
+  await assert.rejects(f.service.close(9, closeArgs(repo)), /файла нет/);
+  assert.equal(stateText(f), before);
+});
+
+test('итог новой пробы снимает закрытия во всех репозиториях; прерванная проба не снимает; неглавный без закрытий state.json не получает', async (t) => {
+  const f = fixture(t, 2);
+  const [a, b] = f.dirs;
+  for (const cap of CAPABILITIES) {
+    f.put(a, cap.file, DOC);
+    if (cap.group === 'tech') f.put(b, cap.file, DOC);
+  }
+  f.put(a, 'why.md', DOC + ' ⚠');
+  f.put(b, 'architecture.md', DOC + ' ⚠');
+  await f.service.act('p', { op: 'setMain', repo: a });
+  await openFix(f);
+  f.put(a, 'why.md', DOC);
+  f.put(b, 'architecture.md', DOC);
+  saveState(a, (s) => {
+    s.closed.why = { hash: 'x', answer: '', source: '', at: '' };
+    s.closed.architecture = { hash: 'x', answer: '', source: '', at: '' };
+  });
+  saveState(b, (s) => {
+    s.closed.architecture = { hash: 'x', answer: '', source: '', at: '' };
+  });
+  const interrupted = await f.service.prepareProbe('p');
+  f.service.registerProbe(3, interrupted.run);
+  f.service.sessionEnded(3);
+  assert.deepEqual(Object.keys(loadState(a).state.closed).sort(), ['architecture', 'why']);
+  assert.deepEqual(Object.keys(loadState(b).state.closed), ['architecture']);
+  const probe = await f.service.prepareProbe('p');
+  f.service.registerProbe(4, probe.run);
+  assert.throws(() => f.service.report(4, { capabilities: [] }), /нет ответа/);
+  assert.deepEqual(Object.keys(loadState(a).state.closed).sort(), ['architecture', 'why'], 'отказ по форме закрытий не снимает');
+  f.service.report(4, { capabilities: CAPABILITIES.map((c) => ({ id: c.id, outcome: 'unknown' })) });
+  assert.deepEqual(loadState(a).state.closed, {});
+  assert.deepEqual(loadState(b).state.closed, {});
+  const c = fixture(t, 2);
+  await c.service.act('p', { op: 'setMain', repo: c.dirs[0] });
+  const run = await c.service.prepareProbe('p');
+  c.service.registerProbe(4, run.run);
+  c.service.report(4, { capabilities: CAPABILITIES.map((cap) => ({ id: cap.id, outcome: 'unknown' })) });
+  assert.equal(stateText(c, c.dirs[1]), null);
+  assert.equal(c.porcelain(c.dirs[1]), '');
+});
+
+test('дерево сессии: файлы из worktree, состояние из рабочей копии; закрытие пишется в рабочую копию и засчитывается окном после слияния файла', async (t) => {
+  let tree = '';
+  const f = fixture(t, 1, async (_id, repo) => (tree && repo === f.dirs[0] ? tree : repo));
+  const [repo] = f.dirs;
+  tree = path.join(f.base, 'wt');
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', tree]);
+  assert.equal(await gitCommonDir(tree), await gitCommonDir(repo));
+  assert.equal(await gitCommonDir(f.base), null);
+  for (const cap of CAPABILITIES) f.put(tree, cap.file, DOC);
+  fs.rmSync(path.join(f.passportDir(tree), 'why.md'));
+  // Исход пробы только в рабочей копии и не закоммичен: worktree из коммита его не содержит.
+  f.put(repo, 'state.json', JSON.stringify({ version: 1, probe: { at: 'x', outcomes: { why: { outcome: 'unknown', answer: '', source: '' } } } }));
+  assert.equal(fs.existsSync(path.join(f.passportDir(tree), 'state.json')), false);
+  await openFix(f);
+  assert.equal((await f.service.view('p')).count, 12);
+  let list = JSON.parse(await f.service.items(9));
+  assert.equal(list.tree, tree);
+  assert.deepEqual(list.items.map((i: { id: string }) => i.id), ['why']);
+  assert.deepEqual(list.items[0].reasons, ['файла нет', 'не знает']);
+  await assert.rejects(f.service.close(9, closeArgs(repo)), /файла нет/);
+  f.put(tree, 'why.md', DOC);
+  await f.service.close(9, closeArgs(repo));
+  assert.equal(fs.existsSync(path.join(f.passportDir(tree), 'state.json')), false, 'в ветку worktree state.json не пишется');
+  assert.equal(loadState(repo).state.closed.why.hash.length > 0, true);
+  assert.equal(loadState(repo).state.probe?.outcomes.why.outcome, 'unknown', 'исход пробы цел');
+  let view = await f.service.view('p');
+  assert.equal(view.count, 12, 'файла в рабочей копии нет: хеш не сходится, окно закрытие не засчитывает');
+  assert.equal(view.capabilities.find((c) => c.id === 'why')!.closed, false);
+  assert.equal(await f.service.items(9), 'Открытых пунктов нет.');
+  // Слияние: файл способности появился в рабочей копии тем же содержимым.
+  f.put(repo, 'why.md', DOC);
+  view = await f.service.view('p');
+  assert.equal(view.capabilities.find((c) => c.id === 'why')!.closed, true);
+  assert.equal(view.count, 11, 'остальные способности без файлов - пробелы, «Почему» закрыта');
+  // Правка файла в рабочей копии снимает закрытие.
+  f.put(repo, 'why.md', `${DOC} правка`);
+  assert.equal((await f.service.view('p')).capabilities.find((c) => c.id === 'why')!.closed, false);
+});
+
+test('«Не нужно» из рабочей копии действует и для дерева сессии', async (t) => {
+  let tree = '';
+  const f = fixture(t, 1, async (_id, repo) => (tree || repo));
+  const [repo] = f.dirs;
+  tree = path.join(f.base, 'wt');
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', tree]);
+  await f.service.act('p', { op: 'notNeeded', capability: 'why' });
+  await openFix(f);
+  const ids = JSON.parse(await f.service.items(9)).items.map((i: { id: string }) => i.id);
+  assert.ok(!ids.includes('why') && ids.includes('behavior'));
+  await assert.rejects(f.service.close(9, closeArgs(repo)), /Не нужно/);
+});
+
+test('одна сессия настройки на проект: вторая не открывается, пока первая жива; view.fixSession; после выхода открывается новая', async (t) => {
+  const f = fixture(t);
+  assert.equal((await f.service.view('p')).fixSession, null);
+  await openFix(f, 9, 'why');
+  assert.equal((await f.service.view('p')).fixSession, 9);
+  assert.equal(f.service.isFix(9), true);
+  await assert.rejects(f.service.prepareFix('p', 'architecture', f.dirs[0]), /уже открыта/);
+  assert.throws(() => f.service.ensureNoFix('p'), /уже открыта/);
+  f.events.length = 0;
+  f.service.sessionEnded(9);
+  assert.deepEqual(f.events, [{ channel: 'passport:changed', payload: { projectId: 'p' } }]);
+  assert.equal(f.service.isFix(9), false);
+  assert.equal((await f.service.view('p')).fixSession, null);
+  await assert.rejects(f.service.items(9), /не ведёт настройку/);
+  await assert.rejects(f.service.close(9, closeArgs(f.dirs[0])), /не ведёт настройку/);
+  await openFix(f, 10, 'architecture');
+  assert.equal((await f.service.view('p')).fixSession, 10);
+});
+
+test('исправление: промпт на всю сессию начинается с нажатого пункта, возвращает запись вкладки', async (t) => {
+  const f = fixture(t);
+  const fix = await f.service.prepareFix('p', 'architecture', f.dirs[0]);
+  assert.deepEqual(fix.run, { projectId: 'p', repo: f.dirs[0] });
+  assert.match(fix.prompt, /^Настройка паспорта проекта/);
+  assert.match(fix.prompt, /id architecture/);
+});
+
+test('состояние прежнего формата читается: закрытий нет; закрытие с неизвестным id или без хеша отбрасывается', () => {
+  const old = parseState('{"version":1,"probe":null,"approxConfirmed":{},"notNeeded":["why"]}');
+  assert.ok(typeof old === 'object');
+  assert.deepEqual(old.closed, {});
+  assert.deepEqual(old.notNeeded, ['why']);
+  const mixed = parseState(JSON.stringify({ closed: { why: { hash: 'h', answer: 'a', source: 's', at: 't' }, nope: { hash: 'h' }, done: { hash: 5 }, upkeep: 'x' } }));
+  assert.ok(typeof mixed === 'object');
+  assert.deepEqual(mixed.closed, { why: { hash: 'h', answer: 'a', source: 's', at: 't' } });
+});
+
+test('старт вкладки настройки: два быстрых запроса открывают одну сессию, после её выхода открывается новая', async (t) => {
+  const f = fixture(t);
+  const created: string[] = [];
+  const start = (capability: string, id: number) => f.service.startFix('p', capability, f.dirs[0], (fix) => (created.push(fix.prompt), id));
+  const [a, b] = await Promise.allSettled([start('why', 3), start('architecture', 4)]);
+  assert.equal(a.status, 'fulfilled');
+  assert.equal(b.status, 'rejected');
+  assert.match(String((b as PromiseRejectedResult).reason), /уже открыта/);
+  assert.equal(created.length, 1, 'вторая сессия не создана');
+  assert.equal(f.service.isFix(3), true);
+  assert.equal(f.service.isFix(4), false);
+  f.service.sessionEnded(3);
+  assert.equal(await start('architecture', 5), 5);
+  assert.equal((await f.service.view('p')).fixSession, 5);
+});
+
+test('«Исправить» в окне: живая вкладка - переход; вкладки уже нет при устаревшем виде - открывается новая; живой нет - открывается новая', () => {
+  const calls: string[] = [];
+  const host = (alive: boolean) => ({
+    showSession: (id: number) => (calls.push(`show ${id}`), alive),
+    startFix: (project: string, repo: string, capability: string) => void calls.push(`start ${project} ${repo} ${capability}`),
+  });
+  fixAction(host(true), 7, 'P', '/r', 'why');
+  assert.deepEqual(calls.splice(0), ['show 7']);
+  fixAction(host(false), 7, 'P', '/r', 'why');
+  assert.deepEqual(calls.splice(0), ['show 7', 'start P /r why']);
+  fixAction(host(true), null, 'P', '/r', 'why');
+  assert.deepEqual(calls.splice(0), ['start P /r why']);
 });

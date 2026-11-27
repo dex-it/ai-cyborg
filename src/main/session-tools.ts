@@ -14,6 +14,8 @@ export const SPAWN_AGENT_TOOL = 'spawn_agent';
 export const CLOSE_AGENT_TOOL = 'close_agent';
 export const REPORT_DONE_TOOL = 'report_done';
 export const REPORT_PASSPORT_TOOL = 'report_passport';
+export const LIST_PASSPORT_ITEMS_TOOL = 'list_passport_items';
+export const CLOSE_PASSPORT_ITEM_TOOL = 'close_passport_item';
 export const LIST_BUTTONS_TOOL = 'list_buttons';
 export const ADD_BUTTON_TOOL = 'add_button';
 export const UPDATE_BUTTON_TOOL = 'update_button';
@@ -32,6 +34,8 @@ export interface ToolContext {
   buttons?: boolean;
   /** Вкладка ведёт пробу паспорта проекта: ей отдаётся report_passport. */
   passport?: boolean;
+  /** Вкладка ведёт настройку паспорта проекта: ей отдаются список открытых пунктов и закрытие пункта. */
+  passportFix?: boolean;
 }
 
 /** Промпт новой сессии уходит позиционным аргументом claude, а Linux ограничивает один аргумент 128 КиБ (MAX_ARG_STRLEN). */
@@ -49,7 +53,11 @@ export const CLOSE_SELF_DELAY_MS = 1000;
 export function sessionTools(dirs: string[], context: ToolContext = { kind: 'local', hosts: [] }): McpTool[] {
   const all = localTools(dirs);
   const byName = (...names: string[]): McpTool[] => all.filter((t) => names.includes(t.name));
-  const extra = [...(context.buttons ? buttonTools() : []), ...(context.passport ? [reportPassportTool()] : [])];
+  const extra = [
+    ...(context.buttons ? buttonTools() : []),
+    ...(context.passport ? [reportPassportTool()] : []),
+    ...(context.passportFix ? [listPassportItemsTool(), closePassportItemTool(dirs)] : []),
+  ];
   if (context.kind === 'remote') return [...byName(LIST_SESSIONS_TOOL, SEND_TO_SESSION_TOOL, SET_TASK_TOOL), reportDoneTool('remote'), ...extra];
   const local = context.child ? [...all, reportDoneTool('local')] : all;
   return context.hosts.length ? [...local, spawnAgentTool(dirs, context.hosts), closeAgentTool(), ...extra] : [...local, ...extra];
@@ -167,6 +175,37 @@ function reportPassportTool(): McpTool {
         },
       },
       required: ['capabilities'],
+      additionalProperties: false,
+    },
+  };
+}
+
+function listPassportItemsTool(): McpTool {
+  return {
+    name: LIST_PASSPORT_ITEMS_TOOL,
+    description:
+      'Открытые пункты паспорта проекта, те же, что считает точка: способности с пробелом - id, имя, вопрос, репозиторий, причины (пробел по файлу либо исход пробы); пункты указателя неглавных репозиториев (closable: false) - закрываются правкой index.md, а не закрытием; заметки для человека. Пунктов нет - «Открытых пунктов нет.» ' +
+      'Файлы способностей проверяются в дереве этой сессии (её worktree, если она в него ушла), исходы пробы, «Не нужно» и закрытия - по рабочей копии. ' +
+      'Вызывай в начале и после каждого пункта.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  };
+}
+
+function closePassportItemTool(dirs: string[]): McpTool {
+  return {
+    name: CLOSE_PASSPORT_ITEM_TOOL,
+    description:
+      'Закрывает пункт паспорта, когда информации достаточно для вопроса способности и человек словами согласился с итогом. Cyborg проверяет механически: у файла способности нет пробела по файлам, source - существующий файл дерева сессии; отказ приходит с причиной - поправь и вызови снова. ' +
+      'Пункт, у которого был только пробел по файлу, после правки файла уходит из списка сам: его не закрывают. Файлы паспорта и документы Cyborg не правит. Отметка пишется в рабочую копию, не в ветку: из worktree окно засчитает её после слияния. Вызов человек подтверждает в терминале.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Идентификатор способности из списка открытых пунктов.' },
+        repo: { type: 'string', enum: dirs, description: 'Репозиторий пункта, как в списке.' },
+        answer: { type: 'string', minLength: 1, description: 'Ответ на вопрос способности и где он записан, одной-двумя фразами: та сводка, с которой согласился человек.' },
+        source: { type: 'string', minLength: 1, description: 'Документ проекта с ответом: путь от корня репозитория, при желании со строкой: docs/a.md:12.' },
+      },
+      required: ['id', 'repo', 'answer', 'source'],
       additionalProperties: false,
     },
   };
@@ -629,10 +668,13 @@ export interface ButtonsToolsPort {
   disable(caller: number, args: unknown): string;
 }
 
-/** Паспорт проекта: проба ли эта вкладка и приём итога пробы. */
+/** Паспорт проекта: проба ли эта вкладка и приём итога пробы; вкладка ли настройки, её список пунктов и закрытие пункта. */
 export interface PassportToolsPort {
   isProbe(id: number): boolean;
   report(caller: number, args: unknown): string;
+  isFix(id: number): boolean;
+  items(caller: number): Promise<string>;
+  close(caller: number, args: unknown): Promise<string>;
 }
 
 /** Удалённая часть: проверка хоста и лимитов, итог, завершение. Тексты результатов формирует она. */
@@ -658,6 +700,7 @@ export function createSessionTools(
     child: !!sessions.reportLocal && (sessions.parentOf?.(caller) ?? null) !== null,
     buttons: !!buttons,
     passport: !!passport?.isProbe(caller),
+    passportFix: !!passport?.isFix(caller),
   });
   return {
     tools: (caller) => {
@@ -671,6 +714,8 @@ export function createSessionTools(
       // tools/call не обязан следовать tools/list: набор инструментов контекста - и есть право вызова.
       if (!sessionTools(dirs, contextOf(caller)).some((t) => t.name === name)) throw new Error(`инструмент ${name} недоступен этой сессии`);
       if (name === REPORT_PASSPORT_TOOL && passport) return passport.report(caller, value);
+      if (name === LIST_PASSPORT_ITEMS_TOOL && passport) return passport.items(caller);
+      if (name === CLOSE_PASSPORT_ITEM_TOOL && passport) return passport.close(caller, value);
       if (buttons && BUTTON_TOOLS.includes(name)) {
         if (name === LIST_BUTTONS_TOOL) return buttons.list(caller);
         return name === ADD_BUTTON_TOOL ? buttons.add(caller, value) : name === UPDATE_BUTTON_TOOL ? buttons.update(caller, value) : buttons.disable(caller, value);
