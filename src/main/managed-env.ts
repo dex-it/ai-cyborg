@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import { isAuthEnvName } from '../agentd/git-auth';
 import { isValidName, MAX_FILE_BYTES, MAX_VARS, readDef, readDefs, type Candidate, type EnvVarDef, type EnvView, type NameCheck, type VarStatus } from '../shared/env-vars';
 import { composeEnv, type EnvStamp, type Overlay } from './child-env';
@@ -77,6 +78,8 @@ export class ManagedEnv {
   private readyPromise: Promise<void> = Promise.resolve();
   private pathPromise: Promise<string> | null = null;
   private readonly runner = new SearchRunner();
+  private watcher: fs.FSWatcher | null = null;
+  private reloadTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly reserved: NameCheck;
 
   constructor(private readonly deps: ManagedEnvDeps) {
@@ -437,9 +440,76 @@ export class ManagedEnv {
     return this.readyPromise;
   }
 
+  /** Файл общий для окон Cyborg: правку из соседнего окна это окно применяет к своим следующим запускам. */
+  watch(): void {
+    if (this.watcher || this.disposed) return;
+    const base = path.basename(this.deps.file);
+    try {
+      // Каталог, а не файл: запись идёт переименованием, и наблюдатель файла остался бы на старом inode.
+      this.watcher = fs.watch(path.dirname(this.deps.file), (_event, name) => {
+        if (name !== null && name.toString() !== base) return;
+        clearTimeout(this.reloadTimer);
+        this.reloadTimer = setTimeout(() => this.reload(), 100);
+      });
+      this.watcher.on('error', () => undefined);
+    } catch {
+      // Без наблюдения окно живёт со своим выбором до перезапуска.
+    }
+  }
+
+  /** Определения перечитаны с диска: изменившийся выбор применяется - литерал сразу, выражение вычисляется заново; свои записи ничего не меняют. */
+  reload(): void {
+    if (this.disposed) return;
+    let next: EnvVarDef[];
+    try {
+      const raw = fs.readFileSync(this.deps.file);
+      if (raw.length > MAX_FILE_BYTES) return;
+      next = readDefs(JSON.parse(raw.toString('utf8')), this.reserved).vars;
+    } catch {
+      // Нет файла или он испорчен: прежнее состояние остаётся, повреждение покажет следующий запуск.
+      return;
+    }
+    const prev = readDefs({ vars: this.defs }, this.reserved).vars;
+    if (JSON.stringify(next) === JSON.stringify(prev)) return;
+    this.defs = next;
+    const pending: [string, string][] = [];
+    for (const def of next) {
+      const old = prev.find((d) => d.name === def.name);
+      const cand = this.chosen(def);
+      const was = old && this.chosen(old);
+      if (JSON.stringify(old?.choice) === JSON.stringify(def.choice) && JSON.stringify(was) === JSON.stringify(cand)) continue;
+      this.abort(def.name);
+      this.values.delete(def.name);
+      if (cand?.kind === 'literal') this.values.set(def.name, cand.value);
+      else if (cand?.kind === 'expr') pending.push([def.name, cand.command]);
+    }
+    for (const old of prev) {
+      if (next.some((d) => d.name === old.name)) continue;
+      this.abort(old.name);
+      this.values.delete(old.name);
+    }
+    this.changed();
+    for (const [name, command] of pending) void this.evaluateChosen(name, command);
+  }
+
+  private async evaluateChosen(name: string, command: string): Promise<void> {
+    const def = this.defs.find((d) => d.name === name);
+    this.status.set(name, { kind: 'evaluating', candidate: def && this.chosen(def)?.id });
+    this.deps.onChange?.();
+    const result = await this.run(name, command);
+    if ('cancelled' in result && result.cancelled) return;
+    if (!result.ok) return this.fail(name, result);
+    this.values.set(name, result.value);
+    this.clearStatus(name);
+    this.changed();
+  }
+
   /** Cyborg закрывается: идущие вычисления снимаются вместе с группами процессов. */
   dispose(): void {
     this.disposed = true;
+    clearTimeout(this.reloadTimer);
+    this.watcher?.close();
+    this.watcher = null;
     for (const def of this.defs) this.runner.cancel(keyOf(def.name));
   }
 }

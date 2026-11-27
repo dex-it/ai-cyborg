@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type * as pty from 'node-pty';
 import { createEventsFile, prepareEventsDir } from './events-store.ts';
-import { claudeArgs, MCP_CHILD_PROMPT, MCP_SESSION_PROMPT, modelArgs, SESSION_PROMPT, type ModelChoice } from './claude-args.ts';
+import { claudeArgs, LOGIN_GATE, MCP_CHILD_PROMPT, MCP_SESSION_PROMPT, modelArgs, SESSION_PROMPT, type ModelChoice } from './claude-args.ts';
 import { childEnvNow, envStampNow, loginShell, staleNames, type EnvStamp } from './child-env.ts';
 import { cleanMessage } from './clean-text.ts';
 import { parseSuggestions } from './suggestions.ts';
@@ -264,7 +264,7 @@ export class SessionManager {
     const mcpFile = mcp ? path.join(this.eventsDir, `${process.pid}-${id}.mcp.json`) : undefined;
     if (mcp && mcpFile) createEventsFile(mcpFile, JSON.stringify(mcp.connect(id)));
     // --mcp-config вариадический: за ним в args всегда идёт ключ (--plugin-dir, --model, --effort, --resume или --append-system-prompt).
-    const command = `exec claude --settings "$CYBORG_SETTINGS"${mcpFile ? ' --mcp-config "$CYBORG_MCP"' : ''} "$@"`;
+    const command = `${LOGIN_GATE}\nexec claude --settings "$CYBORG_SETTINGS"${mcpFile ? ' --mcp-config "$CYBORG_MCP"' : ''} "$@"`;
     // Логин-шелл даёт PATH пользователя: из меню приложений Electron стартует без ~/.local/bin.
     const proc = this.spawn(shell, ['-lc', command, 'cyborg', ...args], {
       name: 'xterm-256color',

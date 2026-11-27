@@ -5,6 +5,19 @@ import { SUGGEST_PROMPT } from './suggestions.ts';
 export const ISOLATION_PROMPT =
   'В этих репозиториях параллельно работают другие сессии. Перед первой правкой в репозитории, сменой ветки или коммитом - EnterWorktree, дальше работа только в нём; основной каталог - только чтение. Файлы вне репозиториев (скрэтчпад, временные) worktree не требуют. EnterWorktree изолирует только репозиторий рабочего каталога: перед правкой в репозитории из --add-dir - git worktree add <репозиторий>/.claude/worktrees/<то же имя> -b <та же ветка>, и правки только по этому пути.';
 
+/** Без токена и входа claude.ai сессия не продолжится, а Code Mode не включится: вкладка предлагает войти до запуска; сбой самой проверки запуск не держит. */
+export const LOGIN_GATE = [
+  'if [ -z "$CLAUDE_CODE_OAUTH_TOKEN$ANTHROPIC_API_KEY$ANTHROPIC_AUTH_TOKEN" ]; then',
+  '  a=$(claude auth status --json 2>/dev/null </dev/null)',
+  '  if printf %s "$a" | grep -q \'"loggedIn": *false\' && printf %s "$a" | grep -q \'"apiProvider": *"firstParty"\'; then',
+  "    printf '\\n\\033[1mClaude Code не залогинен.\\033[0m Без входа сессия не продолжится, а Code Mode не включится.\\n\\n'",
+  "    printf 'Enter - войти (claude auth login), Ctrl+C - закрыть вкладку.\\n'",
+  '    read -r _ || exit 1',
+  "    claude auth login || { printf '\\nВход не выполнен. Enter - закрыть.\\n'; read -r _; exit 1; }",
+  '  fi',
+  'fi',
+].join('\n');
+
 /** Всё, что Cyborg дописывает к системному промту сессии: изоляция и кнопки от модели. */
 export const SESSION_PROMPT = `${ISOLATION_PROMPT}\n\n${SUGGEST_PROMPT}`;
 

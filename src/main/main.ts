@@ -1021,6 +1021,7 @@ app.whenReady().then(() => {
   // Список «Недавних» общий для инстансов: другой мог изменить его, пока это окно было в фоне.
   app.on('browser-window-focus', rebuildMenu);
   void managedEnv.start();
+  managedEnv.watch();
   void trackers.warmAuth();
   createWindow();
 });
